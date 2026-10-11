@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 
 import { uuidv7 } from "../src/renderer/uuidv7";
 import { close, launch, printFailure, servePids, type Launched } from "./launch";
@@ -18,6 +18,26 @@ test.describe.configure({ mode: "serial" });
 let launched: Launched;
 let app: ElectronApplication;
 let page: Page;
+
+/**
+ * Waits until Thread details shows as its row's width calls for (ThreadDetails.tsx): with room,
+ * docked if kept so; without it (the thread would keep under 60% of the row beside the 348px
+ * card), collapsed or floating. Resizes reach it a frame later.
+ */
+async function settled(panel: Locator) {
+  await expect
+    .poll(() =>
+      panel.evaluate((aside) => {
+        const width = aside.parentElement!.getBoundingClientRect().width;
+        const narrow = width - 348 < width * 0.6;
+        const mode = aside.dataset["mode"];
+        const kept = localStorage.getItem("parallax.threadDetails") === "open";
+        const ok = narrow ? mode !== "docked" : mode === (kept ? "docked" : "hidden");
+        return ok ? "settled" : "settling";
+      }),
+    )
+    .toBe("settled");
+}
 
 test.beforeAll(async () => {
   launched = await launch("agent.json", fakeCodex());
@@ -96,8 +116,12 @@ test("stops the thread", async () => {
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
 });
 
-test("a top bar menu closes on a click outside it (PLX-363)", async () => {
-  await page.getByRole("button", { name: "Open in…" }).click();
+test("thread details stays docked until its button hides it; its menus close on a click outside (PLX-363)", async () => {
+  const details = page.getByRole("complementary", { name: "Thread details", exact: true });
+  await expect(details).toBeHidden();
+  await page.getByRole("button", { name: "Thread details", exact: true, pressed: false }).click();
+  await expect(details).toBeVisible();
+  await page.getByRole("button", { name: "Choose editor or file manager" }).click();
   const menu = page.getByRole("menu", { name: "Open in" });
   await expect(menu).toBeVisible();
   // A menu that inherits the top bar's drag turns the window's clicks outside it into drags,
@@ -108,6 +132,10 @@ test("a top bar menu closes on a click outside it (PLX-363)", async () => {
   expect(region).not.toBe("drag");
   await page.getByRole("log", { name: "Transcript" }).click();
   await expect(menu).toBeHidden();
+  // The panel is part of the thread, not a menu: a click outside leaves it.
+  await expect(details).toBeVisible();
+  await page.getByRole("button", { name: "Thread details", exact: true, pressed: true }).click();
+  await expect(details).toBeHidden();
 });
 
 test("opens a terminal in the thread's folder, kept while hidden (PLX-295)", async () => {
@@ -517,7 +545,9 @@ test("saves a repository action and runs it in the drawer, opening its preview (
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const preview = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
   // Actions belong to a repository: the open thread is quill's, from the test above.
-  await page.getByRole("button", { name: "Add action" }).click();
+  const details = page.getByRole("complementary", { name: "Thread details", exact: true });
+  await page.getByRole("button", { name: "Thread details", exact: true, pressed: false }).click();
+  await details.getByRole("button", { name: "Add action" }).click();
   const dialog = page.getByRole("dialog", { name: "Add action" });
   await dialog.getByRole("textbox", { name: "Name" }).fill("Git version");
   const keys = dialog.getByRole("textbox", { name: "Keybinding" });
@@ -529,10 +559,13 @@ test("saves a repository action and runs it in the drawer, opening its preview (
   await dialog.getByRole("checkbox", { name: "Open preview when this action runs" }).check();
   await page.screenshot({ path: test.info().outputPath("action-dialog.png") });
   await dialog.getByRole("button", { name: "Save action" }).click();
-  await page.screenshot({ path: test.info().outputPath("action-top-bar.png") });
+  await page.screenshot({ path: test.info().outputPath("action-details.png") });
 
   // The drawer opens and runs it, and the side panel's Browser shows the preview.
-  await page.getByRole("button", { name: "Git version" }).click();
+  await details.getByRole("button", { name: "Git version", exact: true }).click();
+  // The side panel opening takes the thread's room: a docked card collapses unless the window is
+  // wide enough to dock it beside both, and on a small screen it was floating already.
+  const panel = page.locator("#thread-details");
   const terminal = page.getByRole("group", { name: "Terminal", exact: true });
   await expect(terminal).toContainText("git version ");
   await expect(page.getByRole("textbox", { name: "Address" })).toHaveValue(
@@ -541,10 +574,16 @@ test("saves a repository action and runs it in the drawer, opening its preview (
   );
   await page.screenshot({ path: test.info().outputPath("action-running.png") });
 
-  // Its keybinding runs it again.
-  await page.getByRole("log", { name: "Transcript" }).click();
+  // Its keybinding runs it again. The transcript's left edge, clear of a floating card.
+  await page.getByRole("log", { name: "Transcript" }).click({ position: { x: 8, y: 8 } });
   await page.keyboard.press("ControlOrMeta+Shift+k");
   await expect(terminal).toContainText(/git version [\s\S]*git version /);
+  // With the side panel closed, whichever way it shows, its button hides it.
+  await page.getByRole("button", { name: "Hide side panel" }).click();
+  await settled(panel);
+  const toggle = page.getByRole("button", { name: "Thread details", exact: true });
+  if ((await toggle.getAttribute("aria-pressed")) === "true") await toggle.click();
+  await expect(panel).toHaveAttribute("data-mode", "hidden");
   server.close();
 });
 
@@ -583,8 +622,7 @@ test("attaches another thread with @, sends it with the message, and opens it fr
   );
 });
 
-test("switches between a thread and the one it launched, by chip, crumb, and shortcut (PLX-374)", async () => {
-  // A parent and the child it launched, as an agent would with thread_launch (0041).
+test("thread details opens children and stays docked beside the side panel", async () => {
   const start = async (title: string, parent?: string) => {
     const params = { runId: uuidv7(), prompt: title, title, ...(parent && { parent }) };
     const answer = await page.evaluate(
@@ -593,55 +631,57 @@ test("switches between a thread and the one it launched, by chip, crumb, and sho
     expect(answer).not.toHaveProperty("error");
     return params.runId;
   };
-  // The chips get the top bar's room with the side panel closed; the end checks it open.
-  const hidePanel = page.getByRole("button", { name: "Hide side panel" });
-  if (await hidePanel.isVisible()) await hidePanel.click();
   const parent = await start("Plan the release");
   await start("Write the changelog", parent);
-
-  // The child nests under its parent, collapsed.
   await page
     .locator("#sidebar li[data-kind='thread'] > button")
     .filter({ hasText: "Plan the release" })
     .click();
-  const sidebar = page.getByRole("navigation", { name: "Sidebar" });
-  const group = sidebar.getByRole("button", { name: /^1 thread/ });
-  await expect(group).toHaveAttribute("aria-expanded", "false");
   const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
   const current = breadcrumb.locator('ol > li > [aria-current="page"]');
   await expect(current).toHaveText("Plan the release");
-
-  // Its chip opens the child, whose parent crumb goes back.
-  const chips = breadcrumb.getByRole("group", { name: "Child threads" });
-  await chips.getByRole("button", { name: "Write the changelog" }).click();
-  const siblings = breadcrumb.getByRole("group", { name: "Sibling threads" });
-  await expect(siblings.getByRole("button", { name: "Write the changelog" })).toHaveAttribute(
+  const details = page.getByRole("complementary", { name: "Thread details", exact: true });
+  await page.getByRole("button", { name: "Thread details", exact: true, pressed: false }).click();
+  // Opening a child keeps the panel docked, on the child.
+  // A child that finished waits under the collapsed Previous agents; a working one is listed.
+  // It can finish between looking and clicking, moving its row, so the pair is retried.
+  const openChild = () =>
+    expect(async () => {
+      const previous = details.getByRole("button", { name: /^Previous agents/ });
+      if (
+        (await previous.isVisible()) &&
+        (await previous.getAttribute("aria-expanded")) === "false"
+      )
+        await previous.click();
+      await details.getByRole("button", { name: /Write the changelog/ }).click({ timeout: 2000 });
+    }).toPass();
+  await openChild();
+  await expect(details).toBeVisible();
+  await expect(details.getByRole("button", { name: /Write the changelog/ })).toHaveAttribute(
     "aria-current",
     "page",
   );
-  await expect(group).toHaveAttribute("aria-expanded", "true");
   await breadcrumb.getByRole("button", { name: "Plan the release" }).click();
   await expect(current).toHaveText("Plan the release");
-
-  // Mod+Alt+Right opens the first child, and Mod+Alt+Up its parent.
   await page.keyboard.press("ControlOrMeta+Alt+ArrowRight");
-  await expect(siblings).toBeVisible();
+  await expect(page.getByRole("region", { name: "Child thread" })).toBeVisible();
   await page.keyboard.press("ControlOrMeta+Alt+ArrowUp");
   await expect(current).toHaveText("Plan the release");
-
-  // At the default window size with the side panel open, the trail shrinks to +N, which still
-  // takes a click (Playwright fails it when the top bar's buttons cover it) and opens the tree.
-  // A screen smaller than the window, as on some CI runners, leaves no room to check.
-  await page.getByRole("button", { name: "Show side panel" }).click();
-  const width = await app.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows()[0]!;
-    window.setSize(1200, 800);
-    return window.getSize()[0];
-  });
-  if (width === 1200) {
-    await chips.getByRole("button", { name: "1 more threads" }).click();
-    const tree = page.getByRole("dialog", { name: "Thread tree" });
-    await tree.getByRole("button", { name: /Write the changelog/ }).click();
-    await expect(siblings).toBeVisible();
+  // Beside the side panel it docks when there's room; without it, it collapses, and its button
+  // floats it over the thread instead.
+  const show = page.getByRole("button", { name: "Show side panel" });
+  if (await show.isVisible()) await show.click();
+  await expect(page.getByRole("complementary", { name: "Side panel" })).toBeVisible();
+  const panel = page.locator("#thread-details");
+  await settled(panel);
+  if ((await panel.getAttribute("data-mode")) === "hidden") {
+    await page.getByRole("button", { name: "Thread details", exact: true, pressed: false }).click();
+    await expect(panel).toHaveAttribute("data-mode", "floating");
   }
+  await expect(details).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("thread-details.png") });
+  await openChild();
+  await expect(page.getByRole("region", { name: "Child thread" })).toBeVisible();
+  await page.getByRole("button", { name: "Thread details", exact: true, pressed: true }).click();
+  await expect(details).toBeHidden();
 });

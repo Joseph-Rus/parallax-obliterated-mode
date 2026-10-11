@@ -1,345 +1,241 @@
-import { Bot, Lock } from "lucide-react";
-import { useEffect, useId, useRef, useState, type RefObject, type ToggleEvent } from "react";
+import { Bot, ChevronDown, Lock } from "lucide-react";
+import { useEffect, useId, useState } from "react";
 
 import type { AgentRun, Thread } from "../protocol/generated/protocol";
 import { attentionOf, type Attention } from "./attention";
-import { duration } from "./AttentionMark";
+import { duration, WorkingMark } from "./AttentionMark";
 import { models } from "./models";
 import { age, backendLogos } from "./Sidebar";
 import { modelName, type NativeSubagent } from "./Subagents";
 import { asksOf, childrenOf, type ThreadsState } from "./threads";
 import { isRunning, statusLabel, subagentLabels, type SubagentState } from "./transcript";
-import { menuPanel } from "./ui";
-
-// How many chips the top bar shows before the rest go behind +N, the room each takes at most (a
-// chip is at most 9rem, plus its gap), the least a lone chip cut short needs, and +N's.
-const maxChips = 4;
-const chipRoom = 146;
-const minChipRoom = 80;
-const moreRoom = 40;
-
-/** An element's width, kept current. Infinite where nothing lays it out, as in tests. */
-function useWidth(ref: RefObject<HTMLElement | null>) {
-  const [width, setWidth] = useState(Number.POSITIVE_INFINITY);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry && entry.contentRect.width > 0) setWidth(entry.contentRect.width);
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [ref]);
-  return width;
-}
 
 const dotColors: Record<Attention, string> = {
-  working: "bg-working motion-safe:animate-pulse",
+  working: "bg-working",
   needsYou: "bg-warning",
   done: "bg-added",
   failed: "bg-danger",
   settled: "bg-faint-foreground/45",
 };
-
 const attentionNames: Record<Exclude<Attention, "settled">, string> = {
   working: "Working",
   needsYou: "Needs you",
   done: "Done",
   failed: "Failed",
 };
-
-/** A subagent's state as its dot shows it: done and stopped are as quiet as a settled thread. */
 const subagentDots: Record<SubagentState, Attention> = {
   running: "working",
   completed: "settled",
   failed: "failed",
   stopped: "settled",
 };
-
-/** A thread's status (0033) as a small dot: Working pulses, and settled is a quiet gray. */
-export function StatusDot({ attention }: { attention: Attention }) {
-  return <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${dotColors[attention]}`} />;
+function StatusMark({ attention }: { attention: Attention }) {
+  return attention === "working" ? (
+    <span className="size-3.5 shrink-0 [&_svg]:size-3.5">
+      <WorkingMark />
+    </span>
+  ) : (
+    <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${dotColors[attention]}`} />
+  );
 }
-
-/** A run's provider logo, or a plain bot for a backend this app has no logo for. */
-function ProviderLogo({ run, className }: { run?: AgentRun; className: string }) {
+function ProviderLogo({ run }: { run?: AgentRun }) {
   const Logo = (run && backendLogos[run.backend]) ?? Bot;
-  return <Logo aria-hidden className={`shrink-0 ${className}`} />;
+  return <Logo aria-hidden className="size-3.5 shrink-0" />;
+}
+function statusText(attention: Attention, run?: AgentRun) {
+  return attention !== "settled"
+    ? attentionNames[attention]
+    : run
+      ? statusLabel(run.status)
+      : "Idle";
 }
 
-/** What a thread is doing, for people: its attention, or once settled, its run's status. */
-function statusText(attention: Attention, run?: AgentRun) {
-  if (attention !== "settled") return attentionNames[attention];
-  return run ? statusLabel(run.status) : "Idle";
-}
+/** A child that's still going, or waiting on the user, shows under Lineage; the rest are previous. */
+const isCurrent = (attention: Attention) => attention === "working" || attention === "needsYou";
 
 /**
- * The top bar's chips for a thread's lineage (0041), after its title crumb: one per child, or as
- * a child, one per sibling with its own underlined, then one per subagent of the open thread's
- * own agent, marked read-only (PLX-382). Each is a status dot, the provider's logo (a bot for a
- * subagent), and the title cut short. At most four show, as many as fit, the open one among
- * them, and `+N` opens the whole tree from `root`, alone when no chip fits.
+ * All child threads and the open agent's native subagents. Current ones (working or needing
+ * you) show under Lineage; finished ones go in a collapsed Previous agents section, which opens by
+ * itself when the open thread is one of them. Each row's status mark sits at its right, by its time.
  */
-export function LineageTrail({
+export function LineageSection({
   state,
-  chips,
-  active,
   root,
   openId,
   onOpen,
   subagents = [],
   activeSubagent,
   onOpenSubagent,
+  visible,
+  includeThreads = true,
 }: {
   state: ThreadsState;
-  chips: Thread[];
-  /** The open thread, when it is one of the chips. */
-  active?: string;
-  /** The tree's top thread. */
   root: Thread;
-  /** The open thread, marked in the tree. */
   openId: string;
-  onOpen: (threadId: string) => void;
-  /** The open thread's agent's own top-level subagents. */
+  onOpen: (id: string) => void;
   subagents?: NativeSubagent[];
-  /** The open subagent, by its call's id. */
   activeSubagent?: string;
-  onOpenSubagent?: (callId: string) => void;
+  onOpenSubagent?: (id: string) => void;
+  visible: boolean;
+  includeThreads?: boolean;
 }) {
-  const group = useRef<HTMLDivElement>(null);
-  const width = useWidth(group);
-  // As many as fit, up to four; +N takes its room once any are left out, and stands alone when
-  // none fit, since its tree lists them all.
-  const fit = (room: number) =>
-    room >= chipRoom ? Math.floor(room / chipRoom) : room >= minChipRoom ? 1 : 0;
-  const all: { id: string; thread?: Thread; sub?: NativeSubagent }[] = [
-    ...chips.map((thread) => ({ id: thread.id, thread })),
-    ...subagents.map((sub) => ({ id: sub.callId, sub })),
-  ];
-  const count = Math.min(maxChips, fit(width) >= all.length ? all.length : fit(width - moreRoom));
-  let shown = all.slice(0, count);
-  const current = all.find((c) => c.id === (activeSubagent ?? active));
-  if (count > 0 && current && !shown.includes(current)) {
-    shown = [...all.slice(0, count - 1), current];
-  }
-  const more = all.length - shown.length;
-  const attention = (t: Thread) => attentionOf(t, state.runs[t.id], asksOf(state, t.id));
-  return (
-    <div
-      ref={group}
-      role="group"
-      aria-label={active ? "Sibling threads" : "Child threads"}
-      className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden"
-    >
-      {shown.map(({ id, thread: t, sub }) => {
-        if (sub) {
-          const on = id === activeSubagent;
-          const said = subagentLabels[sub.state];
-          return (
-            <button
-              key={id}
-              type="button"
-              aria-current={on ? "page" : undefined}
-              aria-label={`${sub.title}, read-only subagent, ${said}`}
-              title={`${sub.title} · ${said} · Read-only subagent`}
-              onClick={() => onOpenSubagent?.(id)}
-              className={`relative flex max-w-36 min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 focus-visible:-outline-offset-2 ${on ? "text-foreground after:absolute after:inset-x-1.5 after:bottom-0 after:h-[1.5px] after:rounded-full after:bg-foreground/55" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              <StatusDot attention={subagentDots[sub.state]} />
-              <Bot aria-hidden className="size-3.5 shrink-0" />
-              <span data-chip-title className="truncate">
-                {sub.title}
-              </span>
-              <Lock aria-hidden className="size-3 shrink-0 text-faint-foreground" />
-            </button>
-          );
-        }
-        if (!t) return null;
-        const title = state.titles[t.id] ?? "Thread";
-        const a = attention(t);
-        const on = t.id === active;
-        return (
-          <button
-            key={t.id}
-            type="button"
-            aria-current={on ? "page" : undefined}
-            title={`${title} · ${statusText(a, state.runs[t.id])}`}
-            onClick={() => onOpen(t.id)}
-            className={`relative flex max-w-36 min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 focus-visible:-outline-offset-2 ${on ? "text-foreground after:absolute after:inset-x-1.5 after:bottom-0 after:h-[1.5px] after:rounded-full after:bg-foreground/55" : "text-muted-foreground hover:text-foreground"}`}
-          >
-            <StatusDot attention={a} />
-            <ProviderLogo run={state.runs[t.id]} className="size-3.5" />
-            <span data-chip-title className="truncate">
-              {title}
-            </span>
-          </button>
-        );
-      })}
-      {more > 0 && (
-        <LineageTree
-          state={state}
-          root={root}
-          openId={openId}
-          more={more}
-          onOpen={onOpen}
-          subagents={subagents}
-          onOpenSubagent={onOpenSubagent}
-        />
-      )}
-    </div>
-  );
-}
-
-/** `Date.now()`, again each second while `on`. */
-function useNow(on: boolean) {
+  const previousId = useId();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    if (!on) return;
+    if (!visible) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [on]);
-  return now;
-}
+  }, [visible]);
 
-/**
- * `+N`, which opens the whole tree under `root` in a native popover: each thread's status, title,
- * model, status, how long it has run, and when it was last active, with the open thread's
- * subagents under it. A row opens its thread or subagent.
- */
-function LineageTree({
-  state,
-  root,
-  openId,
-  more,
-  onOpen,
-  subagents,
-  onOpenSubagent,
-}: {
-  state: ThreadsState;
-  root: Thread;
-  openId: string;
-  more: number;
-  onOpen: (threadId: string) => void;
-  subagents: NativeSubagent[];
-  onOpenSubagent?: (callId: string) => void;
-}) {
-  const id = useId();
-  const panel = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
-  const now = useNow(open);
-
-  // Depth first, each thread's children in launch order. A thread listed twice stops there.
-  const rows: { thread: Thread; depth: number }[] = [];
-  const seen = new Set<string>();
-  const walk = (thread: Thread, depth: number) => {
+  type Row =
+    | { kind: "thread"; key: string; thread: Thread; attention: Attention; depth: number }
+    | { kind: "subagent"; key: string; sub: NativeSubagent; attention: Attention; depth: number };
+  const rows: Row[] = [];
+  const seen = new Set<string>([root.id]);
+  const subagentRows = (ancestors: Attention[]) => {
+    for (const sub of subagents) {
+      const attention = subagentDots[sub.state];
+      const depth = ancestors.filter((a) => isCurrent(a) === isCurrent(attention)).length;
+      rows.push({ kind: "subagent", key: sub.callId, sub, attention, depth });
+    }
+  };
+  // Depth counts only ancestors in the same section, so a working grandchild of a finished child
+  // isn't indented under a row that isn't there.
+  const walk = (thread: Thread, ancestors: Attention[]) => {
     if (seen.has(thread.id)) return;
     seen.add(thread.id);
-    rows.push({ thread, depth });
-    for (const child of childrenOf(state, thread.id)) walk(child, depth + 1);
+    const attention = attentionOf(thread, state.runs[thread.id], asksOf(state, thread.id));
+    const depth = ancestors.filter((a) => isCurrent(a) === isCurrent(attention)).length;
+    rows.push({ kind: "thread", key: thread.id, thread, attention, depth });
+    if (thread.id === openId) subagentRows([...ancestors, attention]);
+    for (const child of childrenOf(state, thread.id)) walk(child, [...ancestors, attention]);
   };
-  walk(root, 0);
-  const at = rows.findIndex((r) => r.thread.id === openId);
-  const under = (rows[at]?.depth ?? 0) + 1;
+  if (openId === root.id) subagentRows([]);
+  if (includeThreads) for (const child of childrenOf(state, root.id)) walk(child, []);
+  const current = rows.filter((row) => isCurrent(row.attention));
+  const previous = rows.filter((row) => !isCurrent(row.attention));
+  const failed = previous.filter((row) => row.attention === "failed").length;
+  const working = rows.filter((row) => row.attention === "working").length;
+
+  const isOpen = (row: Row) =>
+    row.kind === "thread"
+      ? row.thread.id === openId && !activeSubagent
+      : row.key === activeSubagent;
+  // Opening a previous agent shows the section it's in.
+  const openPrevious = previous.some(isOpen);
+  const [expanded, setExpanded] = useState(openPrevious);
+  const [wasOpenPrevious, setWasOpenPrevious] = useState(openPrevious);
+  if (openPrevious !== wasOpenPrevious) {
+    setWasOpenPrevious(openPrevious);
+    if (openPrevious) setExpanded(true);
+  }
+
+  const rowView = (row: Row) => {
+    if (row.kind === "subagent") {
+      const { sub } = row;
+      return (
+        <li key={row.key}>
+          <button
+            type="button"
+            aria-current={isOpen(row) ? "page" : undefined}
+            aria-label={`${sub.title}, read-only subagent, ${subagentLabels[sub.state]}`}
+            title={`${sub.title} · ${subagentLabels[sub.state]} · Read-only subagent`}
+            onClick={() => onOpenSubagent?.(sub.callId)}
+            style={{ paddingLeft: `${8 + row.depth * 14}px` }}
+            className="flex w-full flex-col gap-0.5 rounded-md py-2 pr-2 text-left hover:bg-hover aria-[current=page]:bg-selected"
+          >
+            <span className="flex w-full min-w-0 items-center gap-2 text-[13px]">
+              <Bot aria-hidden className="size-3.5 shrink-0" />
+              <span data-lineage-title className="min-w-0 flex-1 truncate">
+                {sub.title}
+              </span>
+              <Lock aria-hidden className="size-3 shrink-0 text-faint-foreground" />
+              <StatusMark attention={row.attention} />
+            </span>
+            <span className="w-full truncate pl-5.5 text-[11.5px] text-faint-foreground">
+              {[modelName(sub.model), subagentLabels[sub.state], "Read-only subagent"]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          </button>
+        </li>
+      );
+    }
+    const { thread, attention } = row;
+    const run = state.runs[thread.id];
+    const title = state.titles[thread.id] ?? "Thread";
+    const model = run?.model && (models.find((m) => m.id === run.model)?.name ?? run.model);
+    const end = run && (isRunning(run.status) ? now : Date.parse(run.updatedAt));
+    const seconds = run && end ? Math.floor((end - Date.parse(run.createdAt)) / 1000) : 0;
+    const last = run && age(run.updatedAt, now);
+    return (
+      <li key={row.key}>
+        <button
+          type="button"
+          aria-current={isOpen(row) ? "page" : undefined}
+          title={`${title} · ${statusText(attention, run)}`}
+          onClick={() => onOpen(thread.id)}
+          style={{ paddingLeft: `${8 + row.depth * 14}px` }}
+          className="flex w-full flex-col gap-0.5 rounded-md py-2 pr-2 text-left hover:bg-hover aria-[current=page]:bg-selected"
+        >
+          <span className="flex w-full min-w-0 items-center gap-2 text-[13px]">
+            <ProviderLogo run={run} />
+            <span data-lineage-title className="min-w-0 flex-1 truncate">
+              {title}
+            </span>
+            {run && (
+              <span className="shrink-0 text-[11.5px] text-faint-foreground tabular-nums">
+                {duration(Math.max(0, seconds))}
+              </span>
+            )}
+            <StatusMark attention={attention} />
+          </span>
+          <span className="w-full truncate pl-5.5 text-[11.5px] text-faint-foreground">
+            {[
+              model,
+              statusText(attention, run),
+              last && (last === "now" ? "just now" : `${last} ago`),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        </button>
+      </li>
+    );
+  };
 
   return (
-    <>
-      <button
-        type="button"
-        popoverTarget={id}
-        aria-haspopup="dialog"
-        aria-label={`${more} more threads`}
-        title="All threads in this tree"
-        className="shrink-0 rounded-md px-1.5 py-1 text-[12.5px] focus-visible:-outline-offset-2 text-muted-foreground tabular-nums hover:bg-hover hover:text-foreground"
-      >
-        +{more}
-      </button>
-      <div
-        ref={panel}
-        id={id}
-        popover="auto"
-        role="dialog"
-        aria-label="Thread tree"
-        onToggle={(e: ToggleEvent<HTMLDivElement>) => setOpen(e.newState === "open")}
-        className={`${menuPanel("start")} w-84 p-1`}
-      >
-        <ul className="flex max-h-96 flex-col gap-px overflow-y-auto">
-          {rows.flatMap(({ thread, depth }, i) => {
-            const run = state.runs[thread.id];
-            const attention = attentionOf(thread, run, asksOf(state, thread.id));
-            const model = run?.model && (models.find((m) => m.id === run.model)?.name ?? run.model);
-            const end = run && (isRunning(run.status) ? now : Date.parse(run.updatedAt));
-            const seconds = run && end ? Math.floor((end - Date.parse(run.createdAt)) / 1000) : 0;
-            const last = run && age(run.updatedAt, now);
-            const current = thread.id === openId;
-            const row = (
-              <li key={thread.id}>
-                <button
-                  type="button"
-                  aria-current={current ? "page" : undefined}
-                  onClick={() => {
-                    panel.current?.hidePopover();
-                    onOpen(thread.id);
-                  }}
-                  style={{ paddingLeft: `${8 + depth * 14}px` }}
-                  className={`flex w-full flex-col gap-0.5 rounded-md py-1.5 pr-2 text-left hover:bg-hover ${current ? "bg-selected" : ""}`}
-                >
-                  <span className="flex w-full min-w-0 items-center gap-2 text-[13px]">
-                    <StatusDot attention={attention} />
-                    <ProviderLogo run={run} className="size-3.5" />
-                    <span className="min-w-0 flex-1 truncate text-foreground">
-                      {state.titles[thread.id] ?? "Thread"}
-                    </span>
-                    {run && (
-                      <span className="shrink-0 text-[11.5px] text-faint-foreground tabular-nums">
-                        {duration(Math.max(0, seconds))}
-                      </span>
-                    )}
-                  </span>
-                  {/* Under the title: past the dot and logo. */}
-                  <span className="block w-full truncate pl-9 text-[11.5px] text-faint-foreground">
-                    {[
-                      model,
-                      statusText(attention, run),
-                      last && (last === "now" ? "just now" : `${last} ago`),
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                </button>
-              </li>
-            );
-            if (i !== at) return [row];
-            return [
-              row,
-              ...subagents.map((sub) => (
-                <li key={sub.callId}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      panel.current?.hidePopover();
-                      onOpenSubagent?.(sub.callId);
-                    }}
-                    style={{ paddingLeft: `${8 + under * 14}px` }}
-                    className="flex w-full flex-col gap-0.5 rounded-md py-1.5 pr-2 text-left hover:bg-hover"
-                  >
-                    <span className="flex w-full min-w-0 items-center gap-2 text-[13px]">
-                      <StatusDot attention={subagentDots[sub.state]} />
-                      <Bot aria-hidden className="size-3.5 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate text-foreground">{sub.title}</span>
-                    </span>
-                    <span className="block w-full truncate pl-9 text-[11.5px] text-faint-foreground">
-                      {[modelName(sub.model), subagentLabels[sub.state], "Read-only subagent"]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                  </button>
-                </li>
-              )),
-            ];
-          })}
-        </ul>
-      </div>
-    </>
+    <section aria-label="Lineage" className="border-t border-border p-2">
+      <h3 className="px-2 pt-1 pb-2 text-[12px] text-muted-foreground">
+        Lineage{working > 0 && ` · ${working} running`}
+      </h3>
+      {current.length > 0 && <ul className="flex flex-col gap-px">{current.map(rowView)}</ul>}
+      {previous.length > 0 && (
+        <>
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={previousId}
+            onClick={() => setExpanded((was) => !was)}
+            className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-[12.5px] text-faint-foreground hover:bg-hover"
+          >
+            <span className="shrink-0">Previous agents ({previous.length})</span>
+            <span aria-hidden className="h-px min-w-4 flex-1 bg-border" />
+            {failed > 0 && <span className="shrink-0 text-danger">{failed} failed</span>}
+            <ChevronDown
+              aria-hidden
+              className={`size-3.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+            />
+          </button>
+          <ul id={previousId} hidden={!expanded} className="flex flex-col gap-px">
+            {expanded && previous.map(rowView)}
+          </ul>
+        </>
+      )}
+      {rows.length === 0 && (
+        <p className="px-2 py-1 text-[12px] text-faint-foreground">No child threads yet</p>
+      )}
+    </section>
   );
 }

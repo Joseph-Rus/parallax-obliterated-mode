@@ -1,6 +1,5 @@
 import {
   Bug,
-  ChevronDown,
   FlaskConical,
   Globe,
   Hammer,
@@ -27,10 +26,10 @@ import {
 
 import { browserUrl } from "./Browser";
 import { editingKeys, formatKeybinding, keybindingOf, modifiers } from "./keybindings";
-import { appShortcut, IconButton, menuButton, Menu, menuItem, menuPanel } from "./ui";
+import { appShortcut, IconButton, menuItem, menuPanel } from "./ui";
 import { uuidv7 } from "./uuidv7";
 
-/** A saved command for a repository, run from the top bar in the thread's terminal drawer. */
+/** A saved command for a repository, run from Thread details in the thread's terminal drawer. */
 export interface RepoAction {
   id: string;
   /** A name from `actionIcons`. */
@@ -94,12 +93,7 @@ function writeActions(hostId: string, repoId: string, actions: RepoAction[]) {
   }
 }
 
-/**
- * The top bar's repository actions for repository `repoId` on host `hostId`: Add action while
- * there are none, else the first few as run buttons and a menu with every one, to run or edit,
- * and Add action. An action's keybinding runs it too, unless a dialog is open. `onRun` runs one;
- * without `canRun` (no folder yet) they can't run.
- */
+/** Saved repository commands in Thread details. Shortcuts work while the panel is closed. */
 export function Actions({
   hostId,
   repoId,
@@ -111,8 +105,6 @@ export function Actions({
   canRun: boolean;
   onRun: (action: RepoAction) => void;
 }) {
-  const menuId = useId();
-  const menu = useRef<HTMLDivElement>(null);
   // Read on each render, so another repository's show at once; a save renders again.
   const [, saved] = useReducer((n: number) => n + 1, 0);
   const actions = readActions(hostId, repoId);
@@ -142,63 +134,22 @@ export function Actions({
       ? `Run ${a.name}${a.keybinding ? ` (${formatKeybinding(a.keybinding)})` : ""}`
       : "No folder to run in yet";
   const edit = (action: RepoAction | "new") => {
-    menu.current?.hidePopover();
     setEditing(action);
   };
 
   return (
     <>
-      {actions.length === 0 ? (
-        <button
-          type="button"
-          onClick={() => edit("new")}
-          className={`${menuButton} shrink-0 border border-border pr-2.5`}
-        >
-          <Plus aria-hidden />
-          Add action
-        </button>
-      ) : (
-        <div className="flex shrink-0 items-center rounded-lg border border-border">
-          {actions.slice(0, 3).map((a) => {
-            const Icon = IconOf(a.icon);
-            return (
-              <button
-                key={a.id}
-                type="button"
-                disabled={!canRun}
-                onClick={() => onRun(a)}
-                title={titleOf(a)}
-                className={`${menuButton} rounded-none border-r border-border pr-2.5 first:rounded-l-lg`}
-              >
-                <Icon aria-hidden />
-                {/* Icons only in a narrow top bar (App's is a container), with the name in the tooltip. */}
-                <span className="max-w-32 truncate @max-2xl:sr-only">{a.name}</span>
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            popoverTarget={menuId}
-            aria-haspopup="menu"
-            aria-label="Actions"
-            className={`${menuButton} self-stretch rounded-l-none pr-1 pl-1`}
-          >
-            <ChevronDown aria-hidden className="opacity-70" />
-          </button>
-        </div>
-      )}
-      <Menu ref={menu} id={menuId} label="Actions" align="end" className="w-64 p-1" focus="button">
+      <div aria-label="Repository actions">
         {actions.map((a) => {
           const Icon = IconOf(a.icon);
           return (
             <div key={a.id} className="flex items-center gap-0.5">
               <button
                 type="button"
-                role="menuitem"
+                aria-label={a.name}
                 disabled={!canRun}
                 title={titleOf(a)}
                 onClick={() => {
-                  menu.current?.hidePopover();
                   onRun(a);
                 }}
                 className={`${menuItem} min-w-0 flex-1 disabled:opacity-50 [&_svg]:size-4`}
@@ -211,23 +162,17 @@ export function Actions({
                   </span>
                 )}
               </button>
-              <IconButton role="menuitem" label={`Edit ${a.name}`} onClick={() => edit(a)}>
+              <IconButton label={`Edit ${a.name}`} onClick={() => edit(a)}>
                 <Pencil />
               </IconButton>
             </div>
           );
         })}
-        <div role="separator" className="-mx-1 my-1 h-px bg-border" />
-        <button
-          type="button"
-          role="menuitem"
-          onClick={() => edit("new")}
-          className={`${menuItem} [&_svg]:size-4`}
-        >
+        <button type="button" onClick={() => edit("new")} className={`${menuItem} [&_svg]:size-4`}>
           <Plus aria-hidden />
           Add action
         </button>
-      </Menu>
+      </div>
       {editing && (
         <ActionDialog
           action={editing === "new" ? undefined : editing}
@@ -345,7 +290,7 @@ export function ActionDialog({
               {action ? "Edit action" : "Add action"}
             </h2>
             <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-              A command for this repository, run from the top bar in the thread's terminal.
+              A command for this repository, run from Thread details in the thread's terminal.
             </p>
           </div>
           <IconButton label="Close" onClick={close}>

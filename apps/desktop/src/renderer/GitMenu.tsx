@@ -1,6 +1,8 @@
 import {
   ChevronDown,
   CloudUpload,
+  Files,
+  GitBranch,
   GitCommitHorizontal,
   GitPullRequestArrow,
   type LucideIcon,
@@ -14,7 +16,7 @@ import { describeError, githubProblem } from "./errors";
 import { titleOf } from "./threads";
 import { isRunning } from "./transcript";
 import { notify, type Notice } from "./notifications";
-import { Menu, menuButton, menuItem } from "./ui";
+import { Menu, menuItem } from "./ui";
 
 export type GitAction = "commit" | "push" | "pr";
 
@@ -55,7 +57,7 @@ export function gitActions(
 }
 
 /**
- * The top bar's Git split button for a thread (PLX-298). The main part runs the next useful
+ * Git rows in Thread details (PLX-298). The main part runs the next useful
  * action; the chevron lists Commit, Push, and Create PR, each disabled with its reason. Commit
  * asks for a message, prefilled with the thread's title. Create PR pushes and opens the pull
  * request through `agent/openPr`, in the browser, or with `onPrOpened`, in the PR view. The status
@@ -70,6 +72,7 @@ export function GitMenu({
   title,
   onPrOpened,
   onSetUpGithub,
+  onChanges,
 }: {
   hostId: string;
   run?: AgentRun;
@@ -77,6 +80,7 @@ export function GitMenu({
   title?: string;
   onPrOpened?: (url: string) => void;
   onSetUpGithub?: () => void;
+  onChanges?: () => void;
 }) {
   const id = useId();
   const menu = useRef<HTMLDivElement>(null);
@@ -182,13 +186,29 @@ export function GitMenu({
 
   return (
     <>
-      <div className="flex shrink-0 items-center rounded-lg border border-border">
+      <div
+        className={`${menuItem} text-muted-foreground`}
+        title={status?.branch ?? "Detached HEAD"}
+      >
+        <GitBranch aria-hidden />
+        <span className="min-w-0 flex-1 truncate">
+          {status
+            ? (status.branch ?? "Detached HEAD")
+            : error
+              ? "Branch unavailable"
+              : "Loading branch…"}
+        </span>
+        {!!status?.ahead && (
+          <span className="shrink-0 text-[11.5px] text-faint-foreground">{status.ahead} ahead</span>
+        )}
+      </div>
+      <div className="flex items-center">
         <button
           type="button"
           disabled={!!why[main] || !!busy}
           onClick={() => start(main)}
           title={why[main]}
-          className={`${menuButton} rounded-r-none pr-2.5`}
+          className={`${menuItem} min-w-0 flex-1 disabled:opacity-50`}
         >
           <primary.Icon aria-hidden />
           {busy ? actions.find((a) => a.action === busy)!.busy : primary.label}
@@ -198,7 +218,7 @@ export function GitMenu({
           popoverTarget={id}
           aria-haspopup="menu"
           aria-label="Git actions"
-          className={`${menuButton} self-stretch rounded-l-none border-l border-border pr-1 pl-1`}
+          className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-hover [&_svg]:size-4"
         >
           <ChevronDown aria-hidden className="opacity-70" />
         </button>
@@ -220,13 +240,29 @@ export function GitMenu({
             )}
           </button>
         ))}
-        {note && <p className="px-2 pt-1 pb-1.5 text-[12px] text-amber-500">{note}</p>}
-        {error && (
-          <p role="alert" className="px-2 pt-1 pb-1.5 text-[12px] text-danger">
-            {error}
-          </p>
-        )}
       </Menu>
+      <button
+        type="button"
+        onClick={onChanges}
+        disabled={!status || !onChanges}
+        className={`${menuItem} disabled:opacity-50`}
+      >
+        <Files aria-hidden />
+        <span className="flex-1">Changes</span>
+        <span className="text-[12px] text-muted-foreground tabular-nums">
+          {status
+            ? `${status.changes} ${status.changes === 1 ? "file" : "files"}`
+            : error
+              ? "Unavailable"
+              : "Loading…"}
+        </span>
+      </button>
+      {note && <p className="px-2 py-1 text-[12px] text-amber-500">{note}</p>}
+      {error && !busy && (
+        <p role="alert" className="px-2 py-1 text-[12px] text-danger">
+          {error}
+        </p>
+      )}
       <dialog
         ref={dialog}
         aria-labelledby={`${id}-commit`}

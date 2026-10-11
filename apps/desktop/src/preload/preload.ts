@@ -134,7 +134,8 @@ const bridge: ParallaxBridge = {
   openFolder: (hostId, target, folder) =>
     ipcRenderer.invoke("parallax:openFolder", hostId, target, folder),
   terminalApp: () => ipcRenderer.invoke("parallax:terminalApp"),
-  chooseTerminalApp: () => ipcRenderer.invoke("parallax:chooseTerminalApp"),
+  terminalApps: () => ipcRenderer.invoke("parallax:terminalApps"),
+  selectTerminalApp: (path) => ipcRenderer.invoke("parallax:selectTerminalApp", path),
 
   onProfile(listener) {
     const stop = follow("parallax:profile", listener, false);

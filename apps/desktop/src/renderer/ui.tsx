@@ -33,7 +33,7 @@ export type KeyPress = Pick<
 
 /**
  * The app's own shortcut `e` presses, if any: a command's binding (keybindings.ts), or Mod+1 to
- * Mod+9 a sidebar row (`rowShortcut`), which can't be rebound. App, ThreadList, and OpenMenu act
+ * Mod+9 a sidebar row (`rowShortcut`), which can't be rebound. App, ThreadList, and Thread details act
  * on them, and a repository action's keybinding can't be one.
  */
 export function appShortcut(e: KeyPress): Command | "row" | undefined {
@@ -499,38 +499,19 @@ export interface Crumb {
 }
 
 /**
- * Where the user is: host, workspace, then the current page, split by slashes. `trail` follows
- * the last crumb after a `›`, such as a thread's children (Lineage.tsx).
+ * Where the user is: host, workspace, then the current page, split by slashes.
  */
-export function Breadcrumb({ items, trail }: { items: Crumb[]; trail?: ReactNode }) {
+export function Breadcrumb({ items }: { items: Crumb[] }) {
   return (
-    // A trail takes the room the crumbs leave, and fits itself to it. A pane too narrow even for
-    // the crumbs' minimum widths, below the default window with the side panel open, cuts them
-    // off rather than sliding them under the top bar's buttons.
-    <nav aria-label="Breadcrumb" className={`min-w-0 overflow-x-clip ${trail ? "flex-1" : ""}`}>
+    <nav aria-label="Breadcrumb" className="min-w-0 overflow-x-clip">
       <ol className="flex min-w-0 items-center gap-2 text-[13px]">
         {items.map(({ label, icon, onClick }, i) => {
-          const last = i === items.length - 1;
-          const current = last && !onClick;
+          const current = i === items.length - 1 && !onClick;
           const Tag = onClick ? "button" : "span";
-          // Before a trail, which asks for 8rem, the last crumb keeps to 14rem and gives way last:
-          // the first and then the crumbs between give way first, so the trail keeps room for a
-          // chip, or at least +N.
-          const room = last
-            ? trail
-              ? "max-w-56 min-w-16"
-              : ""
-            : i === 0
-              ? "max-w-48 min-w-10 shrink-[100]"
-              : "max-w-48 min-w-10 shrink-[10]";
           return (
-            // The slash is CSS content, so it stays out of the crumb's text. Crumbs before the
-            // last are cut short at 12rem, and when there's no room the first, such as a
-            // computer's name, gives way first and those between next, so none is pushed under
-            // the top bar's buttons.
             <li
               key={i}
-              className={`flex min-w-0 items-center gap-2 ${room} ${i > 0 ? "before:text-faint-foreground before:content-['/']" : ""}`}
+              className={`flex min-w-0 items-center gap-2 ${i < items.length - 1 ? "max-w-48 min-w-10 shrink-[10]" : ""} ${i > 0 ? "before:text-faint-foreground before:content-['/']" : ""}`}
             >
               <Tag
                 {...(onClick && { type: "button", onClick })}
@@ -545,11 +526,6 @@ export function Breadcrumb({ items, trail }: { items: Crumb[]; trail?: ReactNode
             </li>
           );
         })}
-        {trail && (
-          <li className="flex min-w-12 flex-[1_1_8rem] items-center gap-1.5 before:text-faint-foreground before:content-['›']">
-            {trail}
-          </li>
-        )}
       </ol>
     </nav>
   );
