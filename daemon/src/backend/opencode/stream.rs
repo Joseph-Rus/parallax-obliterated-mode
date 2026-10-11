@@ -63,6 +63,15 @@ struct Call {
     finished: bool,
 }
 
+/// What one model request's parts showed, for its speed sample.
+#[derive(Debug, Default)]
+struct StepSeen {
+    /// It called a tool, whose arguments' tokens have no streaming time here.
+    tool: bool,
+    /// It streamed a reasoning part, so its reasoning tokens have a time.
+    reasoning: bool,
+}
+
 /// The state that reading one run's events needs.
 #[derive(Debug, Default)]
 pub(super) struct Translator {
@@ -90,8 +99,8 @@ pub(super) struct Translator {
     timed: HashSet<String>,
     /// The current step's text and reasoning streaming time, in milliseconds.
     step_ms: u64,
-    /// The current step called a tool, whose arguments' tokens have no streaming time here.
-    step_tool: bool,
+    /// What the current step's parts showed, which decides whether its timing is complete.
+    step_seen: StepSeen,
     /// The last step without tool calls: its output tokens and streaming milliseconds.
     speed: Option<(u64, u64)>,
     calls: HashMap<String, Call>,
@@ -228,13 +237,14 @@ impl Translator {
     /// wait for the first token and any tool running.
     fn time(&mut self, id: &str, part: &Value) {
         match part["type"].as_str() {
-            Some("tool") => self.step_tool = true,
+            Some("tool") => self.step_seen.tool = true,
             Some("text" | "reasoning") => {
                 let time = &part["time"];
                 if let (Some(start), Some(end)) = (time["start"].as_u64(), time["end"].as_u64())
                     && end > start
                     && self.timed.insert(id.to_owned())
                 {
+                    self.step_seen.reasoning |= part["type"] == "reasoning";
                     self.step_ms += end - start;
                 }
             }
@@ -304,7 +314,10 @@ impl Translator {
                 };
                 let generated = usage.output_tokens;
                 let step_ms = std::mem::take(&mut self.step_ms);
-                if !std::mem::take(&mut self.step_tool) && generated > 0 && step_ms > 0 {
+                let seen = std::mem::take(&mut self.step_seen);
+                // Hidden reasoning's tokens would count with none of their time.
+                let untimed = count(&tokens["reasoning"]) > 0 && !seen.reasoning;
+                if !seen.tool && !untimed && generated > 0 && step_ms > 0 {
                     self.speed = Some((generated, step_ms));
                 }
                 let mut steps = Vec::new();

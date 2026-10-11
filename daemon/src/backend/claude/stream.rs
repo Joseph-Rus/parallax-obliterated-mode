@@ -165,6 +165,10 @@ pub(super) struct Translator {
     api_totals: Option<(u64, u64)>,
     /// The last turn's output tokens and API milliseconds, an approximate speed sample.
     speed: Option<(u64, u64)>,
+    /// The request whose usage was last sent, as each of its content blocks repeats it.
+    usage_message: Option<String>,
+    /// The CLI resumed a session, whose running totals include turns from before this process.
+    resumed: bool,
     /// The last `result`'s failure, if it was one.
     pub last_failure: Option<Failure>,
     /// The last successful `result`'s text.
@@ -174,7 +178,8 @@ pub(super) struct Translator {
 impl Translator {
     /// Takes the turn's output tokens and API time from the `result`'s running session totals.
     /// Both include subagents and the wait for each request's first token, so the rate they give
-    /// is approximate. A total that went down means a new process, whose totals start over.
+    /// is approximate. A resumed session's totals carry over from before (0004), so its first
+    /// `result` only sets the baseline, as does a total that went down.
     fn sample_speed(&mut self, message: &Map<String, Value>, totals: Option<&Map<String, Value>>) {
         let Some(ms) = message.get("duration_api_ms").and_then(Value::as_u64) else {
             return;
@@ -187,13 +192,17 @@ impl Translator {
         }) else {
             return;
         };
-        let (turn_tokens, turn_ms) = match self.api_totals {
-            Some((before_tokens, before_ms)) if tokens >= before_tokens && ms >= before_ms => {
-                (tokens - before_tokens, ms - before_ms)
-            }
-            _ => (tokens, ms),
+        let turn = match self.api_totals {
+            Some((before_tokens, before_ms)) => tokens
+                .checked_sub(before_tokens)
+                .zip(ms.checked_sub(before_ms)),
+            None if self.resumed => None,
+            None => Some((tokens, ms)),
         };
         self.api_totals = Some((tokens, ms));
+        let Some((turn_tokens, turn_ms)) = turn else {
+            return;
+        };
         if turn_tokens > 0 && turn_ms > 0 {
             self.speed = Some((turn_tokens, turn_ms));
         }
@@ -222,6 +231,8 @@ impl Translator {
             known_window: None,
             api_totals: None,
             speed: None,
+            resumed: false,
+            usage_message: None,
             last_failure: None,
             last_result: None,
         }
@@ -251,6 +262,12 @@ impl Translator {
     /// stdio` (PLX-222). Otherwise its control requests are skipped, as before.
     pub fn with_prompts(mut self, prompts: bool) -> Self {
         self.prompts = prompts;
+        self
+    }
+
+    /// Reads the first `result`'s running totals as the resumed session's baseline (0004).
+    pub fn with_resumed(mut self, resumed: bool) -> Self {
+        self.resumed = resumed;
         self
     }
 
@@ -518,8 +535,12 @@ impl Translator {
                 output_tokens: self.speed.map(|(tokens, _)| tokens),
                 output_ms: self.speed.map(|(_, ms)| ms),
             };
-            self.request_usage = Some(reported.clone());
-            steps.push(Step::Emit(Event::RequestUsage(reported)));
+            // Claude Code sends a request's content blocks as separate lines with the same usage.
+            if message_id.is_none() || self.usage_message != message_id {
+                self.usage_message.clone_from(&message_id);
+                self.request_usage = Some(reported.clone());
+                steps.push(Step::Emit(Event::RequestUsage(reported)));
+            }
         }
         for block in blocks.into_iter().flatten().filter_map(Value::as_object) {
             match text(block, "type") {
@@ -627,6 +648,7 @@ impl Translator {
         let result = text(message, "result").map(str::to_owned);
         let mut steps = Vec::new();
         self.sample_speed(message, totals);
+        self.usage_message = None;
         if let Some(usage) = &mut self.request_usage {
             usage.output_tokens = self.speed.map(|(tokens, _)| tokens);
             usage.output_ms = self.speed.map(|(_, ms)| ms);

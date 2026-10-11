@@ -854,6 +854,7 @@ impl Driver {
             self.close();
             return;
         };
+        self.translator.session = Some(session.clone());
         let current = value
             .pointer("/models/currentModelId")
             .and_then(Value::as_str)

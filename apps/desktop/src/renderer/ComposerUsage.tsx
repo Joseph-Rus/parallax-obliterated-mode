@@ -7,6 +7,27 @@ import { limitDetails, limitName } from "./Usage";
 const refreshMs = 60_000;
 const staleMs = 90_000;
 
+type LimitsAnswer = Awaited<ReturnType<typeof readLimits>>;
+/** Each host's last answer and the read under way, shared by every strip: plxd starts the
+ * providers' CLIs for each read, so open threads and remounts must not multiply them. */
+const limitReads = new Map<string, { at: number; answer: Promise<LimitsAnswer> }>();
+function readLimits(hostId: string) {
+  return window.parallax.request(hostId, "usage/limits", {});
+}
+function sharedLimits(hostId: string, now = Date.now()): Promise<LimitsAnswer> {
+  const last = limitReads.get(hostId);
+  if (last && now - last.at < refreshMs) return last.answer;
+  const answer = readLimits(hostId);
+  limitReads.set(hostId, { at: now, answer });
+  // A failed read is retried by the next strip instead of being kept.
+  answer.catch(() => limitReads.get(hostId)?.answer === answer && limitReads.delete(hostId));
+  return answer;
+}
+/** For tests: forgets every host's shared answer. */
+export function forgetLimits() {
+  limitReads.clear();
+}
+
 /** Only current, valid provider observations can fill a limit meter. */
 export function currentLimit(limit: UsageLimitWindow, now: number): number | undefined {
   const captured = Date.parse(limit.capturedAt);
@@ -97,7 +118,7 @@ export function ComposerUsage({
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
       try {
-        const response = await window.parallax.request(hostId, "usage/limits", {});
+        const response = await sharedLimits(hostId);
         if (stopped) return;
         setNow(Date.now());
         setLoading(false);

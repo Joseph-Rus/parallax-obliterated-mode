@@ -982,4 +982,15 @@ fn request_speed_comes_from_streaming_time_in_steps_without_tool_calls() {
         (third.output_tokens, third.output_ms),
         (Some(300), Some(1_500))
     );
+    // Nor one with reasoning tokens but no streamed reasoning, whose time would be missing.
+    translator.event(&part(
+        json!({"id": "prt_t4", "type": "text", "text": "d", "time": {"start": 4_000, "end": 4_100}}),
+    ));
+    let hidden = part(json!({"id": "prt_s4", "type": "step-finish",
+        "tokens": {"input": 10, "output": 20, "reasoning": 900, "cache": {"read": 0, "write": 0}}}));
+    let fourth = usage(translator.event(&hidden)).unwrap();
+    assert_eq!(
+        (fourth.output_tokens, fourth.output_ms),
+        (Some(300), Some(1_500))
+    );
 }

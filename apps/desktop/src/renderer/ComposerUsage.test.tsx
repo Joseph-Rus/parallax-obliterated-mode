@@ -5,7 +5,13 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 
 import type { ParallaxBridge } from "../preload/bridge";
 import type { UsageLimitWindow } from "../protocol/generated/protocol";
-import { ComposerUsage, currentLimit, tokenPercent, tokensPerSecond } from "./ComposerUsage";
+import {
+  ComposerUsage,
+  currentLimit,
+  forgetLimits,
+  tokenPercent,
+  tokensPerSecond,
+} from "./ComposerUsage";
 import type { RequestUsage } from "./transcript";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -22,6 +28,7 @@ afterEach(() => {
   root = undefined;
   document.body.innerHTML = "";
   vi.useRealTimers();
+  forgetLimits();
 });
 const usage: RequestUsage = {
   kind: "requestUsage",
@@ -154,4 +161,21 @@ test("output speed needs both sides and a provider whose timing it understands",
   expect(document.body.textContent).toContain("— tok/s");
   await render("claude", "claude", { ...usage, usage: { ...usage.usage, outputMs: undefined } });
   expect(document.body.textContent).toContain("— tok/s");
+});
+test("strips on one host share a minute's read of the limits", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  const request = vi.fn(async () => ({
+    result: { accounts: [{ accountId: "claude", limits: [limit] }] },
+  }));
+  window.parallax = { request } as unknown as ParallaxBridge;
+  await render();
+  // A strip remounted, as switching threads does, reuses the answer.
+  act(() => root?.unmount());
+  root = undefined;
+  await render();
+  expect(document.body.textContent).toContain("5h35%");
+  expect(request).toHaveBeenCalledTimes(1);
+  await act(async () => vi.advanceTimersByTime(60_000));
+  expect(request).toHaveBeenCalledTimes(2);
 });

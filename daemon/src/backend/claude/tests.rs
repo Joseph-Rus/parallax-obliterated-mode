@@ -3607,8 +3607,28 @@ fn request_speed_is_the_turns_share_of_the_sessions_output_and_api_time() {
     translator.line(assistant.to_string().as_bytes());
     let idle = translator.line(result(10_000, 450, 50).to_string().as_bytes());
     assert_eq!(speed(idle), Some((Some(300), Some(6_000))));
-    // A restarted process's totals start over.
+    // Totals that went down are a new baseline, not a sample.
     translator.line(assistant.to_string().as_bytes());
-    let restarted = translator.line(result(2_000, 80, 0).to_string().as_bytes());
-    assert_eq!(speed(restarted), Some((Some(80), Some(2_000))));
+    let lower = translator.line(result(2_000, 80, 0).to_string().as_bytes());
+    assert_eq!(speed(lower), Some((Some(300), Some(6_000))));
+    translator.line(assistant.to_string().as_bytes());
+    let after = translator.line(result(3_000, 180, 0).to_string().as_bytes());
+    assert_eq!(speed(after), Some((Some(100), Some(1_000))));
+
+    // A resumed session's totals carry over from earlier processes (0004), so its first result is
+    // only the baseline: the whole session's output over one turn's time would read far too high.
+    let mut resumed = Translator::new(ToolPolicy::NoWrite, "none").with_resumed(true);
+    resumed.line(
+        fixture("read-only")
+            .lines()
+            .find(|line| line.contains("\"subtype\":\"init\""))
+            .unwrap()
+            .as_bytes(),
+    );
+    resumed.line(assistant.to_string().as_bytes());
+    let first = resumed.line(result(90_000, 40_000, 0).to_string().as_bytes());
+    assert_eq!(speed(first), Some((None, None)));
+    resumed.line(assistant.to_string().as_bytes());
+    let second = resumed.line(result(95_000, 40_400, 0).to_string().as_bytes());
+    assert_eq!(speed(second), Some((Some(400), Some(5_000))));
 }
