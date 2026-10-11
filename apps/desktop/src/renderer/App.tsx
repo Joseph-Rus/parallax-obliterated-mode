@@ -147,8 +147,7 @@ export function App() {
     }));
   const [panelExpanded, setPanelExpanded] = useState(false);
   // Thread details, docked at the thread's right, or floating over it when the row is narrow.
-  const threadRow = useRef<HTMLDivElement>(null);
-  const details = useThreadDetails(threadRow);
+  const details = useThreadDetails();
   // The folders whose terminal drawer is open, by key (ThreadTerminal.tsx).
   const [drawers, setDrawers] = useState<ReadonlySet<string>>(new Set());
   // The page a repository action last opened in the side panel's Browser view.
@@ -792,7 +791,7 @@ export function App() {
                 )}
               </div>
             </TopBar>
-            <div ref={threadRow} className="relative flex min-h-0 flex-1">
+            <div ref={details.ref} className="relative flex min-h-0 flex-1">
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 {selection.kind === "thread" ? (
                   <div

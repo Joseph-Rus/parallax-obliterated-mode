@@ -1,5 +1,5 @@
 import { ClipboardList, FolderGit2, FolderOpen, Monitor } from "lucide-react";
-import { useLayoutEffect, useState, type ComponentProps, type RefObject } from "react";
+import { useLayoutEffect, useState, type ComponentProps } from "react";
 
 import { Actions } from "./Actions";
 import { GitMenu } from "./GitMenu";
@@ -23,17 +23,18 @@ export const tooNarrowToDock = (width: number) =>
 export type ThreadDetailsMode = "docked" | "floating" | "hidden";
 
 /**
- * Where Thread details shows, for the thread row `row`. With room it docks while the kept choice
+ * Where Thread details shows, for the thread row `ref` is set on, which may unmount and return
+ * (behind the Pull requests page) and is measured again each time. With room it docks while the kept choice
  * says shown. Without room (the thread would keep less than `THREAD_MIN_SHARE` of the row) it
  * starts hidden, and the button floats it over the thread until pressed again; the kept choice is
  * left alone. Crossing the line either way closes a floating card.
  */
-export function useThreadDetails(row: RefObject<HTMLElement | null>) {
+export function useThreadDetails() {
+  const [element, ref] = useState<HTMLElement | null>(null);
   const [docked, setDocked] = useState(() => localStorage.getItem(THREAD_DETAILS_KEY) === "open");
   const [floating, setFloating] = useState(false);
   const [narrow, setNarrow] = useState(false);
   useLayoutEffect(() => {
-    const element = row.current;
     if (!element) return;
     const measure = () => {
       const next = tooNarrowToDock(element.getBoundingClientRect().width);
@@ -47,7 +48,7 @@ export function useThreadDetails(row: RefObject<HTMLElement | null>) {
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [row]);
+  }, [element]);
   const toggle = () => {
     if (narrow) return setFloating((was) => !was);
     setDocked((was) => {
@@ -62,7 +63,7 @@ export function useThreadDetails(row: RefObject<HTMLElement | null>) {
     : docked
       ? "docked"
       : "hidden";
-  return { mode, toggle };
+  return { mode, toggle, ref };
 }
 
 /** The top bar's button that shows and hides Thread details. */

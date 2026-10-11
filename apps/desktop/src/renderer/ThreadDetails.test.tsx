@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, useRef } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
@@ -50,22 +50,28 @@ beforeEach(() => {
   } as Partial<ParallaxBridge> as ParallaxBridge;
 });
 
-function Harness() {
-  const row = useRef<HTMLDivElement>(null);
-  const { mode, toggle } = useThreadDetails(row);
+function Harness({ row = true }: { row?: boolean }) {
+  const { mode, toggle, ref } = useThreadDetails();
+  const details = <ThreadDetails mode={mode} hostName="macbook" hostId="local" folder="/repo" />;
   return (
     <>
       <ThreadDetailsButton open={mode !== "hidden"} onToggle={toggle} />
-      <div ref={row} data-row>
-        <ThreadDetails mode={mode} hostName="macbook" hostId="local" folder="/repo" />
-      </div>
+      {row ? (
+        <div ref={ref} data-row>
+          {details}
+        </div>
+      ) : (
+        <div>Pull requests</div>
+      )}
     </>
   );
 }
+let rerender = async (_row: boolean) => {};
 async function render() {
   const root = createRoot(document.body.appendChild(document.createElement("div")));
   unmount = () => root.unmount();
-  await act(async () => root.render(<Harness />));
+  rerender = (row) => act(async () => root.render(<Harness row={row} />));
+  await rerender(true);
 }
 const panel = () => document.querySelector<HTMLElement>("aside[aria-label='Thread details']")!;
 const button = () => document.querySelector<HTMLButtonElement>("button[aria-controls]")!;
@@ -131,5 +137,16 @@ test("without room it starts collapsed, and the button floats it over the thread
   await resize(1200);
   expect(panel().dataset["mode"]).toBe("docked");
   await resize(700);
+  expect(panel().hidden).toBe(true);
+});
+
+test("a row that unmounts and returns narrower is measured again", async () => {
+  localStorage.setItem(THREAD_DETAILS_KEY, "open");
+  await render();
+  expect(panel().dataset["mode"]).toBe("docked");
+  // The Pull requests page replaces the thread; the window narrows meanwhile.
+  await rerender(false);
+  width = 700;
+  await rerender(true);
   expect(panel().hidden).toBe(true);
 });
