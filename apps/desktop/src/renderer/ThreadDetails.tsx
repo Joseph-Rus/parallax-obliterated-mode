@@ -66,35 +66,39 @@ export function ThreadDetails({
       id={THREAD_DETAILS_ID}
       aria-label="Thread details"
       hidden={!open}
-      className="w-76 shrink-0 overflow-y-auto border-l border-border bg-background"
+      // Docked in the thread's layout, but drawn as the floating card it opened as: sized to its
+      // rows, scrolling once it reaches the thread's height.
+      className="flex w-84 shrink-0 flex-col py-2 pr-3"
     >
-      <section aria-label="Workspace" className="p-2">
-        <div className="flex items-start gap-2 px-2 py-2 text-[13px]">
-          <Monitor aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate font-medium">{hostName}</p>
-            <p
-              title={folder}
-              className="mt-1 flex items-center gap-1.5 text-[11.5px] text-faint-foreground"
-            >
-              {worktree ? (
-                <FolderGit2 aria-hidden className="size-3.5 shrink-0" />
-              ) : (
-                <FolderOpen aria-hidden className="size-3.5 shrink-0" />
-              )}
-              <span className="truncate">{folder ?? "No folder yet"}</span>
-            </p>
+      <div className="max-h-full overflow-y-auto rounded-xl border border-border bg-surface text-foreground shadow-composer">
+        <section aria-label="Workspace" className="p-2">
+          <div className="flex items-start gap-2 px-2 py-2 text-[13px]">
+            <Monitor aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium">{hostName}</p>
+              <p
+                title={folder}
+                className="mt-1 flex items-center gap-1.5 text-[11.5px] text-faint-foreground"
+              >
+                {worktree ? (
+                  <FolderGit2 aria-hidden className="size-3.5 shrink-0" />
+                ) : (
+                  <FolderOpen aria-hidden className="size-3.5 shrink-0" />
+                )}
+                <span className="truncate">{folder ?? "No folder yet"}</span>
+              </p>
+            </div>
           </div>
-        </div>
-        <OpenMenu hostId={hostId} folder={folder} />
-        {actions && <Actions {...actions} />}
-      </section>
-      {git && (
-        <section aria-label="Git" className="border-t border-border p-2">
-          <GitMenu {...git} />
+          <OpenMenu hostId={hostId} folder={folder} />
+          {actions && <Actions {...actions} />}
         </section>
-      )}
-      {lineage && <LineageSection {...lineage} visible={open} />}
+        {git && (
+          <section aria-label="Git" className="border-t border-border p-2">
+            <GitMenu {...git} />
+          </section>
+        )}
+        {lineage && <LineageSection {...lineage} visible={open} />}
+      </div>
     </aside>
   );
 }
