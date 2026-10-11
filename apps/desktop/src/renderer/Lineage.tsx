@@ -103,7 +103,7 @@ export function LineageSection({
           title={`${sub.title} · ${subagentLabels[sub.state]} · Read-only subagent`}
           onClick={() => onOpenSubagent?.(sub.callId)}
           style={{ paddingLeft: `${8 + depth * 14}px` }}
-          className="flex w-full flex-col gap-0.5 rounded-md py-2 pr-2 text-left hover:bg-hover aria-current:bg-selected"
+          className="flex w-full flex-col gap-0.5 rounded-md py-2 pr-2 text-left hover:bg-hover aria-[current=page]:bg-selected"
         >
           <span className="flex w-full min-w-0 items-center gap-2 text-[13px]">
             <StatusMark attention={subagentDots[sub.state]} />
@@ -144,7 +144,7 @@ export function LineageSection({
                 title={`${title} · ${statusText(attention, run)}`}
                 onClick={() => onOpen(thread.id)}
                 style={{ paddingLeft: `${8 + depth * 14}px` }}
-                className="flex w-full flex-col gap-0.5 rounded-md py-2 pr-2 text-left hover:bg-hover aria-current:bg-selected"
+                className="flex w-full flex-col gap-0.5 rounded-md py-2 pr-2 text-left hover:bg-hover aria-[current=page]:bg-selected"
               >
                 <span className="flex w-full min-w-0 items-center gap-2 text-[13px]">
                   <StatusMark attention={attention} />

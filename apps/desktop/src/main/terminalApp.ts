@@ -24,17 +24,36 @@ export const terminalName = (app: string): string =>
   path.win32.basename(app).replace(/\.(app|exe)$/i, "");
 
 /**
+ * The flags that start each known terminal in a folder elsewhere than macOS. Some, such as
+ * Windows Terminal, ignore the directory they're started in, so the folder is passed too.
+ */
+const folderFlags: Record<string, (folder: string) => string[]> = {
+  "wt.exe": (folder) => ["-d", folder],
+  "windowsterminal.exe": (folder) => ["-d", folder],
+  "wezterm-gui.exe": (folder) => ["start", "--cwd", folder],
+  wezterm: (folder) => ["start", "--cwd", folder],
+  "alacritty.exe": (folder) => ["--working-directory", folder],
+  alacritty: (folder) => ["--working-directory", folder],
+  "gnome-terminal": (folder) => [`--working-directory=${folder}`],
+  "xfce4-terminal": (folder) => [`--working-directory=${folder}`],
+  konsole: (folder) => ["--workdir", folder],
+  kitty: (folder) => ["--directory", folder],
+  ghostty: (folder) => [`--working-directory=${folder}`],
+};
+
+/**
  * The command that opens `folder` in terminal `app`. macOS hands the folder to the app with
- * `open -a`, which every terminal there takes as where to start. Elsewhere the app starts in it.
+ * `open -a`, which every terminal there takes as where to start. Elsewhere the app starts in it,
+ * with the folder flag of a known terminal as well.
  */
 export function terminalCommand(
   platform: NodeJS.Platform,
   app: string,
   folder: string,
 ): { file: string; args: string[]; cwd?: string } {
-  return platform === "darwin"
-    ? { file: "/usr/bin/open", args: ["-a", app, folder] }
-    : { file: app, args: [], cwd: folder };
+  if (platform === "darwin") return { file: "/usr/bin/open", args: ["-a", app, folder] };
+  const name = (platform === "win32" ? path.win32 : path.posix).basename(app).toLowerCase();
+  return { file: app, args: folderFlags[name]?.(folder) ?? [], cwd: folder };
 }
 
 /** Known terminal apps only, found in the platform's app folders and PATH. */

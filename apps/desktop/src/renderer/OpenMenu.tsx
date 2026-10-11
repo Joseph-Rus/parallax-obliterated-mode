@@ -1,4 +1,4 @@
-import { ChevronDown, FolderOpen, SquareTerminal } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, SquareTerminal } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import type { OpenTarget, TerminalApp } from "../preload/bridge";
@@ -189,12 +189,14 @@ export function OpenMenu({ hostId, folder }: { hostId: string; folder?: string }
           <button
             key={app.path}
             type="button"
-            role="menuitem"
+            role="menuitemradio"
+            aria-checked={app.name === terminal}
             onClick={() => void chooseTerminal(app)}
             className={menuItem}
           >
             <SquareTerminal aria-hidden />
             <span className="flex-1">{app.name}</span>
+            {app.name === terminal && <Check aria-hidden className="text-muted-foreground" />}
           </button>
         ))}
       </Menu>

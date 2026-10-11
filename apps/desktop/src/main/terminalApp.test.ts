@@ -30,9 +30,39 @@ test("macOS opens the folder with open -a, elsewhere the app starts in it", () =
   });
   expect(terminalCommand("linux", "/usr/bin/kitty", "/home/me/repo")).toEqual({
     file: "/usr/bin/kitty",
+    args: ["--directory", "/home/me/repo"],
+    cwd: "/home/me/repo",
+  });
+  expect(terminalCommand("linux", "/usr/bin/xterm", "/home/me/repo")).toEqual({
+    file: "/usr/bin/xterm",
     args: [],
     cwd: "/home/me/repo",
   });
+});
+
+test("each known terminal is told the folder, since some ignore where they start", () => {
+  const folder = "C:\\Users\\me\\repo";
+  const wt = "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe";
+  expect(terminalCommand("win32", wt, folder)).toEqual({
+    file: wt,
+    args: ["-d", folder],
+    cwd: folder,
+  });
+  expect(
+    terminalCommand("win32", "C:\\Program Files\\WezTerm\\wezterm-gui.exe", folder).args,
+  ).toEqual(["start", "--cwd", folder]);
+  expect(
+    terminalCommand("win32", "C:\\Program Files\\Alacritty\\alacritty.exe", folder).args,
+  ).toEqual(["--working-directory", folder]);
+  const home = "/home/me/repo";
+  expect(terminalCommand("linux", "/usr/bin/gnome-terminal", home).args).toEqual([
+    `--working-directory=${home}`,
+  ]);
+  expect(terminalCommand("linux", "/usr/bin/konsole", home).args).toEqual(["--workdir", home]);
+  expect(terminalCommand("linux", "/usr/bin/wezterm", home).args).toEqual(["start", "--cwd", home]);
+  expect(terminalCommand("linux", "/usr/bin/ghostty", home).args).toEqual([
+    `--working-directory=${home}`,
+  ]);
 });
 
 test("detects only known installed terminals and preserves a recognized saved app", () => {

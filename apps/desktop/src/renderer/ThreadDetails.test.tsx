@@ -51,7 +51,7 @@ test("the button docks the panel until it's pressed again, and a restart keeps t
   await render();
   // Mounted while hidden, so its shortcuts still work.
   expect(panel().hidden).toBe(true);
-  expect(button().getAttribute("aria-label")).toBe("Show thread details");
+  expect(button().getAttribute("aria-pressed")).toBe("false");
 
   await act(async () => button().click());
   expect(panel().hidden).toBe(false);
@@ -68,6 +68,6 @@ test("the button docks the panel until it's pressed again, and a restart keeps t
 
   await act(async () => button().click());
   expect(panel().hidden).toBe(true);
-  expect(button().getAttribute("aria-label")).toBe("Show thread details");
+  expect(button().getAttribute("aria-pressed")).toBe("false");
   expect(localStorage.getItem(THREAD_DETAILS_KEY)).toBe("closed");
 });

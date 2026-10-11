@@ -63,12 +63,15 @@ test("editor and terminal selectors are separate, and selection preserves the ot
   expect(
     [...menu("Terminals").querySelectorAll("span.flex-1")].map((span) => span.textContent),
   ).toEqual(["Ghostty", "Terminal"]);
+  expect(item("Terminals", "Ghostty").getAttribute("aria-checked")).toBe("true");
+  expect(item("Terminals", "Terminal").getAttribute("aria-checked")).toBe("false");
   await act(async () => item("Open in", "VS Code").click());
   expect(localStorage.getItem(OPEN_TARGET_KEY)).toBe("vscode");
   expect(button("Open in Ghostty")).toBeDefined();
   await act(async () => item("Terminals", "Terminal").click());
   expect(selectTerminalApp).toHaveBeenCalledWith("/System/Applications/Utilities/Terminal.app");
   expect(button("Open in Terminal")).toBeDefined();
+  expect(item("Terminals", "Terminal").getAttribute("aria-checked")).toBe("true");
   expect(localStorage.getItem(OPEN_TARGET_KEY)).toBe("vscode");
   await act(async () => button("Open in Terminal").click());
   expect(openFolder).toHaveBeenLastCalledWith("local", "terminal", "/repo");

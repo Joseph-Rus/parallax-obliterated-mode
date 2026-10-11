@@ -26,9 +26,8 @@ export function useThreadDetailsOpen(): [boolean, () => void] {
 export function ThreadDetailsButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
     <IconButton
-      label={open ? "Hide thread details" : "Show thread details"}
+      label="Thread details"
       aria-pressed={open}
-      aria-expanded={open}
       aria-controls={THREAD_DETAILS_ID}
       onClick={onToggle}
     >

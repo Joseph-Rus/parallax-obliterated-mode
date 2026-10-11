@@ -192,7 +192,11 @@ export function GitMenu({
       >
         <GitBranch aria-hidden />
         <span className="min-w-0 flex-1 truncate">
-          {status ? (status.branch ?? "Detached HEAD") : "Loading branch…"}
+          {status
+            ? (status.branch ?? "Detached HEAD")
+            : error
+              ? "Branch unavailable"
+              : "Loading branch…"}
         </span>
         {!!status?.ahead && (
           <span className="shrink-0 text-[11.5px] text-faint-foreground">{status.ahead} ahead</span>
@@ -236,12 +240,6 @@ export function GitMenu({
             )}
           </button>
         ))}
-        {note && <p className="px-2 pt-1 pb-1.5 text-[12px] text-amber-500">{note}</p>}
-        {error && (
-          <p role="alert" className="px-2 pt-1 pb-1.5 text-[12px] text-danger">
-            {error}
-          </p>
-        )}
       </Menu>
       <button
         type="button"
@@ -252,7 +250,11 @@ export function GitMenu({
         <Files aria-hidden />
         <span className="flex-1">Changes</span>
         <span className="text-[12px] text-muted-foreground tabular-nums">
-          {status ? `${status.changes} ${status.changes === 1 ? "file" : "files"}` : "Loading…"}
+          {status
+            ? `${status.changes} ${status.changes === 1 ? "file" : "files"}`
+            : error
+              ? "Unavailable"
+              : "Loading…"}
         </span>
       </button>
       {note && <p className="px-2 py-1 text-[12px] text-amber-500">{note}</p>}
