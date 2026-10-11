@@ -70,8 +70,9 @@ beforeEach(() => {
     setZoom: () => {},
     version: async () => "1.0.0",
     openTargets: async () => [],
-    openTargetIcons: async () => ({}),
+    terminalApps: async () => [],
     terminalApp: async () => null,
+    openTargetIcons: async () => ({}),
     saveHost,
     sshSuggestions: async () => [],
   } as Partial<ParallaxBridge> as ParallaxBridge;

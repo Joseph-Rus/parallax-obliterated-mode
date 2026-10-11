@@ -1,7 +1,7 @@
-import { Plus, SquareTerminal } from "lucide-react";
+import { SquareTerminal } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { OpenTarget } from "../../preload/bridge";
+import type { OpenTarget, TerminalApp } from "../../preload/bridge";
 import type {
   AgentPermission,
   HostSettings,
@@ -43,20 +43,24 @@ export function GeneralSettings() {
   const [targets, setTargets] = useState<OpenTarget[]>();
   const [chosen, setChosen] = useState(() => localStorage.getItem(OPEN_TARGET_KEY));
   const [terminal, setTerminal] = useState<string | null>(null);
+  const [terminals, setTerminals] = useState<TerminalApp[]>([]);
   const [icons, setIcons] = useState<Partial<Record<OpenTarget, string>>>({});
   const [version, setVersion] = useState<string>();
   useEffect(() => {
-    void window.parallax.openTargets(localId).then(setTargets);
+    void window.parallax
+      .openTargets(localId)
+      .then((found) => setTargets(found.filter((t) => t !== "terminal")));
+    void window.parallax.terminalApps().then(setTerminals);
     void window.parallax.terminalApp().then(setTerminal);
     void window.parallax.openTargetIcons().then(setIcons);
     void window.parallax.version().then(setVersion);
   }, []);
-  const chooseTerminal = async () => {
-    const name = await window.parallax.chooseTerminalApp();
+  const chooseTerminal = async (path: string) => {
+    const name = await window.parallax.selectTerminalApp(path);
     if (!name) return;
     setTerminal(name);
     setIcons(await window.parallax.openTargetIcons());
-    setTargets(await window.parallax.openTargets(localId));
+    setTargets((await window.parallax.openTargets(localId)).filter((t) => t !== "terminal"));
     window.dispatchEvent(new Event(TERMINAL_CHOSEN));
   };
   const current = targets?.find((t) => t === chosen) ?? targets?.[0];
@@ -128,25 +132,21 @@ export function GeneralSettings() {
             targets && <span className="text-[13px] text-muted-foreground">No apps found</span>
           )}
         </Row>
-        <Row title="Terminal" description="The terminal Open lists for this computer's threads.">
+        <Row title="Terminal" description="The terminal used to open folders on this computer.">
           <span className={pickerBox}>
             <Picker
               label="Terminal"
-              value={terminal ? "terminal" : "none"}
-              onChange={(value) => {
-                if (value === "choose") void chooseTerminal();
-              }}
-              options={[
-                terminal
-                  ? { value: "terminal", label: terminal, icon: targetIcon("terminal", icons) }
-                  : { value: "none", label: "None", icon: <SquareTerminal /> },
-                {
-                  value: "choose",
-                  label: terminal ? "Choose another app…" : "Choose an app…",
-                  icon: <Plus />,
-                  divider: true,
-                },
-              ]}
+              value={terminals.find((app) => app.name === terminal)?.path ?? "none"}
+              onChange={(value) => void chooseTerminal(value)}
+              options={
+                terminals.length
+                  ? terminals.map((app) => ({
+                      value: app.path,
+                      label: app.name,
+                      icon: <SquareTerminal />,
+                    }))
+                  : [{ value: "none", label: "No terminals found", icon: <SquareTerminal /> }]
+              }
               align="end"
             />
           </span>

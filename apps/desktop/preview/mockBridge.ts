@@ -1271,7 +1271,7 @@ const folderTree: Record<string, string[]> = {
 const expand = (p: string) => p.replace(/^~(?=\/|$)/, HOME).replace(/\/+$/, "") || "/";
 
 // The terminal app Settings > General chose, once Choose… is clicked.
-let mockTerminal: string | null = null;
+let mockTerminal: string | null = "Ghostty";
 
 export const mockBridge: ParallaxBridge = {
   platform: "darwin",
@@ -1551,7 +1551,13 @@ export const mockBridge: ParallaxBridge = {
   openTargetIcons: () => delay({}),
   openFolder: () => delay(undefined),
   terminalApp: () => delay(mockTerminal),
-  chooseTerminalApp: () => delay((mockTerminal = "Ghostty")),
+  terminalApps: () =>
+    delay([
+      { path: "/Applications/Ghostty.app", name: "Ghostty" },
+      { path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" },
+    ]),
+  selectTerminalApp: (path) =>
+    delay((mockTerminal = path.includes("Ghostty") ? "Ghostty" : "Terminal")),
 
   onProfile: (listener) => {
     listener({

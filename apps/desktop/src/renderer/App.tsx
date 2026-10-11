@@ -12,23 +12,21 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 import type { InboxItem, PreviewTab, Repo, Thread } from "../protocol/generated/protocol";
-import { Actions, type RepoAction } from "./Actions";
+import { type RepoAction } from "./Actions";
 import { AgentChat } from "./AgentChat";
 import { ChildStrip } from "./ChildStrip";
 import type { Asked } from "./Approval";
 import { offlineReason, useConnection } from "./ConnectionStatus";
 import { FilesPanel } from "./FilesPanel";
 import { useInbox } from "./Inbox";
-import { GitMenu } from "./GitMenu";
 import { KnowledgePanel } from "./Knowledge";
-import { LineageTrail } from "./Lineage";
 import { NewThread } from "./NewThread";
 import { panelWidths, SIDEBAR_MIN } from "./PanelResize";
 import { NewThreadPicker } from "./NewThreadPicker";
 import { Notifications } from "./notifications";
 import { localId, useHosts } from "./hosts";
 import { iconImageBytes } from "./images";
-import { OpenMenu } from "./OpenMenu";
+import { ThreadDetails } from "./ThreadDetails";
 import { AgentsPanel, useProjectAgents } from "./ProjectAgents";
 import { ProjectChat } from "./ProjectChat";
 import { ProjectHome, waitingCount } from "./ProjectHome";
@@ -151,6 +149,7 @@ export function App() {
   // The folders whose terminal drawer is open, by key (ThreadTerminal.tsx).
   const [drawers, setDrawers] = useState<ReadonlySet<string>>(new Set());
   // The page a repository action last opened in the side panel's Browser view.
+  const [showChanges, setShowChanges] = useState<object>();
   const [browse, setBrowse] = useState<{ url?: string; agentTab?: string }>();
   // The open thread's agent browser tabs (PLX-639), which plxd lists after each browser tool call.
   const [agentTabs, setAgentTabs] = useState<{ runId: string; tabs: PreviewTab[] }>();
@@ -581,7 +580,7 @@ export function App() {
     }
   };
 
-  // The app's shortcuts (ui.tsx), but Open, which OpenMenu takes, and Mod+1 to Mod+9, which
+  // The app's shortcuts (ui.tsx), but Open, which Thread details takes, and Mod+1 to Mod+9, which
   // ThreadList takes.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -762,50 +761,58 @@ export function App() {
                   <ArrowLeft />
                 </IconButton>
               )}
-              <Breadcrumb
-                items={crumbs}
-                trail={
-                  openThread &&
-                  (lineage || subagents.some((s) => !s.parent)) && (
-                    <LineageTrail
-                      state={threads.state}
-                      chips={lineage?.chips ?? []}
-                      active={lineage?.active}
-                      root={rootOf(threads.state, openThread)}
-                      openId={openThread.id}
-                      onOpen={openThreadId}
-                      subagents={subagents.filter((s) => !s.parent)}
-                      activeSubagent={subagentOpen}
-                      onOpenSubagent={(callId) => openSubagent(openThread.id, callId)}
-                    />
-                  )
-                }
-              />
+              <Breadcrumb items={crumbs} />
               <div className="ml-auto flex shrink-0 items-center gap-2">
-                {selection.kind !== "project" && group.id !== noRepo && (
-                  <Actions hostId={host.id} repoId={group.id} canRun={!!folder} onRun={runAction} />
-                )}
-                <OpenMenu
+                <ThreadDetails
+                  key={panelKey}
+                  hostName={host.name}
                   hostId={host.id}
-                  // The thread's worktree, or New thread's repository.
-                  folder={
+                  folder={folder?.path === "~" ? undefined : folder?.path}
+                  worktree={
+                    !!threadRun?.worktreePath &&
+                    threadRun.worktreePath !==
+                      threads.state.repos.find((repo) => repo.id === group.id)?.path
+                  }
+                  actions={
+                    selection.kind !== "project" && group.id !== noRepo
+                      ? {
+                          hostId: host.id,
+                          repoId: group.id,
+                          canRun: !!folder,
+                          onRun: runAction,
+                        }
+                      : undefined
+                  }
+                  git={
                     selection.kind === "thread"
-                      ? threads.state.runs[selection.threadId]?.worktreePath
-                      : selection.kind === "new"
-                        ? threads.state.repos.find((r) => r.id === group.id)?.path
-                        : undefined
+                      ? {
+                          hostId: host.id,
+                          run: threadRun,
+                          title: threads.state.titles[selection.threadId],
+                          onPrOpened: linksPrs ? openPr : undefined,
+                          onSetUpGithub: setUpGithub,
+                          onChanges: () => {
+                            setPanelOpen(true);
+                            setShowChanges({});
+                          },
+                        }
+                      : undefined
+                  }
+                  lineage={
+                    openThread
+                      ? {
+                          state: threads.state,
+                          includeThreads: "threadLineage" in threads.capabilities,
+                          root: lineage ? rootOf(threads.state, openThread) : openThread,
+                          openId: openThread.id,
+                          onOpen: openThreadId,
+                          subagents: subagents.filter((sub) => !sub.parent),
+                          activeSubagent: subagentOpen,
+                          onOpenSubagent: (callId) => openSubagent(openThread.id, callId),
+                        }
+                      : undefined
                   }
                 />
-                {selection.kind === "thread" && (
-                  <GitMenu
-                    key={`${host.id}/${selection.threadId}`}
-                    hostId={host.id}
-                    run={threads.state.runs[selection.threadId]}
-                    title={threads.state.titles[selection.threadId]}
-                    onPrOpened={linksPrs ? openPr : undefined}
-                    onSetUpGithub={setUpGithub}
-                  />
-                )}
                 {folder && (
                   <IconButton
                     label={drawerOpen ? "Hide terminal" : "Show terminal"}
@@ -1027,6 +1034,7 @@ export function App() {
         topBarClassName={expanded && !sidebarOpen ? "traffic-light-inset" : ""}
         remoteHost={host.id === localId ? undefined : host.name}
         browse={browse}
+        changes={showChanges}
         agentTabs={
           threadRun && agentTabs?.runId === threadRun.id
             ? { hostId: host.id, ...agentTabs }

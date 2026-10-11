@@ -90,6 +90,8 @@ beforeEach(() => {
     },
     setZoom: () => {},
     openTargets: async () => [],
+    terminalApps: async () => [],
+    terminalApp: async () => null,
     openTargetIcons: async () => ({}),
   } as Partial<ParallaxBridge> as ParallaxBridge;
 });

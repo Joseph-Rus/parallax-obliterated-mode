@@ -1,54 +1,95 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
 import type { ParallaxBridge } from "../preload/bridge";
-import { OpenMenu } from "./OpenMenu";
+import { OPEN_TARGET_KEY, OpenMenu } from "./OpenMenu";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-
+HTMLElement.prototype.hidePopover = () => {};
 let unmount = () => {};
-afterEach(() => act(() => unmount()));
-
-test("draws a target's app icon where main has one, and its mark where it doesn't", async () => {
+afterEach(() =>
+  act(() => {
+    unmount();
+    document.body.innerHTML = "";
+  }),
+);
+const openFolder = vi.fn();
+const selectTerminalApp = vi.fn();
+beforeEach(() => {
   localStorage.clear();
+  openFolder.mockClear();
+  selectTerminalApp.mockClear();
+  let chosen = "Ghostty";
   window.parallax = {
     platform: "darwin",
-    openTargets: async () => ["cursor", "vscode", "files"],
+    openFolder,
+    openTargets: async () => ["cursor", "vscode", "files", "terminal"],
+    terminalApps: async () => [
+      { path: "/Applications/Ghostty.app", name: "Ghostty" },
+      { path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" },
+    ],
+    terminalApp: async () => chosen,
+    selectTerminalApp: selectTerminalApp.mockImplementation(
+      async (path: string) => (chosen = path.includes("Ghostty") ? "Ghostty" : "Terminal"),
+    ),
     openTargetIcons: async () => ({ cursor: "data:image/png;base64,Y3Vyc29y" }),
   } as Partial<ParallaxBridge> as ParallaxBridge;
+});
+async function render(hostId = "local", folder: string | undefined = "/repo") {
   const root = createRoot(document.body.appendChild(document.createElement("div")));
   unmount = () => root.unmount();
-  await act(async () => root.render(<OpenMenu hostId="local" folder="/repo" />));
+  await act(async () => root.render(<OpenMenu hostId={hostId} folder={folder} />));
+}
+const menu = (label: string) => document.querySelector(`[role="menu"][aria-label="${label}"]`)!;
+const item = (label: string, name: string) =>
+  [...menu(label).querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+    button.textContent?.includes(name),
+  )!;
+const button = (text: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+    (button) => button.textContent === text,
+  )!;
 
-  const button = document.querySelector('[aria-label="Open in Cursor"]')!;
-  expect(button.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,Y3Vyc29y");
-  const items = [...document.querySelectorAll('[role="menuitem"]')];
+test("editor and terminal selectors are separate, and selection preserves the other preference", async () => {
+  await render();
+  expect(document.querySelector('[aria-label="Open in Cursor"] img')?.getAttribute("src")).toBe(
+    "data:image/png;base64,Y3Vyc29y",
+  );
   expect(
-    items.map((item) => [
-      item.querySelector("span")?.textContent,
-      item.querySelector("img") ? "img" : "svg",
-    ]),
-  ).toEqual([
-    ["Cursor", "img"],
-    ["VS Code", "svg"],
-    ["Finder", "svg"],
-  ]);
+    [...menu("Open in").querySelectorAll("span.flex-1")].map((span) => span.textContent),
+  ).toEqual(["Cursor", "VS Code", "Finder"]);
+  expect(
+    [...menu("Terminals").querySelectorAll("span.flex-1")].map((span) => span.textContent),
+  ).toEqual(["Ghostty", "Terminal"]);
+  await act(async () => item("Open in", "VS Code").click());
+  expect(localStorage.getItem(OPEN_TARGET_KEY)).toBe("vscode");
+  expect(button("Open in Ghostty")).toBeDefined();
+  await act(async () => item("Terminals", "Terminal").click());
+  expect(selectTerminalApp).toHaveBeenCalledWith("/System/Applications/Utilities/Terminal.app");
+  expect(button("Open in Terminal")).toBeDefined();
+  expect(localStorage.getItem(OPEN_TARGET_KEY)).toBe("vscode");
+  await act(async () => button("Open in Terminal").click());
+  expect(openFolder).toHaveBeenLastCalledWith("local", "terminal", "/repo");
 });
 
-test("lists the chosen terminal app by its name (PLX-585)", async () => {
-  localStorage.clear();
-  window.parallax = {
-    platform: "darwin",
-    openTargets: async () => ["files", "terminal"],
-    openTargetIcons: async () => ({}),
-    terminalApp: async () => "Ghostty",
-  } as Partial<ParallaxBridge> as ParallaxBridge;
-  const root = createRoot(document.body.appendChild(document.createElement("div")));
-  unmount = () => root.unmount();
-  await act(async () => root.render(<OpenMenu hostId="local" folder="/repo" />));
+test("Open shortcut keeps the editor choice even with the panel closed", async () => {
+  localStorage.setItem(OPEN_TARGET_KEY, "terminal");
+  await render();
+  await act(async () =>
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { code: "KeyO", key: "o", metaKey: true, altKey: true }),
+    ),
+  );
+  expect(openFolder).toHaveBeenCalledWith("local", "cursor", "/repo");
+});
 
-  const items = [...document.querySelectorAll('[role="menuitem"] span.flex-1')];
-  expect(items.map((item) => item.textContent)).toEqual(["Finder", "Ghostty"]);
+test("remote terminal launch and selection explain why they are disabled", async () => {
+  await render("ssh-host");
+  expect(button("Open in Ghostty").disabled).toBe(true);
+  expect(button("Open in Ghostty").title).toBe("Terminals open folders on this computer only");
+  expect(
+    document.querySelector<HTMLButtonElement>('[aria-label="Choose terminal"]')!.disabled,
+  ).toBe(true);
 });

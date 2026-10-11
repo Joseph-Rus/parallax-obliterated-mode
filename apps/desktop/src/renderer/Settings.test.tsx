@@ -74,6 +74,7 @@ beforeEach(() => {
     platform: "darwin",
     version: async () => "0.0.0-local",
     terminalApp: async () => null,
+    terminalApps: async () => [],
     openTargetIcons: async () => ({}),
     connectionState: async (hostId) => states[hostId]!,
     onConnectionState: () => () => {},
@@ -1332,23 +1333,23 @@ test("General's Legacy Plan mode switch lists Plan in the Access picker", async 
   accessPrefs.set(accessDefaults);
 });
 
-test("General's Terminal row chooses a terminal app, and Open folders in lists it (PLX-585)", async () => {
-  let chosen = false;
-  window.parallax.openTargets = async () => (chosen ? ["files", "terminal"] : ["files"]);
-  window.parallax.chooseTerminalApp = async () => {
-    chosen = true;
-    return "Ghostty";
-  };
-  window.parallax.version = async () => "1.2.3";
+test("General selects only installed terminals and keeps the editor preference separate", async () => {
+  window.parallax.terminalApps = async () => [
+    { path: "/Applications/Ghostty.app", name: "Ghostty" },
+  ];
+  window.parallax.selectTerminalApp = async () => "Ghostty";
+  window.parallax.openTargets = async () => ["cursor", "files", "terminal"];
   await renderSettings("general");
-  const choose = document.querySelector<HTMLButtonElement>(
-    '[role="menu"][aria-label="Terminal"] [role="menuitemradio"]:last-child',
+  const choice = document.querySelector<HTMLElement>(
+    '[role="menu"][aria-label="Terminal"] [role="menuitemradio"]',
   )!;
-  expect(choose.textContent).toContain("Choose an app…");
-  await click(choose);
+  expect(choice.textContent).toContain("Ghostty");
+  await click(choice);
   expect(document.querySelector('[aria-label="Terminal: Ghostty"]')).not.toBeNull();
-  const options = document.querySelectorAll(
-    '[role="menu"][aria-label="Open folders in"] [role="menuitemradio"]',
-  );
-  expect([...options].map((o) => o.textContent)).toEqual(["Finder", "Ghostty"]);
+  const targets = [
+    ...document.querySelectorAll(
+      '[role="menu"][aria-label="Open folders in"] [role="menuitemradio"]',
+    ),
+  ];
+  expect(targets.map((target) => target.textContent)).toEqual(["Cursor", "Finder"]);
 });

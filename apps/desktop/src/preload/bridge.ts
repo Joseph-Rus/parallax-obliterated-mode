@@ -23,6 +23,7 @@ export type ThemePreference = (typeof THEME_PREFERENCES)[number];
  */
 export const OPEN_TARGETS = ["cursor", "vscode", "files", "terminal"] as const;
 export type OpenTarget = (typeof OPEN_TARGETS)[number];
+export type TerminalApp = { path: string; name: string };
 
 /**
  * The variable a provider instance's `home` sets, for the kinds that have one: Settings labels the
@@ -309,11 +310,10 @@ export interface ParallaxBridge {
   openFolder(hostId: string, target: OpenTarget, folder: string): Promise<void>;
   /** The name of the terminal app Open uses, or null until one is chosen. */
   terminalApp(): Promise<string | null>;
-  /**
-   * Asks for the terminal app in a file dialog that starts in Applications, and keeps it. Resolves
-   * to its name, or null if canceled.
-   */
-  chooseTerminalApp(): Promise<string | null>;
+  /** Installed known terminal apps on this computer. */
+  terminalApps(): Promise<TerminalApp[]>;
+  /** Selects an installed terminal. Unknown paths are rejected. */
+  selectTerminalApp(path: string): Promise<string | null>;
 
   /**
    * Calls `listener` with the signed-in Parallax account (0037), or null, now and on every

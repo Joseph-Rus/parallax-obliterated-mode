@@ -40,7 +40,13 @@ import { renderPage, savedHost, startHosts } from "./hosts";
 import { isBrowsable, isOpenableExternally, mayNavigate } from "./links";
 import { appDataDir } from "./plxd";
 import { cloneRepo, createRepo, listFolders } from "./repos";
-import { readTerminalApp, terminalCommand, terminalName, writeTerminalApp } from "./terminalApp";
+import {
+  detectTerminalApps,
+  readTerminalApp,
+  terminalCommand,
+  terminalName,
+  writeTerminalApp,
+} from "./terminalApp";
 import { startStorage } from "./storage";
 import { isNightly, startUpdater } from "./updater";
 import { broadcast } from "./windows";
@@ -228,7 +234,11 @@ let editors: Partial<Record<Editor, string>> | undefined;
 const installedEditors = () => (editors ??= detectEditors(process.platform, process.env));
 // The terminal app chosen in Settings > General (terminalApp.ts), read once.
 const terminalFile = () => path.join(app.getPath("userData"), "terminal.json");
-let terminal = readTerminalApp(terminalFile());
+const savedTerminal = readTerminalApp(terminalFile());
+const installedTerminals = () => detectTerminalApps(process.platform, process.env, savedTerminal);
+let terminal =
+  installedTerminals().find((app) => app.path === savedTerminal)?.path ??
+  installedTerminals()[0]?.path;
 // Every editor opens an SSH host's folder over its Remote SSH. The file manager and terminal are
 // this computer's.
 function openTargets(hostId: unknown): OpenTarget[] {
@@ -239,43 +249,29 @@ function openTargets(hostId: unknown): OpenTarget[] {
   return terminal ? [...found, "files", "terminal"] : [...found, "files"];
 }
 ipcMain.handle("parallax:openTargets", (_event, hostId: unknown) => openTargets(hostId));
-ipcMain.handle("parallax:terminalApp", () => (terminal ? terminalName(terminal) : null));
-// A file dialog in Applications, or the OS's equivalent, sheet-attached to the asking window.
-ipcMain.handle("parallax:chooseTerminalApp", async (event) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  const options: Electron.OpenDialogOptions = {
-    title: "Choose your terminal",
-    buttonLabel: "Choose",
-    properties: ["openFile"],
-    ...(process.platform === "darwin"
-      ? { defaultPath: "/Applications", filters: [{ name: "Applications", extensions: ["app"] }] }
-      : process.platform === "win32"
-        ? {
-            defaultPath: process.env["ProgramFiles"],
-            filters: [{ name: "Programs", extensions: ["exe"] }],
-          }
-        : { defaultPath: "/usr/bin" }),
-  };
-  const { canceled, filePaths } = await (win
-    ? dialog.showOpenDialog(win, options)
-    : dialog.showOpenDialog(options));
-  const chosen = filePaths[0];
-  if (canceled || !chosen) return null;
+ipcMain.handle(
+  "parallax:terminalApp",
+  () => installedTerminals().find((app) => app.path === terminal)?.name ?? null,
+);
+ipcMain.handle("parallax:terminalApps", () => installedTerminals());
+ipcMain.handle("parallax:selectTerminalApp", async (event, selected: unknown) => {
+  const chosen = installedTerminals().find((app) => app.path === selected);
+  if (!chosen) return null;
   try {
-    writeTerminalApp(terminalFile(), chosen);
+    writeTerminalApp(terminalFile(), chosen.path);
   } catch (error) {
-    const detail = (error as Error).message;
+    const win = BrowserWindow.fromWebContents(event.sender);
     if (win)
       await dialog.showMessageBox(win, {
         type: "warning",
         message: "Parallax couldn't save your terminal.",
-        detail,
+        detail: (error as Error).message,
       });
     return null;
   }
-  terminal = chosen;
+  terminal = chosen.path;
   targetIcons = undefined;
-  return terminalName(chosen);
+  return chosen.name;
 });
 // The Open targets' own app icons on macOS, as data URLs, found once. Quick Look, since
 // `app.getFileIcon` gives a `.app` bundle a placeholder icon. A target without one keeps its mark.

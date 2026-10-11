@@ -4,7 +4,13 @@ import path from "node:path";
 
 import { expect, test } from "vite-plus/test";
 
-import { readTerminalApp, terminalCommand, terminalName, writeTerminalApp } from "./terminalApp";
+import {
+  detectTerminalApps,
+  readTerminalApp,
+  terminalCommand,
+  terminalName,
+  writeTerminalApp,
+} from "./terminalApp";
 
 test("the chosen terminal is saved and read back, and a bad file reads as none", () => {
   const file = path.join(mkdtempSync(path.join(tmpdir(), "terminal-")), "terminal.json");
@@ -27,4 +33,48 @@ test("macOS opens the folder with open -a, elsewhere the app starts in it", () =
     args: [],
     cwd: "/home/me/repo",
   });
+});
+
+test("detects only known installed terminals and preserves a recognized saved app", () => {
+  const saved = "/custom/kitty.app";
+  const installed = new Set([
+    "/Applications/Ghostty.app",
+    "/System/Applications/Utilities/Terminal.app",
+    saved,
+    "/Applications/Cursor.app",
+  ]);
+  expect(detectTerminalApps("darwin", {}, saved, (file) => installed.has(file))).toEqual([
+    { path: "/Applications/Ghostty.app", name: "Ghostty" },
+    { path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" },
+    { path: saved, name: "kitty" },
+  ]);
+  expect(
+    detectTerminalApps("darwin", {}, "/Applications/Cursor.app", (file) =>
+      installed.has(file),
+    ).some((app) => app.path.includes("Cursor")),
+  ).toBe(false);
+});
+
+test("finds Linux and Windows terminals on their platform paths", () => {
+  expect(
+    detectTerminalApps(
+      "linux",
+      { PATH: "/bin:/usr/bin" },
+      undefined,
+      (file) => file === "/usr/bin/kitty",
+    ),
+  ).toEqual([{ path: "/usr/bin/kitty", name: "kitty" }]);
+  expect(
+    detectTerminalApps(
+      "win32",
+      { LOCALAPPDATA: "C:\\Users\\ryan\\AppData\\Local" },
+      undefined,
+      (file) => file.endsWith("\\wt.exe"),
+    ),
+  ).toEqual([
+    {
+      path: "C:\\Users\\ryan\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe",
+      name: "Windows Terminal",
+    },
+  ]);
 });

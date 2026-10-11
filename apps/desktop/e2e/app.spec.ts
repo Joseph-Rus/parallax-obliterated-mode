@@ -96,8 +96,11 @@ test("stops the thread", async () => {
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
 });
 
-test("a top bar menu closes on a click outside it (PLX-363)", async () => {
-  await page.getByRole("button", { name: "Open in…" }).click();
+test("thread details and its editor menu close on a click outside (PLX-363)", async () => {
+  await page.getByRole("button", { name: "Thread details", exact: true }).click();
+  const details = page.getByRole("dialog", { name: "Thread details", exact: true });
+  await expect(details).toBeVisible();
+  await page.getByRole("button", { name: "Choose editor or file manager" }).click();
   const menu = page.getByRole("menu", { name: "Open in" });
   await expect(menu).toBeVisible();
   // A menu that inherits the top bar's drag turns the window's clicks outside it into drags,
@@ -108,6 +111,7 @@ test("a top bar menu closes on a click outside it (PLX-363)", async () => {
   expect(region).not.toBe("drag");
   await page.getByRole("log", { name: "Transcript" }).click();
   await expect(menu).toBeHidden();
+  await expect(details).toBeHidden();
 });
 
 test("opens a terminal in the thread's folder, kept while hidden (PLX-295)", async () => {
@@ -517,6 +521,7 @@ test("saves a repository action and runs it in the drawer, opening its preview (
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const preview = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
   // Actions belong to a repository: the open thread is quill's, from the test above.
+  await page.getByRole("button", { name: "Thread details", exact: true }).click();
   await page.getByRole("button", { name: "Add action" }).click();
   const dialog = page.getByRole("dialog", { name: "Add action" });
   await dialog.getByRole("textbox", { name: "Name" }).fill("Git version");
@@ -529,10 +534,14 @@ test("saves a repository action and runs it in the drawer, opening its preview (
   await dialog.getByRole("checkbox", { name: "Open preview when this action runs" }).check();
   await page.screenshot({ path: test.info().outputPath("action-dialog.png") });
   await dialog.getByRole("button", { name: "Save action" }).click();
-  await page.screenshot({ path: test.info().outputPath("action-top-bar.png") });
+  const details = page.getByRole("dialog", { name: "Thread details", exact: true });
+  if (!(await details.isVisible()))
+    await page.getByRole("button", { name: "Thread details", exact: true }).click();
+  await page.screenshot({ path: test.info().outputPath("action-details.png") });
 
   // The drawer opens and runs it, and the side panel's Browser shows the preview.
-  await page.getByRole("button", { name: "Git version" }).click();
+  await details.getByRole("button", { name: "Git version", exact: true }).click();
+  await expect(details).toBeHidden();
   const terminal = page.getByRole("group", { name: "Terminal", exact: true });
   await expect(terminal).toContainText("git version ");
   await expect(page.getByRole("textbox", { name: "Address" })).toHaveValue(
@@ -583,8 +592,7 @@ test("attaches another thread with @, sends it with the message, and opens it fr
   );
 });
 
-test("switches between a thread and the one it launched, by chip, crumb, and shortcut (PLX-374)", async () => {
-  // A parent and the child it launched, as an agent would with thread_launch (0041).
+test("thread details opens children independently of the right side panel", async () => {
   const start = async (title: string, parent?: string) => {
     const params = { runId: uuidv7(), prompt: title, title, ...(parent && { parent }) };
     const answer = await page.evaluate(
@@ -593,55 +601,36 @@ test("switches between a thread and the one it launched, by chip, crumb, and sho
     expect(answer).not.toHaveProperty("error");
     return params.runId;
   };
-  // The chips get the top bar's room with the side panel closed; the end checks it open.
-  const hidePanel = page.getByRole("button", { name: "Hide side panel" });
-  if (await hidePanel.isVisible()) await hidePanel.click();
   const parent = await start("Plan the release");
   await start("Write the changelog", parent);
-
-  // The child nests under its parent, collapsed.
   await page
     .locator("#sidebar li[data-kind='thread'] > button")
     .filter({ hasText: "Plan the release" })
     .click();
-  const sidebar = page.getByRole("navigation", { name: "Sidebar" });
-  const group = sidebar.getByRole("button", { name: /^1 thread/ });
-  await expect(group).toHaveAttribute("aria-expanded", "false");
   const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
   const current = breadcrumb.locator('ol > li > [aria-current="page"]');
   await expect(current).toHaveText("Plan the release");
-
-  // Its chip opens the child, whose parent crumb goes back.
-  const chips = breadcrumb.getByRole("group", { name: "Child threads" });
-  await chips.getByRole("button", { name: "Write the changelog" }).click();
-  const siblings = breadcrumb.getByRole("group", { name: "Sibling threads" });
-  await expect(siblings.getByRole("button", { name: "Write the changelog" })).toHaveAttribute(
+  const detailsButton = page.getByRole("button", { name: "Thread details", exact: true });
+  const details = page.getByRole("dialog", { name: "Thread details", exact: true });
+  await detailsButton.click();
+  await details.getByRole("button", { name: /Write the changelog/ }).click();
+  await detailsButton.click();
+  await expect(details.getByRole("button", { name: /Write the changelog/ })).toHaveAttribute(
     "aria-current",
     "page",
   );
-  await expect(group).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
   await breadcrumb.getByRole("button", { name: "Plan the release" }).click();
   await expect(current).toHaveText("Plan the release");
-
-  // Mod+Alt+Right opens the first child, and Mod+Alt+Up its parent.
   await page.keyboard.press("ControlOrMeta+Alt+ArrowRight");
-  await expect(siblings).toBeVisible();
+  await expect(page.getByRole("region", { name: "Child thread" })).toBeVisible();
   await page.keyboard.press("ControlOrMeta+Alt+ArrowUp");
   await expect(current).toHaveText("Plan the release");
-
-  // At the default window size with the side panel open, the trail shrinks to +N, which still
-  // takes a click (Playwright fails it when the top bar's buttons cover it) and opens the tree.
-  // A screen smaller than the window, as on some CI runners, leaves no room to check.
-  await page.getByRole("button", { name: "Show side panel" }).click();
-  const width = await app.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows()[0]!;
-    window.setSize(1200, 800);
-    return window.getSize()[0];
-  });
-  if (width === 1200) {
-    await chips.getByRole("button", { name: "1 more threads" }).click();
-    const tree = page.getByRole("dialog", { name: "Thread tree" });
-    await tree.getByRole("button", { name: /Write the changelog/ }).click();
-    await expect(siblings).toBeVisible();
-  }
+  const show = page.getByRole("button", { name: "Show side panel" });
+  if (await show.isVisible()) await show.click();
+  await detailsButton.click();
+  await expect(details).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Side panel" })).toBeVisible();
+  await details.getByRole("button", { name: /Write the changelog/ }).click();
+  await expect(page.getByRole("region", { name: "Child thread" })).toBeVisible();
 });

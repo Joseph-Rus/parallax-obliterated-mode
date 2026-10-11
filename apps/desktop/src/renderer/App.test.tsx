@@ -24,6 +24,8 @@ const bridge: Partial<ParallaxBridge> = {
   },
   setZoom: () => {},
   openTargets: async () => [],
+  terminalApps: async () => [],
+  terminalApp: async () => null,
   openTargetIcons: async () => ({}),
   onProfile: () => () => {},
 };

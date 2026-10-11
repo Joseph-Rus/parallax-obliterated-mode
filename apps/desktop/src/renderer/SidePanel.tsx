@@ -109,6 +109,7 @@ export function SidePanel({
   terminal,
   files,
   browse,
+  changes,
   agentTabs,
   pullRequests,
   pullRequest,
@@ -128,6 +129,8 @@ export function SidePanel({
   terminal?: (shown: boolean, empty: ReactNode) => ReactNode;
   files?: ReactNode;
   browse?: { url?: string; agentTab?: string };
+  /** A new request opens the Changes view. */
+  changes?: object;
   /** The open thread's agent browser tabs (PLX-639), for the Browser view. */
   agentTabs?: ComponentProps<typeof Browser>["agent"];
   pullRequests?: { urls: readonly string[]; list: ReactNode; view: (url: string) => ReactNode };
@@ -181,6 +184,11 @@ export function SidePanel({
     setActive(next);
     document.getElementById(next ? `side-panel-tab-${next.key}` : "side-panel-open-view")?.focus();
   };
+  const [changesOpened, setChangesOpened] = useState(changes);
+  if (changes !== changesOpened) {
+    setChangesOpened(changes);
+    if (changes) openView(surfaces.find((surface) => surface.name === "Changes")!);
+  }
   const [browsed, setBrowsed] = useState(browse);
   if (browse !== browsed) {
     setBrowsed(browse);

@@ -171,7 +171,7 @@ const saved = (actions: Partial<RepoAction>[]) =>
     ),
   );
 
-test("an action runs from its button, its menu row, and its keybinding, but not under a dialog", () => {
+test("an action runs from its details row and keybinding, but not under a dialog", () => {
   saved([
     { name: "Test", keybinding: "Shift+Meta+KeyT" },
     { name: "Dev" },
@@ -180,11 +180,9 @@ test("an action runs from its button, its menu row, and its keybinding, but not 
   ]);
   const onRun = vi.fn();
   render(<Actions hostId="local" repoId="r1" canRun onRun={onRun} />);
-  // Three buttons, and every action in the menu.
-  const bar = [...document.querySelectorAll("button:not([role])")].map((b) => b.textContent);
-  expect(bar).toEqual(["Test", "Dev", "Lint", ""]);
-  const rows = [...document.querySelectorAll('[role="menu"] [role="menuitem"]')];
-  expect(rows.map((r) => r.textContent)).toEqual([
+  // Every saved action has one row in the details panel.
+  const rows = [...document.querySelectorAll('[aria-label="Repository actions"] button')];
+  expect(rows.map((row) => row.textContent)).toEqual([
     "Test⇧⌘T",
     "",
     "Dev",
