@@ -120,6 +120,8 @@ pub(crate) struct Agents {
     placing: tokio::sync::Mutex<()>,
     /// The runs whose live sessions are idle (0060).
     pub(super) idle: IdleSessions,
+    /// The slots for turns of threads in shared worktrees (0063).
+    pub(crate) shared_slots: crate::delegation::Slots,
 }
 
 /// The most idle live sessions a host keeps (0060). Past it, the least recently used is released.
@@ -199,6 +201,7 @@ impl Agents {
             placement: tokio::sync::Notify::new(),
             placing: tokio::sync::Mutex::new(()),
             idle: IdleSessions::default(),
+            shared_slots: crate::delegation::Slots::default(),
         }
     }
 
@@ -363,7 +366,8 @@ async fn prepare_run(
 ) -> Result<(Prepared, String), ErrorObject> {
     let (repo_path, context_scope, project_row, thread_run, defaults, mut accounts) =
         store(daemon, move |db| {
-            let repo_path = crate::threads::scope_path(db, project)?;
+            // A thread sharing another's workspace works in its worktree (0063).
+            let repo_path = crate::delegation::workdir(db, project, run.into())?;
             // A run whose scope is a Project, not a repo entry, is its coordinator or one of its
             // children (0042).
             let project_row = db
@@ -585,13 +589,19 @@ async fn switch_checkout(
     reference: &str,
 ) -> Result<(), ErrorObject> {
     let busy = store(daemon, move |db| {
-        db.list_runs(Some(project.into()))
-            .map(|runs| {
-                runs.iter().any(|run| {
-                    run.fields.checkout && [STARTING, RUNNING].contains(&run.state.status.as_str())
-                })
-            })
-            .map_err(|e| store_error(&e))
+        for run in db
+            .list_runs(Some(project.into()))
+            .map_err(|e| store_error(&e))?
+        {
+            if run.fields.checkout
+                && [STARTING, RUNNING].contains(&run.state.status.as_str())
+                && crate::delegation::workdir(db, project, run.id)?
+                    == crate::threads::scope_path(db, project)?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     })
     .await?;
     if busy {
@@ -1564,7 +1574,8 @@ pub(crate) async fn queue(
 /// thread's [`recover`] held, so its actor waits for `queue.resume`. With the host's
 /// `continueAfterRestart`, a plain
 /// thread in `cut`, whose turn the restart cut off, then gets [`CONTINUE`] on its session, ahead
-/// of its held queue. A Project's cut runs go on through its coordinator's restart wake-up
+/// of its held queue, once a slot is free for a thread in a shared worktree (0063). A Project's
+/// cut runs go on through its coordinator's restart wake-up
 /// instead ([`wake::catch_up`], PLX-178), which placement's slots (0046) also hold to. Called
 /// once at startup, after [`recover`].
 pub(crate) async fn deliver_queued(daemon: &Arc<Daemon>, cut: Vec<RunId>) {
@@ -1597,41 +1608,61 @@ pub(crate) async fn deliver_queued(daemon: &Arc<Daemon>, cut: Vec<RunId>) {
     .await
     .unwrap_or_default();
     for id in cut.into_iter().filter(|_| on) {
-        // A plain thread with a session to continue.
+        // A plain thread with a session to continue, and whether it shares a worktree.
         let plain = store(daemon, move |db| {
             let Some(row) = db.get_run(id.into()).map_err(|e| store_error(&e))? else {
-                return Ok(false);
+                return Ok(None);
             };
             let project = db
                 .get_project(row.fields.project_id)
                 .map_err(|e| store_error(&e))?;
-            Ok(project.is_none() && row.state.session_id.is_some())
+            let shared = db
+                .lineage(id.into())
+                .map_err(|e| store_error(&e))?
+                .is_some_and(|lineage| lineage.workspace_of.is_some());
+            Ok((project.is_none() && row.state.session_id.is_some()).then_some(shared))
         })
         .await;
-        if !matches!(plain, Ok(true)) {
+        let Ok(Some(shared)) = plain else {
+            continue;
+        };
+        if !shared {
+            continue_cut(daemon, id).await;
             continue;
         }
-        info!(run = %id, "continuing a turn a restart cut off");
-        let params = AgentSendParams {
-            run_id: id,
-            turn_id: TurnId::generate(),
-            text: CONTINUE.to_owned(),
-            model: None,
-            effort: None,
-            permission: None,
-            context_window: None,
-            fast: None,
-            account: None,
-            images: Vec::new(),
-            threads: Vec::new(),
-            from: None,
-            delivery: None,
-        };
-        // As a steer, which starts its own turn with none running, so it goes ahead of the held
-        // queue rather than waiting at its end (0060).
-        if let Err(error) = send_with(Arc::clone(daemon), params, Delivery::Steer).await {
-            warn!(run = %id, error = %error.message, "could not continue a run after a restart");
-        }
+        // A shared thread's turn waits in line for a slot rather than being refused (0063).
+        let waiting = Arc::clone(daemon);
+        daemon.agents.background(async move {
+            let slot = waiting.agents.shared_slots.wait().await;
+            waiting.agents.shared_slots.reserve(id, slot);
+            continue_cut(&waiting, id).await;
+            waiting.agents.shared_slots.unreserve(id);
+        });
+    }
+}
+
+/// Sends [`CONTINUE`] to run `id`, whose turn a restart cut off.
+async fn continue_cut(daemon: &Arc<Daemon>, id: RunId) {
+    info!(run = %id, "continuing a turn a restart cut off");
+    let params = AgentSendParams {
+        run_id: id,
+        turn_id: TurnId::generate(),
+        text: CONTINUE.to_owned(),
+        model: None,
+        effort: None,
+        permission: None,
+        context_window: None,
+        fast: None,
+        account: None,
+        images: Vec::new(),
+        threads: Vec::new(),
+        from: None,
+        delivery: None,
+    };
+    // As a steer, which starts its own turn with none running, so it goes ahead of the held
+    // queue rather than waiting at its end (0060).
+    if let Err(error) = send_with(Arc::clone(daemon), params, Delivery::Steer).await {
+        warn!(run = %id, error = %error.message, "could not continue a run after a restart");
     }
 }
 
@@ -2410,7 +2441,7 @@ mod tests {
         assert!(!agents.retire(id, &commands), "a command holds a sender");
         assert!(
             racing
-                .try_send(Command::Wake(String::new(), Vec::new()))
+                .try_send(Command::Wake(String::new(), Vec::new(), None))
                 .is_ok()
         );
         drop(racing);

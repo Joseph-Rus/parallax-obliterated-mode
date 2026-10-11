@@ -27,6 +27,7 @@ impl Actor {
             || self.busy()
             || self.effect.is_some()
             || self.pending_revert.is_some()
+            || self.slot_wait.is_some()
         {
             return None;
         }
@@ -45,6 +46,7 @@ impl Actor {
             .state
             .resume_at
             .is_some_and(|at| at <= Timestamp::now())
+            && self.slot_ready().await
         {
             self.resume_when_due().await;
         }
