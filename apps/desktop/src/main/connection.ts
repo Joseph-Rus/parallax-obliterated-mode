@@ -167,6 +167,8 @@ export type ConnectionOptions = {
   /** The app's version, sent in `initialize`. */
   clientVersion: string;
   onState: (state: ConnectionState) => void;
+  /** Checks the local running version before exposing it. True reconnects after replacement. */
+  replaceDaemon?: (version: string) => Promise<boolean>;
   /** Starts `plxd attach`. Tests pass a fake. */
   spawn?: (file: string, args: string[]) => ChildProcessWithoutNullStreams;
 };
@@ -216,6 +218,8 @@ export class Connection {
   private retryTimer?: NodeJS.Timeout;
   private heartbeatTimer?: NodeJS.Timeout;
   private livenessTimer?: NodeJS.Timeout;
+  private preparing = false;
+  private preparationError?: ConnectionError;
   private readonly subscriptions = new Set<Subscription>();
   private readonly watches = new Set<Watch>();
   private readonly terminals = new Map<string, Terminal>();
@@ -480,8 +484,35 @@ export class Connection {
       HANDSHAKE_TIMEOUT_MS,
       (response) => {
         if (child !== this.child) return;
-        if ("error" in response) return this.end(handshakeError(response.error));
-        this.onInitialized(client, response.result);
+        const error = "error" in response ? handshakeError(response.error) : undefined;
+        const version = "result" in response ? response.result.plxd : error?.plxd;
+        const finish = () => {
+          if ("error" in response) return this.end(handshakeError(response.error));
+          if (this.preparationError) return this.end(this.preparationError);
+          this.onInitialized(client, response.result);
+        };
+        if (!this.options.replaceDaemon || version === undefined) return finish();
+        this.preparing = true;
+        void this.options.replaceDaemon(version).then(
+          (replaced) => {
+            if (child !== this.child) return;
+            this.preparing = false;
+            if (!replaced) return finish();
+            this.teardown();
+            this.connect();
+          },
+          (failure: unknown) => {
+            if (child !== this.child) return;
+            this.teardown();
+            this.fail(
+              {
+                reason: "exited",
+                message: `Couldn't update the bundled local plxd: ${failure instanceof Error ? failure.message : String(failure)}`,
+              },
+              false,
+            );
+          },
+        );
       },
     );
   }
@@ -619,14 +650,20 @@ export class Connection {
 
   /** Ends the current connection, then retries with backoff unless the error needs the user. */
   private end(error: ConnectionError): void {
+    // Replacing serve closes attach. Wait for the service operation to finish before reconnecting.
+    if (this.preparing) {
+      this.preparationError = error;
+      return;
+    }
     this.teardown();
     this.fail(error);
   }
 
-  private fail(error: ConnectionError): void {
+  private fail(error: ConnectionError, retryAllowed = true): void {
     // These can't fix themselves: the binary is missing or incompatible, rejects `attach`'s
     // arguments (exit 2, a usage error), or the host needs setting up.
     const retrying =
+      retryAllowed &&
       error.reason !== "notFound" &&
       error.reason !== "incompatibleProtocol" &&
       error.reason !== "sshSetup" &&
@@ -641,6 +678,8 @@ export class Connection {
     // Cleared first, so the callbacks that follow see a connection that already ended.
     this.child = undefined;
     this.client = undefined;
+    this.preparing = false;
+    this.preparationError = undefined;
     clearTimeout(this.retryTimer);
     clearInterval(this.heartbeatTimer);
     clearTimeout(this.livenessTimer);

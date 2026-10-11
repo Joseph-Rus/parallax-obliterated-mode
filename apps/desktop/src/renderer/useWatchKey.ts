@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * When to open a `window.parallax.watch` (0059) on `id`: once its host first connects. It stays
@@ -7,15 +7,36 @@ import { useCallback, useState } from "react";
  * host next reconnects, as after updating its plxd. Returns the key to open it under, undefined
  * until then, which changes only to open it again, and the function to call on its error.
  */
-export function useWatchKey(id: string, connected: boolean): [string | undefined, () => void] {
-  const [opened, setOpened] = useState<{ id: string; key: string; failed?: boolean }>();
+export function useWatchKey(
+  id: string,
+  connected: boolean,
+  hostId: string,
+): [string | undefined, () => void] {
+  const [opened, setOpened] = useState<{ id: string; key: string }>();
   const [count, setCount] = useState(0);
+  const failedKey = useRef<string>(undefined);
   if (connected && opened?.id !== id) {
     setOpened({ id, key: `${id}\n${count}` });
     setCount(count + 1);
   }
-  // Ended with an error: closed now, and opened again on the next connection.
-  if (!connected && opened?.failed) setOpened(undefined);
-  const failed = useCallback(() => setOpened((o) => o && { ...o, failed: true }), []);
+  // Read each connection event. React may batch a fast disconnect/reconnect into one render.
+  useEffect(
+    () =>
+      window.parallax.onConnectionState((host, state) => {
+        if (
+          host === hostId &&
+          state.status === "connected" &&
+          opened &&
+          failedKey.current === opened.key
+        ) {
+          failedKey.current = undefined;
+          setOpened(undefined);
+        }
+      }),
+    [hostId, opened],
+  );
+  const failed = useCallback(() => {
+    failedKey.current = opened?.key;
+  }, [opened?.key]);
   return [opened?.id === id ? opened.key : undefined, failed];
 }

@@ -149,6 +149,12 @@ export type ServeSystem = {
   sleep: (ms: number) => Promise<void>;
 };
 
+/** A packaged Mac app's login service, checked before replacing its bundled serve. */
+export type ServeService = {
+  status: () => Promise<{ program?: string; pid?: number; ready: boolean }>;
+  replace: () => Promise<void>;
+};
+
 const processes: ServeSystem = {
   lockPid: (dir) => Number.parseInt(readFileSync(path.join(dir, "plxd.lock"), "utf8")),
   args: async (pid) =>
@@ -165,19 +171,24 @@ const processes: ServeSystem = {
 export const isBundledServe = (args: string) =>
   /(\.app\/Contents\/Resources|\/resources)\/plxd serve(\s|$)/.test(args);
 
+const isBundledProgram = (program: string) => isBundledServe(`${program} serve`);
+
 /**
  * After an update, stops the `plxd serve` holding `dir`'s lock when its version (`running`)
  * differs from the app's bundled plxd's (`bundled`, undefined when unknown) and a packaged Parallax
  * app started it (`isBundledServe`), then waits up to 10 s for it to exit. SIGTERM lets serve shut
  * down cleanly, but it ends agent runs in flight. Every other serve is left alone; a real protocol
  * mismatch with one still shows as the connection's error. macOS and Linux only (`ps`). `why` is
- * for the log.
+ * for the log. An installed bundled login service is updated and restarted through its service
+ * manager instead, so its next login also runs the current app's binary. A failed service update
+ * never falls back to killing its process.
  */
 export async function replaceServe(
   dir: string,
   running: string,
   bundled: string | undefined,
   system = processes,
+  service?: ServeService,
 ): Promise<{ stopped: boolean; why: string }> {
   const keep = (why: string) => ({ stopped: false, why: `kept plxd serve ${running}: ${why}` });
   if (bundled === undefined) return keep("the bundled plxd's version is unknown");
@@ -192,18 +203,48 @@ export async function replaceServe(
     return keep("it isn't running");
   }
   if (!isBundledServe(args)) return keep(`no packaged Parallax started it (${args})`);
+  if (service) {
+    const { program, pid: servicePid } = await service.status();
+    if (program && isBundledProgram(program)) {
+      // Never restart a service running a different data folder's daemon.
+      if (servicePid !== undefined && servicePid !== pid)
+        return keep("the login service is running another daemon");
+      await service.replace();
+      // install returns before serve necessarily listens. Otherwise attach can start a competing
+      // process, especially for an isolated data folder without the default service's kickstart.
+      const deadline = Date.now() + 10_000;
+      for (let waited = 0; waited < 10_000 && Date.now() < deadline; waited += 100) {
+        const status = await service.status();
+        let holder: number | undefined;
+        try {
+          holder = system.lockPid(dir);
+        } catch {
+          // The old lock is gone and the new service hasn't acquired it yet.
+        }
+        if (status.ready && status.pid !== undefined && status.pid !== pid && status.pid === holder)
+          return {
+            stopped: true,
+            why: `restarted plxd's login service for the bundled ${bundled}`,
+          };
+        await system.sleep(100);
+      }
+      throw new Error("plxd's login service did not start the updated daemon within 10 seconds");
+    }
+    if (servicePid === pid) return keep("the login service is externally managed");
+  }
   try {
     system.kill(pid);
-  } catch {
-    return keep("it already exited");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return keep("it already exited");
+    throw error;
   }
   for (let waited = 0; waited < 10_000; waited += 100) {
     try {
       system.kill(pid, 0);
     } catch {
-      break; // Gone.
+      return { stopped: true, why: `stopped plxd serve ${running} for the bundled ${bundled}` };
     }
     await system.sleep(100);
   }
-  return { stopped: true, why: `stopped plxd serve ${running} for the bundled ${bundled}` };
+  throw new Error(`plxd serve ${running} did not exit within 10 seconds`);
 }
