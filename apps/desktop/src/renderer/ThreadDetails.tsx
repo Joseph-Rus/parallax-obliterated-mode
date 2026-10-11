@@ -1,5 +1,5 @@
 import { ClipboardList, FolderGit2, FolderOpen, Monitor } from "lucide-react";
-import { useState, type ComponentProps } from "react";
+import { useLayoutEffect, useState, type ComponentProps, type RefObject } from "react";
 
 import { Actions } from "./Actions";
 import { GitMenu } from "./GitMenu";
@@ -11,15 +11,58 @@ import { IconButton } from "./ui";
 export const THREAD_DETAILS_KEY = "parallax.threadDetails";
 export const THREAD_DETAILS_ID = "thread-details";
 
-/** Whether Thread details is shown, kept across threads and restarts. */
-export function useThreadDetailsOpen(): [boolean, () => void] {
-  const [open, setOpen] = useState(() => localStorage.getItem(THREAD_DETAILS_KEY) === "open");
-  const toggle = () =>
-    setOpen((was) => {
+/** The docked card's width, `w-84`, with its right gap. */
+const DOCKED_WIDTH = 348;
+/** The least of its row the thread keeps beside the docked card; below it the card floats. */
+export const THREAD_MIN_SHARE = 0.6;
+
+/** Whether docking Thread details in a row `width` wide would leave the thread too little room. */
+export const tooNarrowToDock = (width: number) =>
+  width > 0 && width - DOCKED_WIDTH < width * THREAD_MIN_SHARE;
+
+export type ThreadDetailsMode = "docked" | "floating" | "hidden";
+
+/**
+ * Where Thread details shows, for the thread row `row`. With room it docks while the kept choice
+ * says shown. Without room (the thread would keep less than `THREAD_MIN_SHARE` of the row) it
+ * starts hidden, and the button floats it over the thread until pressed again; the kept choice is
+ * left alone. Crossing the line either way closes a floating card.
+ */
+export function useThreadDetails(row: RefObject<HTMLElement | null>) {
+  const [docked, setDocked] = useState(() => localStorage.getItem(THREAD_DETAILS_KEY) === "open");
+  const [floating, setFloating] = useState(false);
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    const element = row.current;
+    if (!element) return;
+    const measure = () => {
+      const next = tooNarrowToDock(element.getBoundingClientRect().width);
+      setNarrow((was) => {
+        if (was !== next) setFloating(false);
+        return next;
+      });
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [row]);
+  const toggle = () => {
+    if (narrow) return setFloating((was) => !was);
+    setDocked((was) => {
       localStorage.setItem(THREAD_DETAILS_KEY, was ? "closed" : "open");
       return !was;
     });
-  return [open, toggle];
+  };
+  const mode: ThreadDetailsMode = narrow
+    ? floating
+      ? "floating"
+      : "hidden"
+    : docked
+      ? "docked"
+      : "hidden";
+  return { mode, toggle };
 }
 
 /** The top bar's button that shows and hides Thread details. */
@@ -42,7 +85,7 @@ export function ThreadDetailsButton({ open, onToggle }: { open: boolean; onToggl
  * shortcuts keep working.
  */
 export function ThreadDetails({
-  open,
+  mode,
   hostName,
   hostId,
   folder,
@@ -51,7 +94,7 @@ export function ThreadDetails({
   git,
   lineage,
 }: {
-  open: boolean;
+  mode: ThreadDetailsMode;
   hostName: string;
   hostId: string;
   folder?: string;
@@ -64,12 +107,23 @@ export function ThreadDetails({
     <aside
       id={THREAD_DETAILS_ID}
       aria-label="Thread details"
-      hidden={!open}
-      // Docked in the thread's layout, but drawn as the floating card it opened as: sized to its
-      // rows, scrolling once it reaches the thread's height.
-      className="flex w-84 shrink-0 flex-col py-2 pr-3"
+      hidden={mode === "hidden"}
+      data-mode={mode}
+      // Docked, it takes room in the thread's row; floating, it hovers over the thread's right on
+      // frosted glass. Either way it's a card sized to its rows, scrolling at the row's height.
+      className={`flex w-84 flex-col py-2 pr-3 ${
+        mode === "floating"
+          ? "pointer-events-none absolute inset-y-0 right-0 z-30 max-w-[calc(100%-1rem)]"
+          : "shrink-0"
+      }`}
     >
-      <div className="max-h-full overflow-y-auto rounded-xl border border-border bg-surface text-foreground shadow-composer">
+      <div
+        className={`pointer-events-auto max-h-full overflow-y-auto rounded-xl border border-border text-foreground shadow-composer ${
+          mode === "floating"
+            ? "bg-surface/55 backdrop-blur-3xl backdrop-saturate-150"
+            : "bg-surface"
+        }`}
+      >
         <section aria-label="Workspace" className="p-2">
           <div className="flex items-start gap-2 px-2 py-2 text-[13px]">
             <Monitor aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -96,7 +150,7 @@ export function ThreadDetails({
             <GitMenu {...git} />
           </section>
         )}
-        {lineage && <LineageSection {...lineage} visible={open} />}
+        {lineage && <LineageSection {...lineage} visible={mode !== "hidden"} />}
       </div>
     </aside>
   );

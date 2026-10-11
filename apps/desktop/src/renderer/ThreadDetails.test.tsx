@@ -1,26 +1,46 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, test } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
 import type { ParallaxBridge } from "../preload/bridge";
 import {
   THREAD_DETAILS_KEY,
   ThreadDetails,
   ThreadDetailsButton,
-  useThreadDetailsOpen,
+  tooNarrowToDock,
+  useThreadDetails,
 } from "./ThreadDetails";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+// The row's width, and the observer that tells the hook it changed.
+let width = 1200;
+let resized = () => {};
+class FakeResizeObserver {
+  constructor(callback: () => void) {
+    resized = callback;
+  }
+  observe() {}
+  disconnect() {}
+}
 let unmount = () => {};
 afterEach(() =>
   act(() => {
     unmount();
     document.body.innerHTML = "";
+    vi.restoreAllMocks();
   }),
 );
 beforeEach(() => {
   localStorage.clear();
+  width = 1200;
+  Object.assign(globalThis, { ResizeObserver: FakeResizeObserver });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return { width: this.dataset["row"] !== undefined ? width : 0 } as DOMRect;
+  });
   window.parallax = {
     platform: "darwin",
     openTargets: async () => ["cursor", "files"],
@@ -31,11 +51,14 @@ beforeEach(() => {
 });
 
 function Harness() {
-  const [open, toggle] = useThreadDetailsOpen();
+  const row = useRef<HTMLDivElement>(null);
+  const { mode, toggle } = useThreadDetails(row);
   return (
     <>
-      <ThreadDetailsButton open={open} onToggle={toggle} />
-      <ThreadDetails open={open} hostName="macbook" hostId="local" folder="/repo" />
+      <ThreadDetailsButton open={mode !== "hidden"} onToggle={toggle} />
+      <div ref={row} data-row>
+        <ThreadDetails mode={mode} hostName="macbook" hostId="local" folder="/repo" />
+      </div>
     </>
   );
 }
@@ -46,8 +69,20 @@ async function render() {
 }
 const panel = () => document.querySelector<HTMLElement>("aside[aria-label='Thread details']")!;
 const button = () => document.querySelector<HTMLButtonElement>("button[aria-controls]")!;
+const resize = (to: number) =>
+  act(async () => {
+    width = to;
+    resized();
+  });
 
-test("the button docks the panel until it's pressed again, and a restart keeps the choice", async () => {
+test("the thread keeps at least 60% of its row beside a docked card", () => {
+  expect(tooNarrowToDock(1200)).toBe(false);
+  expect(tooNarrowToDock(870)).toBe(false);
+  expect(tooNarrowToDock(860)).toBe(true);
+  expect(tooNarrowToDock(0)).toBe(false);
+});
+
+test("with room, the button docks the panel until pressed again, and a restart keeps it", async () => {
   await render();
   // Mounted while hidden, so its shortcuts still work.
   expect(panel().hidden).toBe(true);
@@ -55,6 +90,7 @@ test("the button docks the panel until it's pressed again, and a restart keeps t
 
   await act(async () => button().click());
   expect(panel().hidden).toBe(false);
+  expect(panel().dataset["mode"]).toBe("docked");
   expect(panel().textContent).toContain("macbook");
   expect(button().getAttribute("aria-pressed")).toBe("true");
   expect(localStorage.getItem(THREAD_DETAILS_KEY)).toBe("open");
@@ -64,10 +100,36 @@ test("the button docks the panel until it's pressed again, and a restart keeps t
 
   await act(async () => unmount());
   await render();
-  expect(panel().hidden).toBe(false);
+  expect(panel().dataset["mode"]).toBe("docked");
 
   await act(async () => button().click());
   expect(panel().hidden).toBe(true);
-  expect(button().getAttribute("aria-pressed")).toBe("false");
   expect(localStorage.getItem(THREAD_DETAILS_KEY)).toBe("closed");
+});
+
+test("without room it starts collapsed, and the button floats it over the thread", async () => {
+  localStorage.setItem(THREAD_DETAILS_KEY, "open");
+  width = 700;
+  await render();
+  expect(panel().hidden).toBe(true);
+
+  await act(async () => button().click());
+  expect(panel().dataset["mode"]).toBe("floating");
+  expect(button().getAttribute("aria-pressed")).toBe("true");
+  // Floating leaves the kept choice alone.
+  expect(localStorage.getItem(THREAD_DETAILS_KEY)).toBe("open");
+  await act(async () => button().click());
+  expect(panel().hidden).toBe(true);
+
+  // Room again docks it as kept; narrowing collapses it, and a floating card closes on widening.
+  await resize(1200);
+  expect(panel().dataset["mode"]).toBe("docked");
+  await resize(700);
+  expect(panel().hidden).toBe(true);
+  await act(async () => button().click());
+  expect(panel().dataset["mode"]).toBe("floating");
+  await resize(1200);
+  expect(panel().dataset["mode"]).toBe("docked");
+  await resize(700);
+  expect(panel().hidden).toBe(true);
 });

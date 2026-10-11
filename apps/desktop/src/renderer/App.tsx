@@ -26,7 +26,7 @@ import { NewThreadPicker } from "./NewThreadPicker";
 import { Notifications } from "./notifications";
 import { localId, useHosts } from "./hosts";
 import { iconImageBytes } from "./images";
-import { ThreadDetails, ThreadDetailsButton, useThreadDetailsOpen } from "./ThreadDetails";
+import { ThreadDetails, ThreadDetailsButton, useThreadDetails } from "./ThreadDetails";
 import { AgentsPanel, useProjectAgents } from "./ProjectAgents";
 import { ProjectChat } from "./ProjectChat";
 import { ProjectHome, waitingCount } from "./ProjectHome";
@@ -146,8 +146,9 @@ export function App() {
       [panelKey]: typeof next === "function" ? next(panels[panelKey] ?? false) : next,
     }));
   const [panelExpanded, setPanelExpanded] = useState(false);
-  // Thread details, docked at the thread's right, shown or hidden for every thread.
-  const [detailsOpen, toggleDetails] = useThreadDetailsOpen();
+  // Thread details, docked at the thread's right, or floating over it when the row is narrow.
+  const threadRow = useRef<HTMLDivElement>(null);
+  const details = useThreadDetails(threadRow);
   // The folders whose terminal drawer is open, by key (ThreadTerminal.tsx).
   const [drawers, setDrawers] = useState<ReadonlySet<string>>(new Set());
   // The page a repository action last opened in the side panel's Browser view.
@@ -765,7 +766,7 @@ export function App() {
               )}
               <Breadcrumb items={crumbs} />
               <div className="ml-auto flex shrink-0 items-center gap-2">
-                <ThreadDetailsButton open={detailsOpen} onToggle={toggleDetails} />
+                <ThreadDetailsButton open={details.mode !== "hidden"} onToggle={details.toggle} />
                 {folder && (
                   <IconButton
                     label={drawerOpen ? "Hide terminal" : "Show terminal"}
@@ -791,7 +792,7 @@ export function App() {
                 )}
               </div>
             </TopBar>
-            <div className="flex min-h-0 flex-1">
+            <div ref={threadRow} className="relative flex min-h-0 flex-1">
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 {selection.kind === "thread" ? (
                   <div
@@ -976,7 +977,7 @@ export function App() {
               </div>
               <ThreadDetails
                 key={panelKey}
-                open={detailsOpen}
+                mode={details.mode}
                 hostName={host.name}
                 hostId={host.id}
                 folder={folder?.path === "~" ? undefined : folder?.path}

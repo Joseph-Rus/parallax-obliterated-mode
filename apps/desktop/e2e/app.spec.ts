@@ -543,7 +543,10 @@ test("saves a repository action and runs it in the drawer, opening its preview (
 
   // The drawer opens and runs it, and the side panel's Browser shows the preview.
   await details.getByRole("button", { name: "Git version", exact: true }).click();
-  await expect(details).toBeVisible();
+  // The side panel opening takes the thread's room, so the card collapses unless the window is
+  // wide enough to dock it beside both.
+  const panel = page.locator("#thread-details");
+  await expect(panel).toHaveAttribute("data-mode", /docked|hidden/);
   const terminal = page.getByRole("group", { name: "Terminal", exact: true });
   await expect(terminal).toContainText("git version ");
   await expect(page.getByRole("textbox", { name: "Address" })).toHaveValue(
@@ -556,7 +559,11 @@ test("saves a repository action and runs it in the drawer, opening its preview (
   await page.getByRole("log", { name: "Transcript" }).click();
   await page.keyboard.press("ControlOrMeta+Shift+k");
   await expect(terminal).toContainText(/git version [\s\S]*git version /);
+  // With the side panel closed it docks again, as kept, until its button hides it.
+  await page.getByRole("button", { name: "Hide side panel" }).click();
+  await expect(panel).toHaveAttribute("data-mode", "docked");
   await page.getByRole("button", { name: "Thread details", exact: true, pressed: true }).click();
+  await expect(panel).toHaveAttribute("data-mode", "hidden");
   server.close();
 });
 
@@ -628,11 +635,28 @@ test("thread details opens children and stays docked beside the side panel", asy
   await expect(page.getByRole("region", { name: "Child thread" })).toBeVisible();
   await page.keyboard.press("ControlOrMeta+Alt+ArrowUp");
   await expect(current).toHaveText("Plan the release");
-  // It sits beside the side panel, not in it.
+  // Beside the side panel it docks when there's room; without it, it collapses, and its button
+  // floats it over the thread instead.
   const show = page.getByRole("button", { name: "Show side panel" });
   if (await show.isVisible()) await show.click();
-  await expect(details).toBeVisible();
   await expect(page.getByRole("complementary", { name: "Side panel" })).toBeVisible();
+  const panel = page.locator("#thread-details");
+  // Settled once the mode is the one the row's width calls for: docked while the thread keeps
+  // 60% of the row beside the card (ThreadDetails.tsx), else collapsed.
+  await expect
+    .poll(() =>
+      panel.evaluate((aside) => {
+        const width = aside.parentElement!.getBoundingClientRect().width;
+        const want = width - 348 < width * 0.6 ? "hidden" : "docked";
+        return aside.dataset["mode"] === want ? want : "settling";
+      }),
+    )
+    .not.toBe("settling");
+  if ((await panel.getAttribute("data-mode")) === "hidden") {
+    await page.getByRole("button", { name: "Thread details", exact: true, pressed: false }).click();
+    await expect(panel).toHaveAttribute("data-mode", "floating");
+  }
+  await expect(details).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("thread-details.png") });
   await details.getByRole("button", { name: /Write the changelog/ }).click();
   await expect(page.getByRole("region", { name: "Child thread" })).toBeVisible();
