@@ -49,11 +49,9 @@ export type BehaviorPrefs = {
   sendKey: "enter" | "modEnter";
   /** Where a pull request's Open on GitHub goes: the system browser, or the side panel's Browser. */
   openPrsIn: "external" | "browser";
-  /** How the composer shows provider usage: a ring by send with details on hover, the full row
-   * inside the box, or nothing. */
-  composerUsage: "ring" | "row" | "off";
-  /** A line inside the composer when a limit window or the context is nearly full. */
-  usageWarning: boolean;
+  /** How the composer shows provider usage: a ring by the attach button, a row inside the box,
+   * or not at all. Read it through `usageView`, which also takes earlier builds' values. */
+  composerUsage: "ring" | "inline" | "off";
 };
 
 export const behaviorDefaults: BehaviorPrefs = {
@@ -63,10 +61,16 @@ export const behaviorDefaults: BehaviorPrefs = {
   sendKey: "enter",
   openPrsIn: "external",
   composerUsage: "ring",
-  usageWarning: true,
 };
 
 export const behaviorPrefs = stored("parallax.behavior", behaviorDefaults, merged);
+
+/** The usage view a stored value means: earlier builds stored "row" for the inline row and
+ * "tray" for the item that became the ring. */
+export function usageView(stored: string | undefined): BehaviorPrefs["composerUsage"] {
+  if (stored === "off") return "off";
+  return stored === "inline" || stored === "row" ? "inline" : "ring";
+}
 
 export const setBehaviorPrefs = (change: Partial<BehaviorPrefs>) =>
   behaviorPrefs.set({ ...behaviorPrefs.get(), ...change });

@@ -44,13 +44,13 @@ import type {
   PromptImage,
 } from "../protocol/generated/protocol";
 import { lastPrompt } from "./attention";
-import { UsageRing, UsageRow, UsageWarning, useComposerUsage } from "./ComposerUsage";
+import { UsageInline, UsageRing, useComposerUsage } from "./ComposerUsage";
 import type { RequestUsage } from "./transcript";
 import { EffortMenu } from "./EffortMenu";
 import { accessPrefs } from "./accessPrefs";
 import { imageUrl, readImage, type ImageCaps } from "./images";
 import { ModelMenu } from "./ModelMenu";
-import { behaviorPrefs, newThreadPrefs } from "./prefs";
+import { behaviorPrefs, newThreadPrefs, usageView } from "./prefs";
 import { useCatalog, type Model, type Provider, type RunOptions } from "./models";
 import { lookOf, ThreadChip, type AttachThreads } from "./threadContext";
 import { draggedThread, threadDragType } from "./threadDrag";
@@ -545,11 +545,12 @@ export function Composer({
   const account = { kind: "subscription", backend: target! } as const;
   // Usage for the provider the next message goes to. An open run's measurements show only while
   // its provider, account, model, and context window are still picked.
-  const { composerUsage: usageView, usageWarning } = behaviorPrefs.use();
+  const view = usageView(behaviorPrefs.use().composerUsage);
+  const showUsage = view !== "off";
   const usage = useComposerUsage({
     hostId: host,
     connected,
-    backend: usageView === "off" ? undefined : target,
+    backend: showUsage ? target : undefined,
     kind: targetBackend?.kind,
     accountId: target === backend ? (accountId ?? target) : target,
     usage:
@@ -1224,17 +1225,13 @@ export function Composer({
               e.target.value = "";
             }}
           />
-          {usage && usageView === "ring" && (
-            <div className="ml-auto">
-              <UsageRing data={usage} />
-            </div>
-          )}
+          {view === "ring" && usage?.summary && <UsageRing data={usage} />}
           <button
             type="button"
             aria-label="Attach files"
             title="Attach files"
             onClick={() => filePicker.current?.click()}
-            className={`mr-1.5 ${usage && usageView === "ring" ? "" : "ml-auto"} grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-hover hover:text-foreground [&_svg]:size-4.5`}
+            className={`mr-1.5 ${view === "ring" && usage?.summary ? "" : "ml-auto"} grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-hover hover:text-foreground [&_svg]:size-4.5`}
           >
             <Paperclip />
           </button>
@@ -1263,8 +1260,7 @@ export function Composer({
             </button>
           )}
         </div>
-        {usage && usageView === "row" && <UsageRow data={usage} />}
-        {usage?.warning && usageWarning && <UsageWarning text={usage.warning} />}
+        {view === "inline" && usage && <UsageInline data={usage} />}
       </form>
       {tab && (
         // Tucked under the box, so what it shows reads as part of it.

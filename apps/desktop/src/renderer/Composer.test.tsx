@@ -805,7 +805,6 @@ test("a provider turned off in Settings leaves the menu, and a new thread starts
 });
 
 test("choosing an explicit model from a default-model run hides its earlier request measurements", async () => {
-  setBehaviorPrefs({ composerUsage: "row" });
   const request = vi.fn(async () => ({ error: { code: -32601, message: "Unavailable" } }));
   window.parallax = {
     platform: "darwin",
@@ -832,7 +831,7 @@ test("choosing an explicit model from a default-model run hides its earlier requ
       },
     },
   });
-  expect(document.body.textContent).toContain("25% context");
+  expect(document.body.textContent).toContain("50K / 200K · 25%");
   const menu = document.getElementById(
     document.querySelector('[aria-label="Model: Default model"]')!.getAttribute("popovertarget")!,
   )!;
@@ -840,7 +839,44 @@ test("choosing an explicit model from a default-model run hides its earlier requ
     item.textContent?.startsWith("Claude Opus 5.5"),
   )!;
   await act(async () => opus.click());
-  expect(document.body.textContent).toContain("— context");
-  expect(document.body.textContent).not.toContain("25% context");
-  setBehaviorPrefs({ composerUsage: "ring" });
+  expect(document.body.textContent).not.toContain("50K / 200K · 25%");
+});
+
+test("the appearance setting picks the ring, the inline row, or neither", async () => {
+  window.parallax = {
+    platform: "darwin",
+    request: vi.fn(async () => ({ error: { code: -32601, message: "Unavailable" } })),
+    onConnectionState: () => () => {},
+    connectionState: async () => ({ status: "disconnected" }),
+  } as unknown as ParallaxBridge;
+  const props = {
+    backend: "claude",
+    started: {},
+    hostId: "local",
+    connected: true,
+    accountId: "claude",
+    requestUsage: {
+      kind: "requestUsage" as const,
+      backend: "claude",
+      accountId: "claude",
+      at: "2026-10-11T00:00:00Z",
+      usage: { contextTokens: 50_000, contextWindow: 200_000 },
+    },
+  };
+  const ring = () => document.querySelector('button[aria-label^="Usage:"]');
+  const inline = () =>
+    document.querySelector('form [role="group"][aria-label="Usage"]:not([hidden])');
+  render(async () => undefined, caps, props);
+  expect(ring()?.getAttribute("aria-label")).toBe("Usage: 25% of context used");
+  expect(inline()).toBeNull();
+  await act(async () => setBehaviorPrefs({ composerUsage: "inline" }));
+  expect(ring()).toBeNull();
+  expect(inline()?.textContent).toContain("25% context");
+  // An earlier build's "row" still means the inline row.
+  await act(async () => setBehaviorPrefs({ composerUsage: "row" as never }));
+  expect(inline()).not.toBeNull();
+  await act(async () => setBehaviorPrefs({ composerUsage: "off" }));
+  expect(ring()).toBeNull();
+  expect(inline()).toBeNull();
+  await act(async () => setBehaviorPrefs({ composerUsage: behaviorDefaults.composerUsage }));
 });
