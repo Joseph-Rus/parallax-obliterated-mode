@@ -1175,7 +1175,6 @@ mod tests {
 /// Measurements from the latest main-session model request, never cumulative billing totals.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct AgentRequestUsage {
     /// The actual model when the provider reports it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1197,4 +1196,13 @@ pub struct AgentRequestUsage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub cached_input_tokens: Option<u64>,
+    /// Output tokens behind the latest approximate speed sample. Paired with `output_ms`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub output_tokens: Option<u64>,
+    /// Milliseconds those output tokens took by the provider's own timing: Claude's API time for
+    /// the last turn, or `OpenCode`'s text and reasoning streaming time. Never wall-clock turn time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub output_ms: Option<u64>,
 }

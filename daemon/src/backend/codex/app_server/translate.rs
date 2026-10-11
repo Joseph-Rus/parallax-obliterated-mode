@@ -609,7 +609,8 @@ mod tests {
                 context_window: Some(272_000),
                 input_tokens: Some(22_343),
                 cached_input_tokens: Some(22_000),
-                model: None
+                model: None,
+                ..Default::default()
             }
         ))));
         let missing = json!({"method": "thread/tokenUsage/updated", "params": {

@@ -3244,6 +3244,15 @@ export type AgentRequestUsage = {
 	 * Request input served from cache. Missing differs from zero.
 	 */
 	cachedInputTokens?: number,
+	/**
+	 * Output tokens behind the latest approximate speed sample. Paired with `output_ms`.
+	 */
+	outputTokens?: number,
+	/**
+	 * Milliseconds those output tokens took by the provider's own timing: Claude's API time for
+	 * the last turn, or `OpenCode`'s text and reasoning streaming time. Never wall-clock turn time.
+	 */
+	outputMs?: number,
 };
 
 /**

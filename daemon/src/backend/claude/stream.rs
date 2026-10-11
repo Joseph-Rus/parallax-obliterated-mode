@@ -161,6 +161,10 @@ pub(super) struct Translator {
     request_usage: Option<parallax_protocol::AgentRequestUsage>,
     /// The window the last `result` reported for a model, reused for that model's later requests.
     known_window: Option<(String, u64)>,
+    /// The session's running output tokens and API milliseconds, as of the last `result`.
+    api_totals: Option<(u64, u64)>,
+    /// The last turn's output tokens and API milliseconds, an approximate speed sample.
+    speed: Option<(u64, u64)>,
     /// The last `result`'s failure, if it was one.
     pub last_failure: Option<Failure>,
     /// The last successful `result`'s text.
@@ -168,6 +172,33 @@ pub(super) struct Translator {
 }
 
 impl Translator {
+    /// Takes the turn's output tokens and API time from the `result`'s running session totals.
+    /// Both include subagents and the wait for each request's first token, so the rate they give
+    /// is approximate. A total that went down means a new process, whose totals start over.
+    fn sample_speed(&mut self, message: &Map<String, Value>, totals: Option<&Map<String, Value>>) {
+        let Some(ms) = message.get("duration_api_ms").and_then(Value::as_u64) else {
+            return;
+        };
+        let Some(tokens) = totals.map(|totals| {
+            totals
+                .values()
+                .filter_map(|usage| usage.get("outputTokens").and_then(Value::as_u64))
+                .sum::<u64>()
+        }) else {
+            return;
+        };
+        let (turn_tokens, turn_ms) = match self.api_totals {
+            Some((before_tokens, before_ms)) if tokens >= before_tokens && ms >= before_ms => {
+                (tokens - before_tokens, ms - before_ms)
+            }
+            _ => (tokens, ms),
+        };
+        self.api_totals = Some((tokens, ms));
+        if turn_tokens > 0 && turn_ms > 0 {
+            self.speed = Some((turn_tokens, turn_ms));
+        }
+    }
+
     /// A translator for a run under `policy` whose `system/init` must report
     /// `expected_key_source` as its `apiKeySource`.
     pub fn new(policy: ToolPolicy, expected_key_source: &'static str) -> Self {
@@ -189,6 +220,8 @@ impl Translator {
             results: 0,
             request_usage: None,
             known_window: None,
+            api_totals: None,
+            speed: None,
             last_failure: None,
             last_result: None,
         }
@@ -482,6 +515,8 @@ impl Translator {
                 context_window: self.known_window.as_ref().and_then(|(model, window)| {
                     (text(inner, "model") == Some(model.as_str())).then_some(*window)
                 }),
+                output_tokens: self.speed.map(|(tokens, _)| tokens),
+                output_ms: self.speed.map(|(_, ms)| ms),
             };
             self.request_usage = Some(reported.clone());
             steps.push(Step::Emit(Event::RequestUsage(reported)));
@@ -591,7 +626,10 @@ impl Translator {
         self.results += 1;
         let result = text(message, "result").map(str::to_owned);
         let mut steps = Vec::new();
+        self.sample_speed(message, totals);
         if let Some(usage) = &mut self.request_usage {
+            usage.output_tokens = self.speed.map(|(tokens, _)| tokens);
+            usage.output_ms = self.speed.map(|(_, ms)| ms);
             usage.context_window = usage
                 .model
                 .as_deref()

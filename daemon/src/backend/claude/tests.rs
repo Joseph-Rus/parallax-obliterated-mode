@@ -3526,6 +3526,7 @@ fn request_usage_uses_the_latest_main_request_and_matching_reported_window() {
         input_tokens: Some(36_809),
         cached_input_tokens: Some(36_458),
         context_window: None,
+        ..Default::default()
     };
     assert_eq!(steps, [Step::Emit(Event::RequestUsage(expected.clone()))]);
     let child = assistant(
@@ -3568,4 +3569,46 @@ fn request_usage_uses_the_latest_main_request_and_matching_reported_window() {
             ..Default::default()
         })))
     );
+}
+
+#[test]
+fn request_speed_is_the_turns_share_of_the_sessions_output_and_api_time() {
+    use serde_json::json;
+    let mut translator = Translator::new(ToolPolicy::NoWrite, "none");
+    translator.line(
+        fixture("read-only")
+            .lines()
+            .find(|line| line.contains("\"subtype\":\"init\""))
+            .unwrap()
+            .as_bytes(),
+    );
+    let assistant = json!({"type": "assistant", "parent_tool_use_id": null, "message": {
+        "id": "m", "model": "claude-opus-4-7", "content": [],
+        "usage": {"input_tokens": 1, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}});
+    let result = |ms: u64, opus: u64, haiku: u64| {
+        json!({"type": "result", "subtype": "success", "duration_api_ms": ms, "modelUsage": {
+            "claude-opus-4-7": {"outputTokens": opus}, "claude-haiku-4-5": {"outputTokens": haiku}}})
+    };
+    let speed = |steps: Vec<Step>| {
+        steps.into_iter().find_map(|step| match step {
+            Step::Emit(Event::RequestUsage(usage)) => Some((usage.output_tokens, usage.output_ms)),
+            _ => None,
+        })
+    };
+    translator.line(assistant.to_string().as_bytes());
+    let first = translator.line(result(4_000, 150, 50).to_string().as_bytes());
+    assert_eq!(speed(first), Some((Some(200), Some(4_000))));
+    // The next request carries the last sample until its own result.
+    let next = translator.line(assistant.to_string().as_bytes());
+    assert_eq!(speed(next), Some((Some(200), Some(4_000))));
+    let second = translator.line(result(10_000, 450, 50).to_string().as_bytes());
+    assert_eq!(speed(second), Some((Some(300), Some(6_000))));
+    // A turn with no new API time keeps the last sample.
+    translator.line(assistant.to_string().as_bytes());
+    let idle = translator.line(result(10_000, 450, 50).to_string().as_bytes());
+    assert_eq!(speed(idle), Some((Some(300), Some(6_000))));
+    // A restarted process's totals start over.
+    translator.line(assistant.to_string().as_bytes());
+    let restarted = translator.line(result(2_000, 80, 0).to_string().as_bytes());
+    assert_eq!(speed(restarted), Some((Some(80), Some(2_000))));
 }

@@ -866,6 +866,8 @@ export function createFixtures(now = Date.now()): Fixtures {
           contextWindow: 1_000_000,
           inputTokens: 184_300,
           cachedInputTokens: 171_900,
+          outputTokens: 1_310,
+          outputMs: 15_900,
         },
       },
       { kind: "turnFinished" },

@@ -42,6 +42,28 @@ export function tokenPercent(numerator?: number, denominator?: number): string |
   return percent > 0 && percent < 1 ? "<1%" : `${Math.floor(percent)}%`;
 }
 
+/** An approximate output rate, or unknown when either side is missing or invalid. */
+export function tokensPerSecond(tokens?: number, ms?: number): number | undefined {
+  if (
+    tokens === undefined ||
+    ms === undefined ||
+    !Number.isSafeInteger(tokens) ||
+    !Number.isSafeInteger(ms) ||
+    tokens <= 0 ||
+    ms <= 0
+  )
+    return undefined;
+  return Math.round((tokens / ms) * 1000);
+}
+
+/** What each provider's sample measures, since neither is pure generation time. */
+const speedSource: Record<string, string> = {
+  claude:
+    "Claude's API time for the last turn, which includes waiting for each request's first token and any subagent requests",
+  opencode:
+    "the time OpenCode spent streaming text and reasoning in the last model request without tool calls, which leaves out the wait for the first token",
+};
+
 const windowName = (name: string) =>
   name === "five_hour"
     ? "5h"
@@ -111,6 +133,10 @@ export function ComposerUsage({
       : undefined;
   const context = tokenPercent(measured?.contextTokens, measured?.contextWindow);
   const cache = tokenPercent(measured?.cachedInputTokens, measured?.inputTokens);
+  const speed =
+    kind && speedSource[kind]
+      ? tokensPerSecond(measured?.outputTokens, measured?.outputMs)
+      : undefined;
   const reportedAt = usage ? ` Reported ${new Date(usage.at).toLocaleString()}.` : "";
   const windows = connected && accountId === backend ? limits?.limits : undefined;
   return (
@@ -165,8 +191,16 @@ export function ComposerUsage({
           {context ?? "—"} context
         </span>
         <span aria-hidden>·</span>
-        <span title="Output speed unavailable. This provider does not report reliable model generation timing. Tool execution and turn wall-clock time are excluded.">
-          — tok/s
+        <span
+          title={
+            speed !== undefined && kind
+              ? `Approximate output speed: ${measured?.outputTokens?.toLocaleString()} output tokens over ${speedSource[kind]} (${((measured?.outputMs ?? 0) / 1000).toFixed(1)} s).${reportedAt}`
+              : kind && speedSource[kind]
+                ? "Output speed unavailable until this provider reports output tokens and their timing."
+                : "Output speed unavailable. This provider does not report model timing, and turn wall-clock time would include tool runs."
+          }
+        >
+          {speed === undefined ? "— tok/s" : `~${speed.toLocaleString()} tok/s`}
         </span>
         <span aria-hidden>·</span>
         <span

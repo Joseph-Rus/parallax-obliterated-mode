@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 
 import type { ParallaxBridge } from "../preload/bridge";
 import type { UsageLimitWindow } from "../protocol/generated/protocol";
-import { ComposerUsage, currentLimit, tokenPercent } from "./ComposerUsage";
+import { ComposerUsage, currentLimit, tokenPercent, tokensPerSecond } from "./ComposerUsage";
 import type { RequestUsage } from "./transcript";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -34,6 +34,8 @@ const usage: RequestUsage = {
     contextWindow: 200_000,
     inputTokens: 50_000,
     cachedInputTokens: 25_000,
+    outputTokens: 1_780,
+    outputMs: 21_513,
   },
 };
 const render = async (
@@ -41,6 +43,7 @@ const render = async (
   accountId = backend,
   measured = usage,
   connected = true,
+  kind: string | undefined = backend,
 ) => {
   root ??= createRoot(document.body.appendChild(document.createElement("div")));
   await act(async () =>
@@ -51,6 +54,7 @@ const render = async (
         connected={connected}
         backend={backend}
         accountId={accountId}
+        kind={kind}
         usage={measured}
       />,
     ),
@@ -96,7 +100,7 @@ test("shows live account meters and request ratios, and expires after reset", as
   expect(document.body.textContent).toContain("5h35%");
   expect(document.body.textContent).toContain("25% context");
   expect(document.body.textContent).toContain("50% cached");
-  expect(document.body.textContent).toContain("— tok/s");
+  expect(document.body.textContent).toContain("~83 tok/s");
   await act(async () => vi.advanceTimersByTime(60_000));
   expect(document.body.textContent).toContain("5h—");
   expect(request).toHaveBeenCalledTimes(2);
@@ -130,4 +134,24 @@ test("older daemon or refresh failure clears unavailable limits", async () => {
   expect(document.body.textContent).toContain("5h35%");
   await act(async () => vi.advanceTimersByTime(60_000));
   expect(document.body.textContent).toContain("Limits unavailable");
+});
+test("output speed needs both sides and a provider whose timing it understands", async () => {
+  expect(tokensPerSecond(1_780, 21_513)).toBe(83);
+  for (const [tokens, ms] of [
+    [undefined, 1_000],
+    [100, undefined],
+    [0, 1_000],
+    [100, 0],
+    [NaN, 1_000],
+  ])
+    expect(tokensPerSecond(tokens, ms)).toBeUndefined();
+  window.parallax = {
+    request: vi.fn(async () => ({ result: { accounts: [] } })),
+  } as unknown as ParallaxBridge;
+  // A Codex or ACP sample would have no known timing source, so it stays unknown.
+  const codex = { ...usage, backend: "codex", accountId: "codex" };
+  await render("codex", "codex", codex, true, "codex");
+  expect(document.body.textContent).toContain("— tok/s");
+  await render("claude", "claude", { ...usage, usage: { ...usage.usage, outputMs: undefined } });
+  expect(document.body.textContent).toContain("— tok/s");
 });
