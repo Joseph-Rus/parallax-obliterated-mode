@@ -10,12 +10,9 @@ import {
   forgetLimits,
   tokenPercent,
   tokensPerSecond,
-  UsageRing,
-  UsageRow,
-  UsageWarning,
+  UsageTray,
   useComposerUsage,
 } from "./ComposerUsage";
-import { behaviorPrefs, setBehaviorPrefs } from "./prefs";
 import type { RequestUsage } from "./transcript";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -49,20 +46,14 @@ const usage: RequestUsage = {
     outputMs: 21_513,
   },
 };
-/** The composer's pieces, as it places them: the ring or the row, and the warning. */
-function ComposerUsage({
-  view = "row",
-  ...props
-}: Parameters<typeof useComposerUsage>[0] & { view?: "ring" | "row" }) {
+/** The tray item, as the composer places it. */
+function ComposerUsage(props: Parameters<typeof useComposerUsage>[0]) {
   const data = useComposerUsage(props);
-  if (!data) return null;
-  return (
-    <>
-      {view === "ring" ? <UsageRing data={data} /> : <UsageRow data={data} />}
-      {data.warning && <UsageWarning text={data.warning} />}
-    </>
-  );
+  return data ? <UsageTray data={data} className="tray-item" /> : null;
 }
+/** The tray's line, or nothing when the item is hidden. */
+const line = () => document.querySelector("button[aria-expanded]")?.textContent;
+const card = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
 const render = async (
   backend = "claude",
   accountId = backend,
@@ -113,21 +104,55 @@ test("token ratios validate denominators and preserve zero and tiny percentages"
   ])
     expect(tokenPercent(a, b)).toBeUndefined();
 });
-test("shows live account meters and request ratios, and expires after reset", async () => {
+test("shows the fullest window in the tray, every measurement in its card, and expires after reset", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(now);
+  const week = {
+    ...limit,
+    window: "seven_day",
+    usedPercent: 20,
+    resetsAt: new Date(now + 86_400_000 * 3).toISOString(),
+  };
   const request = vi.fn(async () => ({
-    result: { accounts: [{ accountId: "claude", limits: [limit] }] },
+    result: { accounts: [{ accountId: "claude", limits: [limit, week] }] },
   }));
   window.parallax = { request } as unknown as ParallaxBridge;
   await render();
-  expect(document.body.textContent).toContain("5h35%");
-  expect(document.body.textContent).toContain("25% context");
-  expect(document.body.textContent).toContain("50% cached");
-  expect(document.body.textContent).toContain("~83 tok/s");
+  expect(line()).toBe("35% of 5h");
+  expect(card().textContent).toContain("5h35%");
+  expect(card().textContent).toContain("Week20%");
+  expect(card().textContent).toContain("50K / 200K · 25%");
+  expect(card().textContent).toContain("Cached input50%");
+  expect(card().textContent).toContain("~83 tok/s");
+  // Past its reset, the 5-hour reading is no longer current, so the week speaks instead.
   await act(async () => vi.advanceTimersByTime(60_000));
-  expect(document.body.textContent).toContain("5h—");
+  expect(line()).toBe("20% of week");
+  expect(card().textContent).toContain("5h—");
   expect(request).toHaveBeenCalledTimes(2);
+});
+test("a used-up window says when it comes back, and nearly full ones change tone", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      result: { accounts: [{ accountId: "claude", limits: [{ ...limit, usedPercent: 100 }] }] },
+    })
+    .mockResolvedValue({
+      result: { accounts: [{ accountId: "claude", limits: [{ ...limit, usedPercent: 92 }] }] },
+    });
+  window.parallax = { request } as unknown as ParallaxBridge;
+  await render();
+  const item = () => document.querySelector("button[aria-expanded]")!;
+  expect(line()).toMatch(/^Back /);
+  expect(item().className).toContain("text-danger");
+  expect(item().getAttribute("aria-label")).toMatch(/^Usage: 5-hour limit used up, back /);
+  forgetLimits();
+  act(() => root?.unmount());
+  root = undefined;
+  await render();
+  expect(line()).toBe("92% of 5h");
+  expect(item().className).toContain("text-danger");
 });
 test("provider switch, API key fallback and disconnect cannot display another account's data", async () => {
   vi.useFakeTimers();
@@ -136,15 +161,16 @@ test("provider switch, API key fallback and disconnect cannot display another ac
     result: { accounts: [{ accountId: "claude", limits: [limit] }] },
   }));
   window.parallax = { request } as unknown as ParallaxBridge;
+  // Codex has no windows here and the measurements are Claude's: nothing to say.
   await render("codex");
-  expect(document.body.textContent).toContain("Limits unavailable");
-  expect(document.body.textContent).toContain("— context");
-  await render("claude", "key-account");
-  expect(document.body.textContent).toContain("Limits unavailable");
-  expect(document.body.textContent).toContain("— cached");
+  expect(line()).toBeUndefined();
+  // An API key account reads no limits, but its own measurements still count.
+  await render("claude", "key-account", { ...usage, accountId: "key-account" });
+  expect(line()).toBe("25% context");
+  expect(card().textContent).toContain("Limits unavailable");
   expect(request).toHaveBeenCalledTimes(1);
   await render("claude", "claude", usage, false);
-  expect(document.body.textContent).toContain("— context");
+  expect(line()).toBeUndefined();
 });
 test("older daemon or refresh failure clears unavailable limits", async () => {
   vi.useFakeTimers();
@@ -155,9 +181,10 @@ test("older daemon or refresh failure clears unavailable limits", async () => {
     .mockResolvedValue({ error: { code: -32601, message: "Method not found" } });
   window.parallax = { request } as unknown as ParallaxBridge;
   await render();
-  expect(document.body.textContent).toContain("5h35%");
+  expect(line()).toBe("35% of 5h");
   await act(async () => vi.advanceTimersByTime(60_000));
-  expect(document.body.textContent).toContain("Limits unavailable");
+  expect(line()).toBe("25% context");
+  expect(card().textContent).toContain("Limits unavailable");
 });
 test("output speed needs both sides and a provider whose timing it understands", async () => {
   expect(tokensPerSecond(1_780, 21_513)).toBe(83);
@@ -172,14 +199,15 @@ test("output speed needs both sides and a provider whose timing it understands",
   window.parallax = {
     request: vi.fn(async () => ({ result: { accounts: [] } })),
   } as unknown as ParallaxBridge;
-  // A Codex or ACP sample would have no known timing source, so it stays unknown.
+  // A Codex or ACP sample would have no known timing source, so it isn't shown.
   const codex = { ...usage, backend: "codex", accountId: "codex" };
   await render("codex", "codex", codex, true, "codex");
-  expect(document.body.textContent).toContain("— tok/s");
+  expect(card().textContent).not.toContain("tok/s");
   await render("claude", "claude", { ...usage, usage: { ...usage.usage, outputMs: undefined } });
-  expect(document.body.textContent).toContain("— tok/s");
+  expect(card().textContent).not.toContain("tok/s");
+  expect(card().textContent).toContain("Cached input50%");
 });
-test("strips on one host share a minute's read of the limits", async () => {
+test("composers on one host share a minute's read of the limits", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(now);
   const request = vi.fn(async () => ({
@@ -187,113 +215,41 @@ test("strips on one host share a minute's read of the limits", async () => {
   }));
   window.parallax = { request } as unknown as ParallaxBridge;
   await render();
-  // A strip remounted, as switching threads does, reuses the answer.
+  // Remounted, as switching threads does, it reuses the answer.
   act(() => root?.unmount());
   root = undefined;
   await render();
-  expect(document.body.textContent).toContain("5h35%");
+  expect(line()).toBe("35% of 5h");
   expect(request).toHaveBeenCalledTimes(1);
   await act(async () => vi.advanceTimersByTime(60_000));
   expect(request).toHaveBeenCalledTimes(2);
 });
-test("the ring fills with context, tints by the fullest meter, and opens a card that pins the row", async () => {
+test("hover peeks at the card, a click keeps it open, and Escape closes it", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(now);
-  const near = { ...limit, usedPercent: 92 };
   window.parallax = {
     request: vi.fn(async () => ({
-      result: { accounts: [{ accountId: "claude", limits: [near] }] },
+      result: { accounts: [{ accountId: "claude", limits: [limit] }] },
     })),
   } as unknown as ParallaxBridge;
-  root ??= createRoot(document.body.appendChild(document.createElement("div")));
-  await act(async () =>
-    root!.render(
-      <ComposerUsage
-        view="ring"
-        hostId="local"
-        connected
-        backend="claude"
-        kind="claude"
-        accountId="claude"
-        usage={usage}
-      />,
-    ),
-  );
-  const ring = document.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
-  expect(ring.getAttribute("aria-label")).toBe("Usage: 25% context, 5h 92%");
-  expect(ring.className).toContain("text-danger");
-  const card = document.querySelector<HTMLElement>('[role="dialog"]')!;
-  expect(card.hidden).toBe(true);
-  await act(async () => ring.click());
-  expect(card.hidden).toBe(false);
-  expect(card.textContent).toContain("50K / 200K · 25%");
-  expect(card.textContent).toContain("~83 tok/s");
-  expect(document.querySelector('[role="status"]')?.textContent).toContain("5-hour limit 92% used");
-  const before = behaviorPrefs.get().composerUsage;
-  await act(async () => card.querySelector<HTMLElement>('[role="switch"]')!.click());
-  expect(behaviorPrefs.get().composerUsage).toBe("row");
-  setBehaviorPrefs({ composerUsage: before });
-});
-test("a click keeps the card open after hovering, and Escape or the switch hands focus on", async () => {
-  vi.useFakeTimers();
-  vi.setSystemTime(now);
-  window.parallax = {
-    request: vi.fn(async () => ({ error: { code: -32601, message: "Method not found" } })),
-  } as unknown as ParallaxBridge;
-  const before = behaviorPrefs.get().composerUsage;
-  const View = () => {
-    const view = behaviorPrefs.use().composerUsage;
-    return (
-      <ComposerUsage
-        view={view === "row" ? "row" : "ring"}
-        hostId="local"
-        connected
-        backend="claude"
-        kind="claude"
-        accountId="claude"
-        usage={usage}
-      />
-    );
-  };
-  setBehaviorPrefs({ composerUsage: "ring" });
-  root ??= createRoot(document.body.appendChild(document.createElement("div")));
-  await act(async () => root!.render(<View />));
-  const ring = () => document.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
-  const card = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
-  expect(ring().getAttribute("aria-label")).toBe("Usage: 25% context, Limits unavailable");
-  // Hover opens it, and the click that follows keeps it open rather than closing it.
-  await act(async () =>
-    ring().parentElement!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })),
-  );
-  await act(async () => ring().click());
-  await act(async () =>
-    ring().parentElement!.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })),
-  );
+  await render();
+  const item = document.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+  const wrapper = item.parentElement!;
+  expect(card().hidden).toBe(true);
+  await act(async () => wrapper.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
+  expect(card().hidden).toBe(false);
+  expect(item.getAttribute("aria-expanded")).toBe("true");
+  await act(async () => item.click());
+  await act(async () => wrapper.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })));
   await act(async () => vi.advanceTimersByTime(200));
   expect(card().hidden).toBe(false);
   await act(async () =>
-    ring().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    item.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
   );
   expect(card().hidden).toBe(true);
-  // Pinning the row moves focus to its collapse button, and collapsing gives it back to the ring.
-  await act(async () => card().querySelector<HTMLElement>('[role="switch"]')!.click());
-  const collapse = document.querySelector<HTMLElement>('[aria-label="Show usage as a ring"]')!;
-  expect(document.querySelector('[role="group"]')?.getAttribute("aria-label")).toBe(
-    "Provider usage",
-  );
-  expect(document.activeElement).toBe(collapse);
-  await act(async () => collapse.click());
-  expect(document.activeElement).toBe(ring());
+  // Without a click, leaving closes it after the short delay.
+  await act(async () => wrapper.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
+  await act(async () => wrapper.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })));
+  await act(async () => vi.advanceTimersByTime(200));
   expect(card().hidden).toBe(true);
-  setBehaviorPrefs({ composerUsage: before });
-});
-test("a nearly full context warns, and the warning names the window when one is", async () => {
-  window.parallax = {
-    request: vi.fn(async () => ({ result: { accounts: [] } })),
-  } as unknown as ParallaxBridge;
-  await render("claude", "claude", {
-    ...usage,
-    usage: { ...usage.usage, contextTokens: 182_000, contextWindow: 200_000 },
-  });
-  expect(document.querySelector('[role="status"]')?.textContent).toContain("Context 91% full");
 });

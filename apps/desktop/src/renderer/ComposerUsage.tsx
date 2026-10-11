@@ -1,9 +1,9 @@
-import { X } from "lucide-react";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Gauge, Hourglass } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import type { AccountLimits, UsageLimitWindow } from "../protocol/generated/protocol";
 import type { RequestUsage } from "./transcript";
-import { clockOptions, setBehaviorPrefs } from "./prefs";
+import { clockOptions } from "./prefs";
 import { limitDetails, limitName } from "./Usage";
 
 const refreshMs = 60_000;
@@ -93,7 +93,10 @@ const windowName = (name: string) =>
     ? "5h"
     : name === "seven_day"
       ? "Week"
-      : limitName(name).replace(/ limit$/, "");
+      : // "Weekly Fable limit" reads as "Fable": every named window here is a week.
+        limitName(name)
+          .replace(/ limit$/, "")
+          .replace(/^Weekly /, "");
 
 /** How full a meter is: amber from 75%, red from 90%, as on the Usage page. */
 const tone = (used: number) => (used >= 90 ? "danger" : used >= 75 ? "warning" : "normal");
@@ -124,11 +127,29 @@ export interface ComposerUsageData {
   cacheTitle: string;
   speed?: number;
   speedTitle: string;
-  /** The fullest current meter, window or context, which tints the ring. */
-  worst?: number;
-  /** A line to show inside the box when a window or the context is nearly full. */
-  warning?: string;
+  /** What the tray shows: the fullest current window, or the context when no window is known. */
+  summary?: Summary;
 }
+
+/** The tray's one line, and how it reads. */
+interface Summary {
+  text: string;
+  /** The line for a screen reader, which names the window even when the text doesn't. */
+  label: string;
+  tone: "normal" | "warning" | "danger";
+  /** The window is used up, so the line says when it comes back. */
+  capped: boolean;
+}
+
+/** "of week", "of 5h", or a named window's own name, for the tray's line. */
+const ofWindow = (key: string) =>
+  key === "five_hour"
+    ? "of 5h"
+    : key === "seven_day"
+      ? "of week"
+      : key.startsWith("seven_day_")
+        ? `of ${windowName(key)} week`
+        : `of ${windowName(key)}`;
 
 const compact = (n: number) =>
   new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n);
@@ -234,18 +255,36 @@ export function useComposerUsage({
   const timed = !!kind && !!speedSource[kind];
   const speed = timed ? tokensPerSecond(measured?.outputTokens, measured?.outputMs) : undefined;
 
-  const known = [...windows.map((w) => w.used), contextUsed].filter(
-    (used): used is number => used !== undefined,
-  );
-  const worst = known.length ? Math.max(...known) : undefined;
-  const nearly = windows.find((w) => w.used !== undefined && w.used >= 90);
-  const warning = [
-    nearly &&
-      `${limitName(nearly.key)} ${Math.floor(nearly.used!)}% used${nearly.resetsAt ? ` · resets ${resetTime(nearly.resetsAt, now)}` : ""}`,
-    contextUsed !== undefined && contextUsed >= 90 && `Context ${context} full`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  // The fullest current window speaks for the account; a later reset breaks a tie, since that
+  // one keeps you waiting longer.
+  const fullest = windows
+    .filter((w) => w.used !== undefined)
+    .sort(
+      (a, b) =>
+        b.used! - a.used! || Date.parse(b.resetsAt ?? "") - Date.parse(a.resetsAt ?? "") || 0,
+    )[0];
+  let summary: Summary | undefined;
+  if (fullest) {
+    const capped = fullest.used! >= 100;
+    summary = {
+      capped,
+      tone: tone(fullest.used!),
+      text: capped
+        ? fullest.resetsAt
+          ? `Back ${resetTime(fullest.resetsAt, now)}`
+          : `${windowName(fullest.key)} used up`
+        : `${Math.floor(fullest.used!)}% ${ofWindow(fullest.key)}`,
+      label: capped
+        ? `${limitName(fullest.key)} used up${fullest.resetsAt ? `, back ${resetTime(fullest.resetsAt, now)}` : ""}`
+        : `${Math.floor(fullest.used!)}% ${ofWindow(fullest.key)} used`,
+    };
+  } else if (context !== undefined)
+    summary = {
+      capped: false,
+      tone: tone(contextUsed!),
+      text: `${context} context`,
+      label: `${context} of context used`,
+    };
 
   return {
     account: accountId,
@@ -271,20 +310,11 @@ export function useComposerUsage({
         : timed
           ? "Output speed unavailable until this provider reports output tokens and their timing."
           : "Output speed unavailable. This provider does not report model timing, and turn wall-clock time would include tool runs.",
-    worst,
-    warning: warning || undefined,
+    summary,
   };
 }
 
-/** The view that should take focus when it mounts: switching views removes the control used. */
-let focusNext: "ring" | "row" | undefined;
-const switchView = (view: "ring" | "row") => {
-  focusNext = view;
-  setBehaviorPrefs({ composerUsage: view });
-};
-
-const speedText = (speed?: number) =>
-  speed === undefined ? "— tok/s" : `~${speed.toLocaleString()} tok/s`;
+const speedText = (speed: number) => `~${speed.toLocaleString()} tok/s`;
 
 /** A small meter, its bar left empty when the value is unknown. */
 function Meter({ used, className }: { used?: number; className: string }) {
@@ -300,83 +330,29 @@ function Meter({ used, className }: { used?: number; className: string }) {
   );
 }
 
-/**
- * The full row of meters inside the prompt box, under its pickers: subscription windows on the
- * left, the thread's context, speed, and cache on the right. Its ✕ goes back to the ring.
- */
-export function UsageRow({ data }: { data: ComposerUsageData }) {
-  const collapse = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (focusNext !== "row") return;
-    focusNext = undefined;
-    collapse.current?.focus();
-  }, []);
-  return (
-    <div
-      role="group"
-      aria-label="Provider usage"
-      className="group/usage mx-3 flex flex-wrap items-center justify-between gap-x-5 gap-y-1.5 border-t border-border/60 px-1 pt-2 pb-2.5 text-[11.5px] text-muted-foreground tabular-nums"
-    >
-      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
-        {data.limitsNote ? (
-          <span title={data.limitsNote.title}>{data.limitsNote.text}</span>
-        ) : (
-          data.windows.map((w) => (
-            <span key={w.key} title={w.title} className="flex items-center gap-1.5">
-              <span>{w.name}</span>
-              <Meter used={w.used} className="h-1 w-9" />
-              <span>{w.used === undefined ? "—" : `${Math.floor(w.used)}%`}</span>
-            </span>
-          ))
-        )}
-      </div>
-      <div className="flex items-center gap-2.5 whitespace-nowrap">
-        <span title={data.contextTitle}>{data.context ?? "—"} context</span>
-        <span aria-hidden className="text-faint-foreground">
-          ·
-        </span>
-        <span title={data.speedTitle}>{speedText(data.speed)}</span>
-        <span aria-hidden className="text-faint-foreground">
-          ·
-        </span>
-        <span title={data.cacheTitle}>{data.cache ?? "—"} cached</span>
-        <button
-          ref={collapse}
-          type="button"
-          aria-label="Show usage as a ring"
-          title="Show usage as a ring"
-          onClick={() => switchView("ring")}
-          className="-my-1 -mr-1 grid size-5 place-items-center rounded-md text-faint-foreground opacity-0 group-hover/usage:opacity-100 hover:bg-hover hover:text-foreground focus-visible:opacity-100 [&_svg]:size-3"
-        >
-          <X />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-const ringTone = { normal: "text-accent", warning: "text-warning", danger: "text-danger" };
+const summaryTone = {
+  normal: "",
+  warning: "!text-warning",
+  danger: "!text-danger",
+};
 
 /**
- * One ring by the send button that fills with the thread's context use, tinted by the fullest
- * meter. Hovering or focusing it opens a card with every meter and a switch that pins the row.
+ * Usage as one more item in the tray under the prompt box, beside the branch: the fullest limit
+ * window ("20% of week"), or when it's used up, when it comes back. Hovering or focusing it peeks
+ * at a card with every window and the thread's own measurements; a click keeps the card open.
+ * Nothing shows until there is something to say.
  */
-export function UsageRing({ data }: { data: ComposerUsageData }) {
-  // Hover and focus peek at the card; a click keeps it open until a second click, Escape, or
-  // focus leaving it, so a click right after hovering doesn't close what hovering opened.
+export function UsageTray({ data, className }: { data: ComposerUsageData; className: string }) {
   const [peek, setPeek] = useState(false);
   const [kept, setKept] = useState(false);
   const open = peek || kept;
   const closing = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const button = useRef<HTMLButtonElement>(null);
-  // Focus given back after the row collapses shouldn't open the card again.
-  const quiet = useRef(false);
   const card = useId();
   const show = () => {
     clearTimeout(closing.current);
     setPeek(true);
   };
-  // A short delay lets the pointer cross from the ring to the card.
+  // A short delay lets the pointer cross from the item to the card.
   const hide = () => {
     clearTimeout(closing.current);
     closing.current = setTimeout(() => setPeek(false), 150);
@@ -386,28 +362,29 @@ export function UsageRing({ data }: { data: ComposerUsageData }) {
     setPeek(false);
     setKept(false);
   };
-  useEffect(() => {
-    if (focusNext === "ring") {
-      focusNext = undefined;
-      quiet.current = true;
-      button.current?.focus();
-      quiet.current = false;
-    }
-    return () => clearTimeout(closing.current);
-  }, []);
-  const r = 8.5;
-  const around = 2 * Math.PI * r;
-  const filled = data.contextUsed ?? 0;
-  const summary = `Usage: ${data.context ?? "—"} context${data.limitsNote ? `, ${data.limitsNote.text.replace(/…$/, "")}` : ""}${data.windows
-    .filter((w) => w.used !== undefined)
-    .map((w) => `, ${w.name} ${Math.floor(w.used!)}%`)
-    .join("")}`;
+  useEffect(() => () => clearTimeout(closing.current), []);
+  const { summary } = data;
+  if (!summary) return null;
+  const thread = [
+    data.context && {
+      label: "Context",
+      title: data.contextTitle,
+      value: `${data.contextDetail} · ${data.context}`,
+    },
+    data.cache && { label: "Cached input", title: data.cacheTitle, value: data.cache },
+    data.speed !== undefined && {
+      label: "Output speed",
+      title: data.speedTitle,
+      value: speedText(data.speed),
+    },
+  ].filter((row): row is { label: string; title: string; value: string } => !!row);
   return (
+    // Above the box, whose card would otherwise paint over this one.
     <div
-      className="relative"
+      className="relative z-20 flex min-w-0 items-center"
       onMouseEnter={show}
       onMouseLeave={hide}
-      onFocus={() => quiet.current || show()}
+      onFocus={show}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) close();
       }}
@@ -419,121 +396,55 @@ export function UsageRing({ data }: { data: ComposerUsageData }) {
       }}
     >
       <button
-        ref={button}
         type="button"
-        aria-label={summary}
+        aria-label={`Usage: ${summary.label}`}
         aria-expanded={open}
         aria-controls={card}
         onClick={() => (kept ? close() : setKept(true))}
-        className={`grid size-9 place-items-center rounded-full hover:bg-hover ${data.worst === undefined ? "text-faint-foreground" : ringTone[tone(data.worst)]}`}
+        className={`${className} tabular-nums ${open ? "bg-hover text-foreground" : ""} ${summaryTone[summary.tone]}`}
       >
-        <svg aria-hidden viewBox="0 0 22 22" className="size-[18px] -rotate-90">
-          <circle cx="11" cy="11" r={r} fill="none" strokeWidth="2.5" className="stroke-selected" />
-          {filled > 0 && (
-            <circle
-              cx="11"
-              cy="11"
-              r={r}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeDasharray={around}
-              strokeDashoffset={around * (1 - Math.max(filled, 4) / 100)}
-            />
-          )}
-        </svg>
+        {summary.capped ? <Hourglass aria-hidden /> : <Gauge aria-hidden />}
+        <span className="truncate">{summary.text}</span>
       </button>
       <div
         id={card}
         role="dialog"
-        aria-label="Provider usage"
+        aria-label="Usage"
         hidden={!open}
-        className="absolute right-0 bottom-full z-20 mb-2 w-72 rounded-xl border border-border bg-surface p-3 text-[12px] text-foreground shadow-composer tabular-nums"
+        className="absolute right-0 bottom-full mb-2 w-80 rounded-xl border border-border bg-surface p-3 text-[12.5px] text-foreground shadow-composer tabular-nums"
       >
-        <CardHeading>Limits</CardHeading>
-        {data.limitsNote ? (
+        {data.windows.map((w) => (
+          <div
+            key={w.key}
+            title={w.title}
+            className="my-1.5 grid grid-cols-[3.5rem_1fr_7.5rem] items-center gap-2.5"
+          >
+            <span className="truncate text-muted-foreground">{w.name}</span>
+            <Meter used={w.used} className="h-1" />
+            <span
+              className={`text-right whitespace-nowrap ${w.used !== undefined && w.used >= 100 ? "text-danger" : "text-muted-foreground"}`}
+            >
+              {w.used === undefined ? "—" : `${Math.floor(w.used)}%`}
+              {w.resetsAt && ` · ${resetTime(w.resetsAt, Date.now())}`}
+            </span>
+          </div>
+        ))}
+        {data.limitsNote && (
           <p title={data.limitsNote.title} className="text-muted-foreground">
             {data.limitsNote.text}
           </p>
-        ) : (
-          data.windows.map((w) => (
-            <div
-              key={w.key}
-              title={w.title}
-              className="my-1.5 grid grid-cols-[6.5rem_1fr_2.5rem] items-center gap-2"
-            >
-              <span className="truncate">{w.name}</span>
-              <Meter used={w.used} className="h-1.5" />
-              <span className="text-right text-muted-foreground">
-                {w.used === undefined ? "—" : `${Math.floor(w.used)}%`}
-              </span>
-            </div>
-          ))
         )}
-        <hr className="my-2.5 border-border" />
-        <CardHeading>This thread</CardHeading>
-        <CardRow label="Context" title={data.contextTitle}>
-          {data.context ? `${data.contextDetail} · ${data.context}` : "—"}
-        </CardRow>
-        <CardRow label="Cached input" title={data.cacheTitle}>
-          {data.cache ?? "—"}
-        </CardRow>
-        <CardRow label="Output speed" title={data.speedTitle}>
-          {speedText(data.speed)}
-        </CardRow>
-        <hr className="my-2.5 border-border" />
-        <button
-          type="button"
-          role="switch"
-          aria-checked={false}
-          onClick={() => switchView("row")}
-          className="-mx-1.5 -my-1 flex w-[calc(100%+0.75rem)] items-center justify-between rounded-md px-1.5 py-1 hover:bg-hover"
-        >
-          <span>Show in composer</span>
-          <span aria-hidden className="relative h-4 w-7 rounded-full bg-faint-foreground">
-            <span className="absolute top-0.5 left-0.5 size-3 rounded-full bg-white shadow" />
-          </span>
-        </button>
+        {thread.length > 0 && (
+          <div className="mt-2.5 border-t border-border pt-2">
+            {thread.map((row) => (
+              <div key={row.label} title={row.title} className="my-1 flex justify-between gap-3">
+                <span className="text-muted-foreground">{row.label}</span>
+                <span>{row.value}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
-  );
-}
-
-function CardHeading({ children }: { children: ReactNode }) {
-  return (
-    <p className="mb-1.5 text-[10.5px] font-semibold tracking-wide text-faint-foreground uppercase">
-      {children}
-    </p>
-  );
-}
-
-function CardRow({
-  label,
-  title,
-  children,
-}: {
-  label: string;
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <div title={title} className="my-1 flex justify-between gap-3">
-      <span className="text-muted-foreground">{label}</span>
-      <span>{children}</span>
-    </div>
-  );
-}
-
-/** An amber line inside the box when a window or the context is nearly full. */
-export function UsageWarning({ text }: { text: string }) {
-  return (
-    <p
-      role="status"
-      className="flex items-center gap-1.5 rounded-b-3xl border-t border-warning/25 bg-warning/10 px-5 py-2 text-[12px] text-warning"
-    >
-      <span aria-hidden>⚠</span>
-      {text}
-    </p>
   );
 }

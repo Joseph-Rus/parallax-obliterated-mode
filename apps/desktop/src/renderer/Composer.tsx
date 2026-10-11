@@ -44,7 +44,7 @@ import type {
   PromptImage,
 } from "../protocol/generated/protocol";
 import { lastPrompt } from "./attention";
-import { UsageRing, UsageRow, UsageWarning, useComposerUsage } from "./ComposerUsage";
+import { UsageTray, useComposerUsage } from "./ComposerUsage";
 import type { RequestUsage } from "./transcript";
 import { EffortMenu } from "./EffortMenu";
 import { accessPrefs } from "./accessPrefs";
@@ -297,6 +297,10 @@ interface MenuEntry {
 }
 
 /** A plain item in the composer's tab, sized like the pickers that can sit beside it. */
+/** A pickable item in the tray under the box, as its menus' triggers are styled. */
+const trayItem =
+  "flex min-w-0 items-center gap-1.5 rounded-lg py-1 pr-1.5 pl-2 text-[13.5px] text-muted-foreground hover:bg-hover hover:text-foreground [&_svg]:size-4 [&_svg]:shrink-0";
+
 export const tabItem =
   "flex min-w-0 items-center gap-1.5 px-2 py-1 text-[13.5px] text-muted-foreground [&_svg]:size-4 [&_svg]:shrink-0";
 
@@ -545,11 +549,11 @@ export function Composer({
   const account = { kind: "subscription", backend: target! } as const;
   // Usage for the provider the next message goes to. An open run's measurements show only while
   // its provider, account, model, and context window are still picked.
-  const { composerUsage: usageView, usageWarning } = behaviorPrefs.use();
+  const showUsage = behaviorPrefs.use().composerUsage !== "off";
   const usage = useComposerUsage({
     hostId: host,
     connected,
-    backend: usageView === "off" ? undefined : target,
+    backend: showUsage ? target : undefined,
     kind: targetBackend?.kind,
     accountId: target === backend ? (accountId ?? target) : target,
     usage:
@@ -1224,17 +1228,12 @@ export function Composer({
               e.target.value = "";
             }}
           />
-          {usage && usageView === "ring" && (
-            <div className="ml-auto">
-              <UsageRing data={usage} />
-            </div>
-          )}
           <button
             type="button"
             aria-label="Attach files"
             title="Attach files"
             onClick={() => filePicker.current?.click()}
-            className={`mr-1.5 ${usage && usageView === "ring" ? "" : "ml-auto"} grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-hover hover:text-foreground [&_svg]:size-4.5`}
+            className={`mr-1.5 ml-auto grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-hover hover:text-foreground [&_svg]:size-4.5`}
           >
             <Paperclip />
           </button>
@@ -1263,13 +1262,22 @@ export function Composer({
             </button>
           )}
         </div>
-        {usage && usageView === "row" && <UsageRow data={usage} />}
-        {usage?.warning && usageWarning && <UsageWarning text={usage.warning} />}
       </form>
-      {tab && (
-        // Tucked under the box, so what it shows reads as part of it.
-        <div className="mx-5 -mt-4 flex min-w-0 items-center justify-between gap-2 rounded-b-3xl border border-t-0 border-border bg-surface px-3 pt-5 pb-1.5">
-          {tab}
+      {(tab || usage?.summary) && (
+        // Tucked under the box, so what it shows reads as part of it. Usage ends it, beside the
+        // branch, as one more fact about where the next message goes.
+        <div className="mx-5 -mt-4 flex min-w-0 items-center gap-0.5 rounded-b-3xl border border-t-0 border-border bg-surface px-3 pt-5 pb-1.5">
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-2">{tab}</div>
+          {usage?.summary && (
+            <>
+              {tab && (
+                <span aria-hidden className="px-0.5 text-faint-foreground">
+                  ·
+                </span>
+              )}
+              <UsageTray data={usage} className={trayItem} />
+            </>
+          )}
         </div>
       )}
       {error && (

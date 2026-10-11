@@ -392,32 +392,12 @@ function Behavior() {
       </Row>
       <Row
         title="Usage in the composer"
-        description="Ring shows context use by the send button, with every meter on hover. Row shows the limits, context, speed, and cache inside the prompt box."
-      >
-        <select
-          aria-label="Usage in the composer"
-          value={prefs.composerUsage}
-          onChange={(e) => set({ composerUsage: e.target.value as BehaviorPrefs["composerUsage"] })}
-          className={selectClass}
-        >
-          <option value="ring">Ring</option>
-          <option value="row">Row</option>
-          <option value="off">Off</option>
-        </select>
-      </Row>
-      <Row
-        title="Warn near a limit"
-        description={
-          prefs.composerUsage === "off"
-            ? "Shown only while usage is in the composer."
-            : "A line inside the prompt box when a limit window or the context is 90% used."
-        }
+        description="The fullest limit window, beside the branch under the prompt box. Hover it for every window and the thread's context, cache, and speed."
       >
         <Switch
-          label="Warn near a limit"
-          disabled={prefs.composerUsage === "off"}
-          checked={prefs.usageWarning}
-          onChange={(usageWarning) => set({ usageWarning })}
+          label="Usage in the composer"
+          checked={prefs.composerUsage !== "off"}
+          onChange={(shown) => set({ composerUsage: shown ? "tray" : "off" })}
         />
       </Row>
     </Section>
