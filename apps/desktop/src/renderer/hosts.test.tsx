@@ -8,6 +8,8 @@ import { App } from "./App";
 import { fakeWatch } from "./fakeWatch";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+// happy-dom has no popover API; the notification stack opens as one.
+HTMLElement.prototype.showPopover = () => {};
 
 // xterm.js needs a real canvas, so the terminal is a stub that records what it runs.
 const signInTarget = vi.fn();
@@ -142,7 +144,6 @@ test("every connected host's threads are one list, newest prompt first, each ope
 
 test("a host whose plxd is too old says so in a notification naming it, not in the sidebar", async () => {
   states[mini.id] = connected;
-  HTMLElement.prototype.showPopover = () => {};
   // mini's plxd predates the shell subscription, so it answers Method not found.
   request.mockImplementation(async (host: string, method: string) =>
     host === mini.id
