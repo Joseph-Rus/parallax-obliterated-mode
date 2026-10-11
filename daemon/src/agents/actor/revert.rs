@@ -1,7 +1,9 @@
 //! Durable checkpoint rollback: provider mutation runs once, then local completion is retried.
+//! A backend that resumes at a cursor (Claude) changes nothing at revert time: the thread's next
+//! run resumes where [`rewound`] says.
 
 use parallax_protocol::jsonrpc::ErrorObject;
-use parallax_protocol::{AgentRun, ErrorKind, ParallaxEvent};
+use parallax_protocol::{AgentRun, ErrorKind, ParallaxEvent, ThreadRun, ThreadRunStatus};
 use parallax_store::OrchestrationReceipt;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -23,7 +25,56 @@ pub(super) struct Pending {
     pub(super) provider_done: bool,
 }
 
+/// Where a backend with [`Capabilities::resume_at`](crate::backend::Capabilities::resume_at)
+/// resumes a thread a revert went back on (0062).
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Rewound {
+    /// The session, at the newest kept turn's cursor.
+    At(String),
+    /// A new session, since the revert kept no turn.
+    Restart,
+}
+
+/// Where the thread with `runs`, in session `session`, resumes after a revert: at the newest kept
+/// turn's cursor in that session, when a rolled-back turn is newer, or in a new session when every
+/// turn was rolled back. `None` is a plain resume, which drops nothing. It holds until a turn
+/// after the revert reports its own cursor, so a CLI that failed to start resumes at the same
+/// place, even after a restart. A cursor from another session, before the thread moved between
+/// providers, never counts: that session's turns are already past.
+pub(super) fn rewound(runs: &[ThreadRun], session: &str) -> Option<Rewound> {
+    let started = || runs.iter().filter(|run| run.ordinal.is_some());
+    let undone = started()
+        .filter(|run| run.status == ThreadRunStatus::RolledBack)
+        .filter_map(|run| run.ordinal)
+        .max()?;
+    if started().all(|run| run.status == ThreadRunStatus::RolledBack) {
+        return Some(Rewound::Restart);
+    }
+    started()
+        .filter(|run| run.status != ThreadRunStatus::RolledBack)
+        .filter(|run| run.session_id.as_deref() == Some(session))
+        .filter(|run| run.cursor.is_some())
+        .max_by_key(|run| run.ordinal)
+        .filter(|run| run.ordinal < Some(undone))
+        .and_then(|run| run.cursor.clone())
+        .map(Rewound::At)
+}
+
 impl Actor {
+    /// [`rewound`] for this thread in `session`, with its logged output folded first.
+    pub(super) async fn rewound(&mut self, session: &str) -> Result<Option<Rewound>, ErrorObject> {
+        self.flush().await;
+        let id = self.row.id;
+        let runs = self
+            .daemon
+            .reader
+            .run(&CancellationToken::new(), move |db| {
+                crate::graph::runs(db, id)
+            })
+            .await?;
+        Ok(rewound(&runs, session))
+    }
+
     pub(super) async fn load_revert(&mut self) -> Result<(), ErrorObject> {
         let id = self.row.id;
         let pending = self
@@ -174,16 +225,14 @@ impl Actor {
             .backends()
             .by_backend_name(&name)
             .map(|(_, backend)| backend);
-        let can_rewind = backend
-            .as_ref()
-            .is_some_and(|backend| backend.capabilities().rewind);
+        let capabilities = backend.as_ref().map(|backend| backend.capabilities());
         let plan = checkpoints::plan_revert(
             &self.daemon,
             self.id,
             ordinal,
             restore_files,
-            &name,
-            can_rewind,
+            capabilities.unwrap_or_default(),
+            self.row.state.session_id.clone(),
         )
         .await?;
         let rewind = if plan.turns > 0 {
@@ -233,5 +282,81 @@ impl Actor {
             self.save_revert().await?;
         }
         self.finish_pending_revert().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use parallax_protocol::{ThreadRun, ThreadRunStatus, TurnId};
+
+    use super::{Rewound, rewound};
+
+    /// A started run, with the session and cursor its turn ended at, if it reported one.
+    fn run(ordinal: u32, status: ThreadRunStatus, at: Option<(&str, &str)>) -> ThreadRun {
+        ThreadRun {
+            id: TurnId::generate(),
+            status,
+            ordinal: Some(ordinal),
+            position: None,
+            attempt: Some(1),
+            text: None,
+            images: 0,
+            threads: Vec::new(),
+            from: None,
+            wake: false,
+            queue_held: false,
+            started_at: None,
+            completed_at: None,
+            checkpoint: None,
+            cursor: at.map(|(_, cursor)| cursor.to_owned()),
+            session_id: at.map(|(session, _)| session.to_owned()),
+        }
+    }
+
+    #[test]
+    fn the_next_run_resumes_where_a_revert_went_back_to_until_a_new_turn_ends() {
+        use ThreadRunStatus::{Completed, Failed, RolledBack};
+        let mut runs = vec![
+            run(1, Completed, Some(("a", "one"))),
+            run(2, Completed, Some(("a", "two"))),
+        ];
+        assert_eq!(rewound(&runs, "a"), None, "no revert");
+        runs[1].status = RolledBack;
+        assert_eq!(rewound(&runs, "a"), Some(Rewound::At("one".to_owned())));
+        // A turn after it that failed before reporting a cursor changes nothing.
+        runs.push(run(3, Failed, None));
+        assert_eq!(rewound(&runs, "a"), Some(Rewound::At("one".to_owned())));
+        // One that reported its cursor is the session's newest entry: a plain resume follows it.
+        runs.push(run(4, Completed, Some(("a", "four"))));
+        assert_eq!(rewound(&runs, "a"), None);
+        // Back to the start, nothing is kept.
+        for run in &mut runs {
+            run.status = RolledBack;
+        }
+        assert_eq!(rewound(&runs, "a"), Some(Rewound::Restart));
+    }
+
+    /// After a revert, a thread that moved to another provider and to Claude session `b`, whose
+    /// first turn reported no cursor, resumes `b` as it is: a turn without a cursor in `b` or one
+    /// in another session drops nothing, and no new session loses the conversation kept so far.
+    #[test]
+    fn a_later_session_resumes_plainly_whatever_a_cursor_of_an_earlier_one_says() {
+        use ThreadRunStatus::{Completed, Interrupted, RolledBack};
+        // A Codex thread (a fork's copied run 1, then turn 2), turn 3 reverted, then Claude.
+        let codex = vec![
+            run(1, Completed, None),
+            run(2, Completed, None),
+            run(3, RolledBack, None),
+            run(4, Interrupted, None),
+        ];
+        assert_eq!(rewound(&codex, "b"), None);
+        // Claude session `a`, a revert to turn 1, then Codex, then Claude session `b`.
+        let moved = vec![
+            run(1, Completed, Some(("a", "one"))),
+            run(2, RolledBack, Some(("a", "two"))),
+            run(3, Completed, None),
+            run(4, Interrupted, None),
+        ];
+        assert_eq!(rewound(&moved, "b"), None);
     }
 }

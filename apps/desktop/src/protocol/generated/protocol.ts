@@ -3195,7 +3195,16 @@ export type AgentOutputItem = { "kind": "sessionStarted",
 	/**
 	 * The turn's final text, when the vendor reports one.
 	 */
-	result?: string, } | { "kind": "followUpDropped",
+	result?: string,
+	/**
+	 * Where the vendor's session stood when the turn ended, which a revert to this turn
+	 * resumes at (0062): Claude's last transcript entry. Absent for other vendors.
+	 */
+	cursor?: string,
+	/**
+	 * The vendor session `cursor` is in.
+	 */
+	sessionId?: string, } | { "kind": "followUpDropped",
 	/**
 	 * The follow-up's turn id.
 	 */
@@ -7672,6 +7681,14 @@ export type ThreadRun = {
 	 * The worktree as its turn left it (0062), once plxd has captured it.
 	 */
 	checkpoint?: TurnCheckpoint,
+	/**
+	 * Where the vendor's session stood when its turn ended: its `turnFinished` item's `cursor`.
+	 */
+	cursor?: string,
+	/**
+	 * The vendor session `cursor` is in, as its `turnFinished` item has it.
+	 */
+	sessionId?: string,
 };
 
 /**

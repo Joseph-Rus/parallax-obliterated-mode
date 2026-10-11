@@ -12,7 +12,8 @@
 //! too, which a sidebar reads while they wait. `queue.updated` writes the queued runs.
 //!
 //! A run that ends `completed`, `interrupted`, or `cancelled` is in [`Folded::ended`], for its
-//! checkpoint (0062). `thread.checkpoint` writes a run's checkpoint onto it, and
+//! checkpoint (0062). `turnFinished` keeps the vendor's cursor on its run, where a revert to it
+//! resumes. `thread.checkpoint` writes a run's checkpoint onto it, and
 //! `thread.reverted` marks the runs a revert undid `rolledBack`, their checkpoints `stale`.
 //!
 //! [`import`] folds a thread's stored events the first time the thread is touched after the
@@ -219,14 +220,12 @@ impl<'a> Fold<'a> {
                 run.images = u32::try_from(images.len()).unwrap_or(u32::MAX);
                 run.threads.clone_from(threads);
             }),
-            AgentOutputItem::TurnFinished { turn_id, .. } => {
-                // A turn with no id is the first of its CLI: the oldest still open.
-                let at = match turn_id {
-                    Some(id) => self.open.iter().position(|run| run.id == *id),
-                    None => (!self.open.is_empty()).then_some(0),
-                };
-                self.end_at(at, ThreadRunStatus::Completed)
-            }
+            AgentOutputItem::TurnFinished {
+                turn_id,
+                cursor,
+                session_id,
+                ..
+            } => self.finish_turn(*turn_id, cursor.as_ref(), session_id.as_ref()),
             AgentOutputItem::FollowUpDropped { turn_id } => {
                 let at = self.open.iter().position(|run| run.id == *turn_id);
                 self.end_at(at, ThreadRunStatus::Cancelled)
@@ -302,6 +301,25 @@ impl<'a> Fold<'a> {
             }
             _ => Ok(()),
         }
+    }
+
+    /// Ends turn `turn_id`'s open run `completed`, keeping where the vendor's session stood.
+    fn finish_turn(
+        &mut self,
+        turn_id: Option<TurnId>,
+        cursor: Option<&String>,
+        session_id: Option<&String>,
+    ) -> Result<(), StoreError> {
+        // A turn with no id is the first of its CLI: the oldest still open.
+        let at = match turn_id {
+            Some(id) => self.open.iter().position(|run| run.id == id),
+            None => (!self.open.is_empty()).then_some(0),
+        };
+        if let Some(at) = at {
+            self.open[at].cursor = cursor.cloned();
+            self.open[at].session_id = session_id.cloned();
+        }
+        self.end_at(at, ThreadRunStatus::Completed)
     }
 
     /// Ends the open run at `at`, if there is one, with `status`.
@@ -481,6 +499,8 @@ impl<'a> Fold<'a> {
             started_at: Some(self.time),
             completed_at: None,
             checkpoint: None,
+            cursor: None,
+            session_id: None,
         };
         fill(&mut run);
         put_run(self.db, self.thread, &run, Some(self.seq))?;
@@ -605,6 +625,8 @@ fn queued_run(thread: Uuid, position: usize, message: &QueuedMessage, held: bool
         started_at: None,
         completed_at: None,
         checkpoint: None,
+        cursor: None,
+        session_id: None,
     };
     GraphRun {
         id: run.id.into(),

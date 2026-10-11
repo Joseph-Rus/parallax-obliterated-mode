@@ -288,6 +288,8 @@ mod tests {
         AgentOutputItem::TurnFinished {
             turn_id: None,
             result: Some(result.to_owned()),
+            cursor: None,
+            session_id: None,
         }
     }
 

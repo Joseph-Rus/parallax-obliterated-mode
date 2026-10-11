@@ -52,6 +52,8 @@ fn finished(turn_id: Option<TurnId>) -> AgentOutputItem {
     AgentOutputItem::TurnFinished {
         turn_id,
         result: None,
+        cursor: None,
+        session_id: None,
     }
 }
 
