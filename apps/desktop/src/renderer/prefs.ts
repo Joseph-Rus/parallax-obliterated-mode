@@ -49,8 +49,8 @@ export type BehaviorPrefs = {
   sendKey: "enter" | "modEnter";
   /** Where a pull request's Open on GitHub goes: the system browser, or the side panel's Browser. */
   openPrsIn: "external" | "browser";
-  /** Whether the tray under the composer shows provider usage. Earlier builds stored "ring" or
-   * "row" here, which read as shown. */
+  /** Whether the composer shows provider usage as a ring by the attach button. Earlier builds
+   * stored "ring" or "row" here, which read as shown. */
   composerUsage: "tray" | "off";
 };
 

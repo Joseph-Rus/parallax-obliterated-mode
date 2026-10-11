@@ -392,7 +392,7 @@ function Behavior() {
       </Row>
       <Row
         title="Usage in the composer"
-        description="The fullest limit window, beside the branch under the prompt box. Hover it for every window and the thread's context, cache, and speed."
+        description="A ring by the attach button fills with the fullest limit window. Hover it for every window and the thread's context, cache, and speed."
       >
         <Switch
           label="Usage in the composer"

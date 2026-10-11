@@ -1,4 +1,3 @@
-import { Gauge, Hourglass } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import type { AccountLimits, UsageLimitWindow } from "../protocol/generated/protocol";
@@ -115,6 +114,8 @@ interface Window {
 /** What the composer shows about a provider, from live account windows and request telemetry. */
 export interface ComposerUsageData {
   account: string;
+  /** The clock the readings were judged by, so reset times agree with them. */
+  now: number;
   windows: Window[];
   /** Why there are no windows. Absent while there are some. */
   limitsNote?: { text: string; title: string };
@@ -127,21 +128,20 @@ export interface ComposerUsageData {
   cacheTitle: string;
   speed?: number;
   speedTitle: string;
-  /** What the tray shows: the fullest current window, or the context when no window is known. */
+  /** What the ring shows: the fullest current window, or the context when no window is known. */
   summary?: Summary;
 }
 
 /** The tray's one line, and how it reads. */
 interface Summary {
-  text: string;
-  /** The line for a screen reader, which names the window even when the text doesn't. */
+  /** How full the ring is, 0 to 100. */
+  used: number;
+  /** What the ring says to a screen reader and in its tooltip. */
   label: string;
   tone: "normal" | "warning" | "danger";
-  /** The window is used up, so the line says when it comes back. */
-  capped: boolean;
 }
 
-/** "of week", "of 5h", or a named window's own name, for the tray's line. */
+/** "of week", "of 5h", or a named window's own name. */
 const ofWindow = (key: string) =>
   key === "five_hour"
     ? "of 5h"
@@ -277,27 +277,22 @@ export function useComposerUsage({
   if (fullest) {
     const capped = fullest.used! >= 100;
     summary = {
-      capped,
+      used: Math.min(fullest.used!, 100),
       tone: tone(fullest.used!),
-      text: capped
-        ? fullest.resetsAt
-          ? `Back ${resetTime(fullest.resetsAt, now)}`
-          : `${windowName(fullest.key)} used up`
-        : `${Math.floor(fullest.used!)}% ${ofWindow(fullest.key)}`,
       label: capped
         ? `${limitName(fullest.key)} used up${fullest.resetsAt ? `, back ${resetTime(fullest.resetsAt, now)}` : ""}`
         : `${Math.floor(fullest.used!)}% ${ofWindow(fullest.key)} used`,
     };
   } else if (context !== undefined)
     summary = {
-      capped: false,
+      used: contextUsed!,
       tone: tone(contextUsed!),
-      text: `${context} context`,
       label: `${context} of context used`,
     };
 
   return {
     account: accountId,
+    now,
     windows,
     limitsNote,
     context,
@@ -340,19 +335,19 @@ function Meter({ used, className }: { used?: number; className: string }) {
   );
 }
 
-const summaryTone = {
-  normal: "",
-  warning: "!text-warning",
-  danger: "!text-danger",
+const ringTone = {
+  normal: "text-muted-foreground",
+  warning: "text-warning",
+  danger: "text-danger",
 };
 
 /**
- * Usage as one more item in the tray under the prompt box, beside the branch: the fullest limit
- * window ("20% of week"), or when it's used up, when it comes back. Hovering or focusing it peeks
+ * A ring by the attach button that fills with the fullest current limit window (or the thread's
+ * context when no window is known), amber from 75% and red from 90%. Hovering or focusing it peeks
  * at a card with every window and the thread's own measurements; a click keeps the card open.
  * Nothing shows until there is something to say.
  */
-export function UsageTray({ data, className }: { data: ComposerUsageData; className: string }) {
+export function UsageRing({ data }: { data: ComposerUsageData }) {
   const [peek, setPeek] = useState(false);
   const [kept, setKept] = useState(false);
   const open = peek || kept;
@@ -389,9 +384,8 @@ export function UsageTray({ data, className }: { data: ComposerUsageData; classN
     },
   ].filter((row): row is { label: string; title: string; value: string } => !!row);
   return (
-    // Above the box, whose card would otherwise paint over this one.
     <div
-      className="relative z-20 flex min-w-0 items-center"
+      className="relative ml-auto"
       onMouseEnter={show}
       onMouseLeave={hide}
       onFocus={show}
@@ -410,37 +404,58 @@ export function UsageTray({ data, className }: { data: ComposerUsageData; classN
         aria-label={`Usage: ${summary.label}`}
         aria-expanded={open}
         aria-controls={card}
+        title={open ? undefined : summary.label}
         onClick={() => (kept ? close() : setKept(true))}
-        className={`${className} shrink-0 tabular-nums ${open ? "bg-hover text-foreground" : ""} ${summaryTone[summary.tone]}`}
+        className={`grid size-9 place-items-center rounded-full hover:bg-hover ${open ? "bg-hover" : ""} ${ringTone[summary.tone]}`}
       >
-        {summary.capped ? <Hourglass aria-hidden /> : <Gauge aria-hidden />}
-        <span className="truncate">{summary.text}</span>
+        <svg aria-hidden viewBox="0 0 20 20" className="size-[17px] -rotate-90">
+          <circle
+            cx="10"
+            cy="10"
+            r="7.5"
+            fill="none"
+            strokeWidth="2.25"
+            className="stroke-selected"
+          />
+          {summary.used > 0 && (
+            <circle
+              cx="10"
+              cy="10"
+              r="7.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.25"
+              strokeLinecap="round"
+              pathLength={100}
+              strokeDasharray={`${Math.max(summary.used, 3)} 100`}
+            />
+          )}
+        </svg>
       </button>
       <div
         id={card}
         role="dialog"
         aria-label="Usage"
         hidden={!open}
-        className="absolute right-0 bottom-full mb-2 w-80 rounded-xl border border-border bg-surface p-3 text-[12.5px] text-foreground shadow-composer tabular-nums"
+        className="absolute right-0 bottom-full z-20 mb-2 w-80 rounded-xl border border-border bg-surface p-3 text-[12.5px] text-foreground shadow-composer tabular-nums"
       >
-        {data.windows.map((w) => (
-          <div
-            key={w.key}
-            title={w.title}
-            className="my-1.5 grid grid-cols-[3.5rem_1fr_7.5rem] items-center gap-2.5"
-          >
-            <span className="truncate text-muted-foreground">{w.name}</span>
-            <Meter used={w.used} className="h-1" />
-            <span
-              className={`text-right whitespace-nowrap ${w.used !== undefined && w.used >= 100 ? "text-danger" : "text-muted-foreground"}`}
-            >
-              {w.used === undefined ? "—" : `${Math.floor(w.used)}%`}
-              {/* A reset time only with a current reading: one past, or behind a stale or
+        {/* One grid for every window, so their bars line up. */}
+        <div className="grid grid-cols-[3.5rem_1fr_auto] items-center gap-x-2.5 gap-y-2.5 py-0.5">
+          {data.windows.map((w) => (
+            <div key={w.key} title={w.title} className="contents">
+              <span className="truncate text-muted-foreground">{w.name}</span>
+              <Meter used={w.used} className="h-1" />
+              <span
+                className={`text-right whitespace-nowrap ${w.used !== undefined && w.used >= 100 ? "text-danger" : "text-muted-foreground"}`}
+              >
+                {w.used === undefined ? "—" : `${Math.floor(w.used)}%`}
+                {/* A reset time only with a current reading: one past, or behind a stale or
                   malformed reading, would be old news. */}
-              {w.used !== undefined && w.resetsAt && ` · ${resetTime(w.resetsAt, Date.now())}`}
-            </span>
-          </div>
-        ))}
+                {w.used !== undefined && w.resetsAt && ` · ${resetTime(w.resetsAt, data.now)}`}
+              </span>
+            </div>
+          ))}
+        </div>
         {data.limitsNote && (
           <p title={data.limitsNote.title} className="text-muted-foreground">
             {data.limitsNote.text}

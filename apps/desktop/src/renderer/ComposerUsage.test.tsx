@@ -10,7 +10,7 @@ import {
   forgetLimits,
   tokenPercent,
   tokensPerSecond,
-  UsageTray,
+  UsageRing,
   useComposerUsage,
 } from "./ComposerUsage";
 import type { RequestUsage } from "./transcript";
@@ -46,13 +46,17 @@ const usage: RequestUsage = {
     outputMs: 21_513,
   },
 };
-/** The tray item, as the composer places it. */
+/** The ring, as the composer places it. */
 function ComposerUsage(props: Parameters<typeof useComposerUsage>[0]) {
   const data = useComposerUsage(props);
-  return data ? <UsageTray data={data} className="tray-item" /> : null;
+  return data ? <UsageRing data={data} /> : null;
 }
-/** The tray's line, or nothing when the item is hidden. */
-const line = () => document.querySelector("button[aria-expanded]")?.textContent;
+/** What the ring says, without its "Usage: " prefix, or nothing when it's hidden. */
+const line = () =>
+  document
+    .querySelector("button[aria-expanded]")
+    ?.getAttribute("aria-label")
+    ?.replace(/^Usage: /, "");
 const card = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
 const render = async (
   backend = "claude",
@@ -118,7 +122,7 @@ test("shows the fullest window in the tray, every measurement in its card, and e
   }));
   window.parallax = { request } as unknown as ParallaxBridge;
   await render();
-  expect(line()).toBe("35% of 5h");
+  expect(line()).toBe("35% of 5h used");
   expect(card().textContent).toContain("5h35%");
   expect(card().textContent).toContain("Week20%");
   expect(card().textContent).toContain("50K / 200K · 25%");
@@ -126,7 +130,7 @@ test("shows the fullest window in the tray, every measurement in its card, and e
   expect(card().textContent).toContain("~83 tok/s");
   // Past its reset, the 5-hour reading is no longer current, so the week speaks instead.
   await act(async () => vi.advanceTimersByTime(60_000));
-  expect(line()).toBe("20% of week");
+  expect(line()).toBe("20% of week used");
   // Its reset time has passed, so the row shows neither the percent nor that time.
   expect(card().textContent).toMatch(/5h—Week/);
   expect(request).toHaveBeenCalledTimes(2);
@@ -145,14 +149,13 @@ test("a used-up window says when it comes back, and nearly full ones change tone
   window.parallax = { request } as unknown as ParallaxBridge;
   await render();
   const item = () => document.querySelector("button[aria-expanded]")!;
-  expect(line()).toMatch(/^Back /);
+  expect(line()).toMatch(/^5-hour limit used up, back /);
   expect(item().className).toContain("text-danger");
-  expect(item().getAttribute("aria-label")).toMatch(/^Usage: 5-hour limit used up, back /);
   forgetLimits();
   act(() => root?.unmount());
   root = undefined;
   await render();
-  expect(line()).toBe("92% of 5h");
+  expect(line()).toBe("92% of 5h used");
   expect(item().className).toContain("text-danger");
 });
 test("provider switch, API key fallback and disconnect cannot display another account's data", async () => {
@@ -167,7 +170,7 @@ test("provider switch, API key fallback and disconnect cannot display another ac
   expect(line()).toBeUndefined();
   // An API key account reads no limits, but its own measurements still count.
   await render("claude", "key-account", { ...usage, accountId: "key-account" });
-  expect(line()).toBe("25% context");
+  expect(line()).toBe("25% of context used");
   expect(card().textContent).toContain("Limits unavailable");
   expect(request).toHaveBeenCalledTimes(1);
   await render("claude", "claude", usage, false);
@@ -182,9 +185,9 @@ test("older daemon or refresh failure clears unavailable limits", async () => {
     .mockResolvedValue({ error: { code: -32601, message: "Method not found" } });
   window.parallax = { request } as unknown as ParallaxBridge;
   await render();
-  expect(line()).toBe("35% of 5h");
+  expect(line()).toBe("35% of 5h used");
   await act(async () => vi.advanceTimersByTime(60_000));
-  expect(line()).toBe("25% context");
+  expect(line()).toBe("25% of context used");
   expect(card().textContent).toContain("Limits unavailable");
 });
 test("output speed needs both sides and a provider whose timing it understands", async () => {
@@ -220,7 +223,7 @@ test("composers on one host share a minute's read of the limits", async () => {
   act(() => root?.unmount());
   root = undefined;
   await render();
-  expect(line()).toBe("35% of 5h");
+  expect(line()).toBe("35% of 5h used");
   expect(request).toHaveBeenCalledTimes(1);
   await act(async () => vi.advanceTimersByTime(60_000));
   expect(request).toHaveBeenCalledTimes(2);
@@ -265,7 +268,7 @@ test("a used-up window with no reset time outranks one that resets, since it may
     })),
   } as unknown as ParallaxBridge;
   await render();
-  expect(line()).toBe("Week used up");
+  expect(line()).toBe("Weekly limit used up");
 });
 test("focus leaving closes a card a click kept open", async () => {
   window.parallax = {

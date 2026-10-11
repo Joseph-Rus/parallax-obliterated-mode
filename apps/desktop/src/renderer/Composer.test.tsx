@@ -831,7 +831,7 @@ test("choosing an explicit model from a default-model run hides its earlier requ
       },
     },
   });
-  expect(document.body.textContent).toContain("25% context");
+  expect(document.body.textContent).toContain("50K / 200K · 25%");
   const menu = document.getElementById(
     document.querySelector('[aria-label="Model: Default model"]')!.getAttribute("popovertarget")!,
   )!;
@@ -839,5 +839,5 @@ test("choosing an explicit model from a default-model run hides its earlier requ
     item.textContent?.startsWith("Claude Opus 5.5"),
   )!;
   await act(async () => opus.click());
-  expect(document.body.textContent).not.toContain("25% context");
+  expect(document.body.textContent).not.toContain("50K / 200K · 25%");
 });
