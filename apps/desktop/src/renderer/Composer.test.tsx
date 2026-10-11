@@ -805,6 +805,7 @@ test("a provider turned off in Settings leaves the menu, and a new thread starts
 });
 
 test("choosing an explicit model from a default-model run hides its earlier request measurements", async () => {
+  setBehaviorPrefs({ composerUsage: "row" });
   const request = vi.fn(async () => ({ error: { code: -32601, message: "Unavailable" } }));
   window.parallax = {
     platform: "darwin",
@@ -841,4 +842,5 @@ test("choosing an explicit model from a default-model run hides its earlier requ
   await act(async () => opus.click());
   expect(document.body.textContent).toContain("— context");
   expect(document.body.textContent).not.toContain("25% context");
+  setBehaviorPrefs({ composerUsage: "ring" });
 });

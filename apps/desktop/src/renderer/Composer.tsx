@@ -44,7 +44,7 @@ import type {
   PromptImage,
 } from "../protocol/generated/protocol";
 import { lastPrompt } from "./attention";
-import { ComposerUsage } from "./ComposerUsage";
+import { UsageRing, UsageRow, UsageWarning, useComposerUsage } from "./ComposerUsage";
 import type { RequestUsage } from "./transcript";
 import { EffortMenu } from "./EffortMenu";
 import { accessPrefs } from "./accessPrefs";
@@ -543,6 +543,20 @@ export function Composer({
   const startedFast = started?.fast ?? (fresh ? defaults.fast : false);
   const fast = hasFast && (pickedFast ?? startedFast);
   const account = { kind: "subscription", backend: target! } as const;
+  // Usage for the provider the next message goes to. An open run's measurements show only while
+  // its provider, account, model, and context window are still picked.
+  const { composerUsage: usageView, usageWarning } = behaviorPrefs.use();
+  const usage = useComposerUsage({
+    hostId: host,
+    connected,
+    backend: usageView === "off" ? undefined : target,
+    kind: targetBackend?.kind,
+    accountId: target === backend ? (accountId ?? target) : target,
+    usage:
+      target === backend && model?.id === startedModel?.id && context === startedContext
+        ? requestUsage
+        : undefined,
+  });
   let options: RunOptions = {};
   // A started run sends only what changed, unless the message goes to another instance.
   if (run && started && target === backend)
@@ -1210,12 +1224,17 @@ export function Composer({
               e.target.value = "";
             }}
           />
+          {usage && usageView === "ring" && (
+            <div className="ml-auto">
+              <UsageRing data={usage} />
+            </div>
+          )}
           <button
             type="button"
             aria-label="Attach files"
             title="Attach files"
             onClick={() => filePicker.current?.click()}
-            className="mr-1.5 ml-auto grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-hover hover:text-foreground [&_svg]:size-4.5"
+            className={`mr-1.5 ${usage && usageView === "ring" ? "" : "ml-auto"} grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-hover hover:text-foreground [&_svg]:size-4.5`}
           >
             <Paperclip />
           </button>
@@ -1244,27 +1263,14 @@ export function Composer({
             </button>
           )}
         </div>
+        {usage && usageView === "row" && <UsageRow data={usage} />}
+        {usage?.warning && usageWarning && <UsageWarning text={usage.warning} />}
       </form>
       {tab && (
         // Tucked under the box, so what it shows reads as part of it.
         <div className="mx-5 -mt-4 flex min-w-0 items-center justify-between gap-2 rounded-b-3xl border border-t-0 border-border bg-surface px-3 pt-5 pb-1.5">
           {tab}
         </div>
-      )}
-      {host && target && (
-        <ComposerUsage
-          key={`${host}/${target}/${target === backend ? (accountId ?? target) : target}`}
-          hostId={host}
-          connected={connected}
-          backend={target}
-          kind={targetBackend?.kind}
-          accountId={target === backend ? (accountId ?? target) : target}
-          usage={
-            target === backend && model?.id === startedModel?.id && context === startedContext
-              ? requestUsage
-              : undefined
-          }
-        />
       )}
       {error && (
         <p role="alert" className="px-2 pt-2 text-[13px] text-danger">

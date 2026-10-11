@@ -6,12 +6,16 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import type { ParallaxBridge } from "../preload/bridge";
 import type { UsageLimitWindow } from "../protocol/generated/protocol";
 import {
-  ComposerUsage,
   currentLimit,
   forgetLimits,
   tokenPercent,
   tokensPerSecond,
+  UsageRing,
+  UsageRow,
+  UsageWarning,
+  useComposerUsage,
 } from "./ComposerUsage";
+import { behaviorPrefs, setBehaviorPrefs } from "./prefs";
 import type { RequestUsage } from "./transcript";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -45,6 +49,20 @@ const usage: RequestUsage = {
     outputMs: 21_513,
   },
 };
+/** The composer's pieces, as it places them: the ring or the row, and the warning. */
+function ComposerUsage({
+  view = "row",
+  ...props
+}: Parameters<typeof useComposerUsage>[0] & { view?: "ring" | "row" }) {
+  const data = useComposerUsage(props);
+  if (!data) return null;
+  return (
+    <>
+      {view === "ring" ? <UsageRing data={data} /> : <UsageRow data={data} />}
+      {data.warning && <UsageWarning text={data.warning} />}
+    </>
+  );
+}
 const render = async (
   backend = "claude",
   accountId = backend,
@@ -56,7 +74,6 @@ const render = async (
   await act(async () =>
     root!.render(
       <ComposerUsage
-        key={`${backend}/${accountId}`}
         hostId="local"
         connected={connected}
         backend={backend}
@@ -178,4 +195,42 @@ test("strips on one host share a minute's read of the limits", async () => {
   expect(request).toHaveBeenCalledTimes(1);
   await act(async () => vi.advanceTimersByTime(60_000));
   expect(request).toHaveBeenCalledTimes(2);
+});
+test("the ring fills with context, tints by the fullest meter, and opens a card that pins the row", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  const near = { ...limit, usedPercent: 92 };
+  window.parallax = {
+    request: vi.fn(async () => ({
+      result: { accounts: [{ accountId: "claude", limits: [near] }] },
+    })),
+  } as unknown as ParallaxBridge;
+  root ??= createRoot(document.body.appendChild(document.createElement("div")));
+  await act(async () =>
+    root!.render(
+      <ComposerUsage
+        view="ring"
+        hostId="local"
+        connected
+        backend="claude"
+        kind="claude"
+        accountId="claude"
+        usage={usage}
+      />,
+    ),
+  );
+  const ring = document.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+  expect(ring.getAttribute("aria-label")).toBe("Usage: 25% context, 5h 92%");
+  expect(ring.className).toContain("text-danger");
+  const card = document.querySelector<HTMLElement>('[role="dialog"]')!;
+  expect(card.hidden).toBe(true);
+  await act(async () => ring.click());
+  expect(card.hidden).toBe(false);
+  expect(card.textContent).toContain("50K / 200K · 25%");
+  expect(card.textContent).toContain("~83 tok/s");
+  expect(document.querySelector('[role="status"]')?.textContent).toContain("5-hour limit 92% used");
+  const before = behaviorPrefs.get().composerUsage;
+  await act(async () => card.querySelector<HTMLElement>('[role="switch"]')!.click());
+  expect(behaviorPrefs.get().composerUsage).toBe("row");
+  setBehaviorPrefs({ composerUsage: before });
 });
