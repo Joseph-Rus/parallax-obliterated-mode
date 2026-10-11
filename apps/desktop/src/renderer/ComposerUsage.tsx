@@ -154,15 +154,25 @@ const ofWindow = (key: string) =>
 const compact = (n: number) =>
   new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n);
 
-/** "4:20 PM" today, "Thu 9:00 AM" later in the week. */
+/** "4:20 PM" within the day, "Thu 9:00 AM" within the week, "Oct 17, 9:00 AM" six or more days
+ * out, where a weekday alone could read as today. */
 function resetTime(iso: string, now: number): string {
   const at = Date.parse(iso);
-  const later = at - now > 20 * 60 * 60 * 1000;
+  const day = 24 * 60 * 60 * 1000;
+  const ahead = at - now;
   return new Date(at).toLocaleString(undefined, {
-    ...(later && { weekday: "short" }),
+    ...(ahead >= 6 * day
+      ? { month: "short", day: "numeric" }
+      : ahead > 20 * 60 * 60 * 1000 && { weekday: "short" }),
     ...clockOptions(),
   });
 }
+
+/** When a window resets, for sorting: one with no reset time could keep you waiting longest. */
+const resetOrder = (w: { resetsAt?: string }) => {
+  const at = w.resetsAt === undefined ? NaN : Date.parse(w.resetsAt);
+  return Number.isFinite(at) ? at : Infinity;
+};
 
 /**
  * Reads the account's live limit windows (shared per host, refreshed each minute) and turns them
@@ -255,14 +265,14 @@ export function useComposerUsage({
   const timed = !!kind && !!speedSource[kind];
   const speed = timed ? tokensPerSecond(measured?.outputTokens, measured?.outputMs) : undefined;
 
-  // The fullest current window speaks for the account; a later reset breaks a tie, since that
-  // one keeps you waiting longer.
+  // The fullest current window speaks for the account; a later reset, or none, breaks a tie,
+  // since that one keeps you waiting longer.
   const fullest = windows
     .filter((w) => w.used !== undefined)
-    .sort(
-      (a, b) =>
-        b.used! - a.used! || Date.parse(b.resetsAt ?? "") - Date.parse(a.resetsAt ?? "") || 0,
-    )[0];
+    .sort((a, b) => {
+      const later = resetOrder(b) - resetOrder(a);
+      return b.used! - a.used! || (Number.isNaN(later) ? 0 : later);
+    })[0];
   let summary: Summary | undefined;
   if (fullest) {
     const capped = fullest.used! >= 100;
@@ -401,7 +411,7 @@ export function UsageTray({ data, className }: { data: ComposerUsageData; classN
         aria-expanded={open}
         aria-controls={card}
         onClick={() => (kept ? close() : setKept(true))}
-        className={`${className} tabular-nums ${open ? "bg-hover text-foreground" : ""} ${summaryTone[summary.tone]}`}
+        className={`${className} shrink-0 tabular-nums ${open ? "bg-hover text-foreground" : ""} ${summaryTone[summary.tone]}`}
       >
         {summary.capped ? <Hourglass aria-hidden /> : <Gauge aria-hidden />}
         <span className="truncate">{summary.text}</span>
@@ -425,7 +435,9 @@ export function UsageTray({ data, className }: { data: ComposerUsageData; classN
               className={`text-right whitespace-nowrap ${w.used !== undefined && w.used >= 100 ? "text-danger" : "text-muted-foreground"}`}
             >
               {w.used === undefined ? "—" : `${Math.floor(w.used)}%`}
-              {w.resetsAt && ` · ${resetTime(w.resetsAt, Date.now())}`}
+              {/* A reset time only with a current reading: one past, or behind a stale or
+                  malformed reading, would be old news. */}
+              {w.used !== undefined && w.resetsAt && ` · ${resetTime(w.resetsAt, Date.now())}`}
             </span>
           </div>
         ))}

@@ -127,7 +127,8 @@ test("shows the fullest window in the tray, every measurement in its card, and e
   // Past its reset, the 5-hour reading is no longer current, so the week speaks instead.
   await act(async () => vi.advanceTimersByTime(60_000));
   expect(line()).toBe("20% of week");
-  expect(card().textContent).toContain("5h—");
+  // Its reset time has passed, so the row shows neither the percent nor that time.
+  expect(card().textContent).toMatch(/5h—Week/);
   expect(request).toHaveBeenCalledTimes(2);
 });
 test("a used-up window says when it comes back, and nearly full ones change tone", async () => {
@@ -251,5 +252,34 @@ test("hover peeks at the card, a click keeps it open, and Escape closes it", asy
   await act(async () => wrapper.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
   await act(async () => wrapper.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })));
   await act(async () => vi.advanceTimersByTime(200));
+  expect(card().hidden).toBe(true);
+});
+test("a used-up window with no reset time outranks one that resets, since it may keep you waiting", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  const capped = { ...limit, usedPercent: 100 };
+  const week = { window: "seven_day", usedPercent: 100, capturedAt: limit.capturedAt };
+  window.parallax = {
+    request: vi.fn(async () => ({
+      result: { accounts: [{ accountId: "claude", limits: [capped, week] }] },
+    })),
+  } as unknown as ParallaxBridge;
+  await render();
+  expect(line()).toBe("Week used up");
+});
+test("focus leaving closes a card a click kept open", async () => {
+  window.parallax = {
+    request: vi.fn(async () => ({
+      result: { accounts: [{ accountId: "claude", limits: [limit] }] },
+    })),
+  } as unknown as ParallaxBridge;
+  await render();
+  const item = document.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+  await act(async () => item.click());
+  expect(card().hidden).toBe(false);
+  const outside = document.body.appendChild(document.createElement("button"));
+  await act(async () =>
+    item.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: outside })),
+  );
   expect(card().hidden).toBe(true);
 });
