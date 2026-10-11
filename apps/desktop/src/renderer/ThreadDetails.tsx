@@ -34,15 +34,15 @@ export function useThreadDetails() {
   const [docked, setDocked] = useState(() => localStorage.getItem(THREAD_DETAILS_KEY) === "open");
   const [floating, setFloating] = useState(false);
   const [narrow, setNarrow] = useState(false);
+  // Crossing the line closes a floating card, adjusted while rendering rather than in an updater.
+  const [measured, setMeasured] = useState(narrow);
+  if (measured !== narrow) {
+    setMeasured(narrow);
+    setFloating(false);
+  }
   useLayoutEffect(() => {
     if (!element) return;
-    const measure = () => {
-      const next = tooNarrowToDock(element.getBoundingClientRect().width);
-      setNarrow((was) => {
-        if (was !== next) setFloating(false);
-        return next;
-      });
-    };
+    const measure = () => setNarrow(tooNarrowToDock(element.getBoundingClientRect().width));
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
