@@ -13,8 +13,8 @@ use crate::backend::codex::CodexBackend;
 use crate::backend::process::{Environment, Launcher};
 use crate::backend::{
     AccountRef, AgentEffort, AgentPermission, Answer, ApiKey, Backend, Credential, Decision, Event,
-    EventStream, FollowUp, ModelUsage, Outcome, Resume, RunId, RunRequest, StartError, ToolPolicy,
-    ToolStatus, TurnId, Usage,
+    EventStream, FollowUp, ModelUsage, Outcome, Resume, Rewind, RunId, RunRequest, StartError,
+    ToolPolicy, ToolStatus, TurnId, Usage,
 };
 use crate::paths::DataDir;
 
@@ -195,12 +195,13 @@ async fn an_approval_round_trips_and_a_follow_up_joins_the_live_thread() {
         })
     );
 
-    assert_manual_writes(&dir);
+    assert_manual_writes(&dir).await;
 }
 
-/// What plxd wrote to the Manual thread's app-server, and how it started it.
-fn assert_manual_writes(dir: &TempDir) {
-    let written = written(dir);
+/// What plxd wrote to the Manual thread's app-server, and how it started it. Its last write,
+/// `thread/unsubscribe` as it leaves, can follow the stream's end.
+async fn assert_manual_writes(dir: &TempDir) {
+    let written = written_at_least(dir, 7).await;
     let methods: Vec<&str> = written
         .iter()
         .map(|line| line["method"].as_str().unwrap_or("(response)"))
@@ -213,7 +214,8 @@ fn assert_manual_writes(dir: &TempDir) {
             "thread/start",
             "turn/start",
             "(response)",
-            "turn/start"
+            "turn/start",
+            "thread/unsubscribe"
         ]
     );
     assert_eq!(
@@ -728,4 +730,68 @@ async fn a_recorded_session_replays_to_its_snapshot() {
         )),
     )
     .await;
+}
+
+#[tokio::test]
+async fn a_revert_drops_the_newest_turns_before_the_oldest_of_them() {
+    let (dir, backend) = fake(include_str!("../fixtures/app-server-revert.jsonl"));
+    let rewind = Rewind {
+        session_id: "t-0".into(),
+        cwd: PathBuf::from("/repo"),
+        turns: 2,
+    };
+    assert_eq!(backend.rewind(rewind).await.unwrap(), "t-0");
+    let sent = written_at_least(&dir, 8).await;
+    let methods: Vec<&str> = sent
+        .iter()
+        .filter_map(|line| line["method"].as_str())
+        .collect();
+    assert_eq!(
+        methods,
+        [
+            "initialize",
+            "initialized",
+            "thread/read",
+            "thread/resume",
+            "thread/turns/list",
+            "thread/revert",
+            "thread/unsubscribe"
+        ]
+    );
+    let list = &sent[4]["params"];
+    assert_eq!(
+        (&list["sortDirection"], &list["limit"]),
+        (&json!("desc"), &json!(2))
+    );
+    assert_eq!(sent[5], json!({"id": 0, "error": sent[5]["error"].clone()}));
+    assert_eq!(
+        sent[6]["params"],
+        json!({"threadId": "t-0", "beforeTurnId": "u-2"})
+    );
+}
+
+#[tokio::test]
+async fn a_revert_of_legacy_history_is_refused() {
+    let (dir, backend) = fake(include_str!("../fixtures/app-server-revert-legacy.jsonl"));
+    let rewind = Rewind {
+        session_id: "t-0".into(),
+        cwd: PathBuf::from("/repo"),
+        turns: 1,
+    };
+    let why = backend.rewind(rewind).await.unwrap_err();
+    assert!(why.contains("legacy history"), "{why}");
+    assert_eq!(written_at_least(&dir, 3).await.len(), 3);
+}
+
+/// What plxd wrote, once it is at least `lines` lines: the fake records the rest of stdin after
+/// its last scripted line.
+async fn written_at_least(dir: &TempDir, lines: usize) -> Vec<Value> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let sent = fs::read_to_string(dir.path().join("stdin")).unwrap_or_default();
+        if sent.lines().count() >= lines || tokio::time::Instant::now() > deadline {
+            return written(dir);
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }

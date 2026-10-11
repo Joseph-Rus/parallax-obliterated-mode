@@ -512,11 +512,12 @@ async fn a_worker_edits_its_worktree_writes_shared_context_commits_and_replays()
     let worktree = PathBuf::from(started.worktree_path.clone().expect("a worktree"));
     assert!(branch.starts_with("parallax/"), "{branch}");
 
-    let mut context_changed = false;
+    let (mut context_changed, mut checkpoint) = (false, false);
     let mut is_done = updated_to(AgentStatus::Completed);
-    let events = until(&mut client, |event| {
+    let mut events = until(&mut client, |event| {
         context_changed |=
             matches!(&event.event, ParallaxEvent::ContextChanged { file } if file.path == "notes.md");
+        checkpoint |= matches!(event.event, ParallaxEvent::ThreadCheckpoint { .. });
         is_done(event)
     })
     .await;
@@ -564,11 +565,17 @@ async fn a_worker_edits_its_worktree_writes_shared_context_commits_and_replays()
         std::fs::read_to_string(&note).unwrap(),
         "Build with cargo.\n"
     );
-    if !context_changed {
-        until(&mut client, |event| {
-            matches!(&event.event, ParallaxEvent::ContextChanged { file } if file.path == "notes.md")
-        })
-        .await;
+    // The turn's checkpoint is a run event that can follow its end (0062), so the replay waits
+    // for it too.
+    if !(context_changed && checkpoint) {
+        events.extend(
+            until(&mut client, |event| {
+                context_changed |= matches!(&event.event, ParallaxEvent::ContextChanged { file } if file.path == "notes.md");
+                checkpoint |= matches!(event.event, ParallaxEvent::ThreadCheckpoint { .. });
+                context_changed && checkpoint
+            })
+            .await,
+        );
     }
 
     assert_replays(&host, project.id, params.run_id, &events).await;
@@ -921,13 +928,15 @@ async fn agent_start_is_idempotent_on_its_run_id() {
     // A run in a Project is a child, so its end also adds an inbox item (0043) and writes its
     // history (0044).
     let mut completed = updated_to(AgentStatus::Completed);
-    let (mut done, mut inboxed, mut history) = (false, false, false);
+    let (mut done, mut inboxed, mut history, mut checkpoint) = (false, false, false, false);
     until(&mut client, |event| {
         done |= completed(event);
         inboxed |= matches!(event.event, ParallaxEvent::InboxAdded { .. });
         history |= matches!(&event.event, ParallaxEvent::ContextChanged { file }
             if file.path.starts_with("history/"));
-        done && inboxed && history
+        // Its turn's checkpoint (0062).
+        checkpoint |= matches!(event.event, ParallaxEvent::ThreadCheckpoint { .. });
+        done && inboxed && history && checkpoint
     })
     .await;
 
@@ -1125,7 +1134,15 @@ async fn a_sent_turn_stays_idempotent_across_a_restart() {
     let host = host.restart(fake(hang())).await;
     let mut client = host.client().await;
     subscribe(&mut client, project.id, seq_before).await;
-    until(&mut client, updated_to(AgentStatus::Interrupted)).await;
+    let mut interrupted = updated_to(AgentStatus::Interrupted);
+    let (mut done, mut checkpoint) = (false, false);
+    until(&mut client, |event| {
+        done |= interrupted(event);
+        // The cut turn's checkpoint (0062).
+        checkpoint |= matches!(event.event, ParallaxEvent::ThreadCheckpoint { .. });
+        done && checkpoint
+    })
+    .await;
 
     // A retry with the same text is answered from the stored turn, not sent to the CLI again.
     let retried = client
