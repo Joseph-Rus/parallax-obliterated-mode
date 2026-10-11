@@ -226,6 +226,30 @@ export function useConnectionAlarms(hosts: Host[]) {
   }, []);
 }
 
+/**
+ * A notification when a host's plxd is too old for this app to load its lists (its `outdated`),
+ * once until it's updated, and when it is. The sidebar stays quiet about it.
+ */
+export function useOutdatedAlarms(hosts: HostThreads[]) {
+  const outdated = useRef(new Set<string>());
+  useEffect(() => {
+    for (const { host, view } of hosts) {
+      const key = `outdated/${host.id}`;
+      if (view.outdated && !outdated.current.has(host.id)) {
+        outdated.current.add(host.id);
+        notify({
+          key,
+          tone: "error",
+          title: `${host.name}'s plxd is out of date`,
+          body: "Its threads can't load. Update Parallax there, or run npx plx-connect setup on a Linux computer that runs only plxd.",
+        });
+      } else if (!view.outdated && !view.loading && outdated.current.delete(host.id)) {
+        notify({ key, tone: "success", title: `${host.name}'s plxd is up to date` });
+      }
+    }
+  }, [hosts]);
+}
+
 /** A notification when the user signs in to or out of their Parallax account (0037). */
 export function useAccountAlarms() {
   useEffect(() => {

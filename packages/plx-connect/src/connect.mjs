@@ -124,10 +124,10 @@ export async function resolveTarget(query) {
   }
   const device = tailnet && findDevice(tailnet.devices, query);
   if (device?.ip) return { name: device.name, ip: device.ip, online: device.online };
-  if (tailnet && findDevice([tailnet.self], query)) throw new Error("That's this computer. Run plx-connect setup instead.");
+  if (tailnet && findDevice([tailnet.self], query)) throw new Error("That's this computer. Run npx plx-connect setup instead.");
   if (tailnet?.self.tagged) throw new Error(TAGGED);
   if (net.isIP(query)) return { name: query, ip: query, online: true };
-  throw new Error(`No device named ${query} in your tailnet. Run plx-connect devices to see them.`);
+  throw new Error(`No device named ${query} in your tailnet. Run npx plx-connect devices to see them.`);
 }
 
 /**
@@ -157,7 +157,7 @@ export async function add(query, options) {
       const { code, stdout } = await runner.command(UNAME_COMMAND);
       if (code === 255) {
         throw new Error(
-          `SSH couldn't connect to ${destination}. Turn on Remote Login (macOS), OpenSSH Server (Windows), or sshd (Linux) there, or run plx-connect setup on it.`,
+          `SSH couldn't connect to ${destination}. Turn on Remote Login (macOS), OpenSSH Server (Windows), or sshd (Linux) there, or run npx plx-connect setup on it.`,
         );
       }
       return [`Connected to ${name}`, parseUname(stdout, code)];

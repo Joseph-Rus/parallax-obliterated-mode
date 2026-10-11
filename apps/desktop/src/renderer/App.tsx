@@ -39,6 +39,7 @@ import { attentionOf } from "./attention";
 import {
   useAccountAlarms,
   useConnectionAlarms,
+  useOutdatedAlarms,
   useNeedsYouAlarm,
   useSnoozeAlarms,
   useThreadAlarms,
@@ -380,6 +381,7 @@ export function App() {
   useSnoozeAlarms(listed, openHostThread);
   useThreadAlarms(listed, openHostThread, settings ? [] : panes.map((id) => `${host.id}/${id}`));
   useConnectionAlarms(hosts);
+  useOutdatedAlarms(listed);
   useAccountAlarms();
   useUpdateAlarms();
   const needsYou = useNeedsYouAlarm(listed, (hostId, projectId) =>

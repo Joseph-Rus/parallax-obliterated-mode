@@ -337,6 +337,11 @@ export interface ThreadsView {
   /** Why the list couldn't load or stopped updating, for people. */
   error?: string;
   /**
+   * The host's plxd predates the subscriptions this app uses (0059), so its lists can't load. A
+   * notification says so (alarms.ts), not the sidebar.
+   */
+  outdated?: boolean;
+  /**
    * While a load or resync is under way: its list can be in without the permission requests
    * that follow it, so who needs the user isn't settled yet (PLX-507's alarms wait it out).
    */
@@ -447,6 +452,7 @@ export function useThreads(
   const naming = has("threadNaming");
   const [state, dispatch] = useReducer(threadsReducer, emptyThreads);
   const [error, setError] = useState<string>();
+  const [outdated, setOutdated] = useState(false);
   const [loading, setLoading] = useState(false);
   const needsYou = useRef(onNeedsYou);
   // Read when a snapshot arrives, so a change doesn't reopen the shell.
@@ -486,15 +492,16 @@ export function useThreads(
       if (stopped) return;
       if (message.type === "error") {
         failed();
-        return setError(
-          message.error.code === ErrorCodes.MethodNotFound ? tooOld : message.error.message,
-        );
+        const old = message.error.code === ErrorCodes.MethodNotFound;
+        setOutdated(old);
+        return setError(old ? undefined : message.error.message);
       }
       if (message.type === "snapshot") {
         const { projects, repos, threads, runs, requests } = message.snapshot;
         dispatch({ type: "snapshot", projects, repos, threads, runs });
         dispatch({ type: "approvals", events: requests });
         setError(undefined);
+        setOutdated(false);
         setLoading(false);
         if (lineageNow.current && !moved) {
           moved = true;
@@ -691,17 +698,15 @@ export function useThreads(
     () => ({
       state,
       error,
+      ...(outdated && { outdated }),
       loading,
       capabilities: capabilities ?? noCapabilities,
       iconImageBytes,
       ...actions,
     }),
-    [state, error, loading, capabilities, iconImageBytes, actions],
+    [state, error, outdated, loading, capabilities, iconImageBytes, actions],
   );
 }
-
-/** Why a host's lists can't load: its plxd predates the subscriptions this app uses (0059). */
-const tooOld = "This host's plxd is too old for this version of Parallax. Update Parallax there.";
 
 const notConnected = "Not connected to this host.";
 /** A disconnected host's capabilities: one shared object, so a view without them stays equal. */
