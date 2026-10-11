@@ -177,12 +177,31 @@ impl Translator {
             "turn/plan/updated" => vec![Step::Emit(Event::TodoList {
                 items: plan_items(params.get("plan")),
             })],
-            "thread/tokenUsage/updated" => params
-                .get("tokenUsage")
-                .and_then(|usage| usage.get("total"))
-                .map(|total| Step::Total(usage_total(total)))
-                .into_iter()
-                .collect(),
+            "thread/tokenUsage/updated" => {
+                let Some(usage) = params.get("tokenUsage") else {
+                    return Vec::new();
+                };
+                let mut steps = Vec::new();
+                if let Some(total) = usage.get("total") {
+                    steps.push(Step::Total(usage_total(total)));
+                }
+                if let Some(last) = usage.get("last") {
+                    let count = |key| last.get(key).and_then(Value::as_u64);
+                    steps.push(Step::Emit(Event::RequestUsage(
+                        parallax_protocol::AgentRequestUsage {
+                            context_tokens: count("totalTokens"),
+                            context_window: usage
+                                .get("modelContextWindow")
+                                .and_then(Value::as_u64)
+                                .filter(|window| *window > 0),
+                            input_tokens: count("inputTokens"),
+                            cached_input_tokens: count("cachedInputTokens"),
+                            ..Default::default()
+                        },
+                    )));
+                }
+                steps
+            }
             "turn/completed" => {
                 let turn = params.get("turn").and_then(Value::as_object);
                 let status = turn.and_then(|turn| text(turn, "status"));
@@ -573,6 +592,35 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn request_usage_uses_last_instead_of_resumed_cumulative_totals() {
+        let mut translator = Translator::default();
+        let message = json!({"method": "thread/tokenUsage/updated", "params": {
+            "tokenUsage": {"total": {"inputTokens": 900_000, "cachedInputTokens": 600_000},
+                "last": {"totalTokens": 22_348, "inputTokens": 22_343, "cachedInputTokens": 22_000},
+                "modelContextWindow": 272_000}
+        }});
+        let steps = translator.line(message.to_string().as_bytes());
+        assert!(steps.contains(&Step::Emit(Event::RequestUsage(
+            parallax_protocol::AgentRequestUsage {
+                context_tokens: Some(22_348),
+                context_window: Some(272_000),
+                input_tokens: Some(22_343),
+                cached_input_tokens: Some(22_000),
+                model: None
+            }
+        ))));
+        let missing = json!({"method": "thread/tokenUsage/updated", "params": {
+            "tokenUsage": {"last": {}, "modelContextWindow": 0}
+        }});
+        assert_eq!(
+            translator.line(missing.to_string().as_bytes()),
+            [Step::Emit(Event::RequestUsage(
+                parallax_protocol::AgentRequestUsage::default()
+            ))]
+        );
     }
 
     #[test]

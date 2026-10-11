@@ -274,10 +274,23 @@ impl Translator {
                     cache_write_tokens: count(&tokens["cache"]["write"]),
                     cost_usd_micros: None,
                 };
-                (usage != Usage::default())
-                    .then_some(Step::Emit(Event::Usage(ModelUsage { model: None, usage })))
-                    .into_iter()
-                    .collect()
+                let mut steps = Vec::new();
+                if usage != Usage::default() {
+                    steps.push(Step::Emit(Event::Usage(ModelUsage { model: None, usage })));
+                }
+                let input = tokens["input"].as_u64().and_then(|input| {
+                    input
+                        .checked_add(tokens["cache"]["read"].as_u64()?)?
+                        .checked_add(tokens["cache"]["write"].as_u64()?)
+                });
+                steps.push(Step::Emit(Event::RequestUsage(
+                    parallax_protocol::AgentRequestUsage {
+                        input_tokens: input,
+                        cached_input_tokens: tokens["cache"]["read"].as_u64(),
+                        ..Default::default()
+                    },
+                )));
+                steps
             }
             _ => Vec::new(),
         }

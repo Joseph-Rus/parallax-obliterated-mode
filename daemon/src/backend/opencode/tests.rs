@@ -412,6 +412,13 @@ async fn a_thread_at_a_server_url_streams_asks_and_finishes() {
         })
         .collect();
     assert_eq!(usage.len(), 1);
+    assert!(
+        seen.contains(&Event::RequestUsage(parallax_protocol::AgentRequestUsage {
+            input_tokens: Some(150),
+            cached_input_tokens: Some(50),
+            ..Default::default()
+        }))
+    );
     assert_eq!(
         (
             usage[0].input_tokens,

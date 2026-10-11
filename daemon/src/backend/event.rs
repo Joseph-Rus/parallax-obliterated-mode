@@ -119,6 +119,8 @@ pub enum Event {
     },
     /// Tokens and cost the run used since its previous `Usage` event.
     Usage(ModelUsage),
+    /// Latest request measurements, independent of cumulative account billing.
+    RequestUsage(parallax_protocol::AgentRequestUsage),
     /// The latest state of one of the account's limit windows.
     RateLimit(LimitWindow),
     /// A turn ended: Claude's `result`, Codex's `turn.completed`, Cursor's `session/prompt` response.

@@ -219,6 +219,16 @@ impl Translator {
                     .collect();
                 vec![Step::Emit(Event::TodoList { items })]
             }
+            Some("usage_update") => vec![Step::Emit(Event::RequestUsage(
+                parallax_protocol::AgentRequestUsage {
+                    context_tokens: update.get("used").and_then(Value::as_u64),
+                    context_window: update
+                        .get("size")
+                        .and_then(Value::as_u64)
+                        .filter(|window| *window > 0),
+                    ..Default::default()
+                },
+            ))],
             // Agents' own bookkeeping (a turn's tokens come on its answer instead), and the user's
             // own message echoed in a replay.
             Some(
@@ -226,7 +236,6 @@ impl Translator {
                 | "session_info_update"
                 | "current_mode_update"
                 | "config_option_update"
-                | "usage_update"
                 | "user_message_chunk"
                 | "subagent_spawned"
                 | "subagent_state_update",

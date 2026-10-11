@@ -1032,3 +1032,32 @@ async fn a_recorded_session_replays_to_its_snapshot() {
     )
     .await;
 }
+
+#[test]
+fn reported_context_usage_preserves_unknown_fields_instead_of_guessing_zero() {
+    let mut translator = super::stream::Translator::default();
+    let update = |usage| {
+        serde_json::json!({"method": "session/update", "params": {
+            "sessionId": "session", "update": usage
+        }})
+    };
+    let message =
+        update(serde_json::json!({"sessionUpdate": "usage_update", "used": 1200, "size": 200_000}));
+    assert_eq!(
+        translator.line(message.to_string().as_bytes()),
+        [super::stream::Step::Emit(Event::RequestUsage(
+            parallax_protocol::AgentRequestUsage {
+                context_tokens: Some(1200),
+                context_window: Some(200_000),
+                ..Default::default()
+            }
+        ))]
+    );
+    let message = update(serde_json::json!({"sessionUpdate": "usage_update", "size": 0}));
+    assert_eq!(
+        translator.line(message.to_string().as_bytes()),
+        [super::stream::Step::Emit(Event::RequestUsage(
+            parallax_protocol::AgentRequestUsage::default()
+        ))]
+    );
+}

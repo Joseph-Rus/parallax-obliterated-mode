@@ -427,6 +427,7 @@ export function NewThread({
           // Hidden while starting, as the opened thread's composer has none.
           backend={runOptions && starting === undefined ? backend : undefined}
           hostId={hostId}
+          connected={connection?.status === "connected"}
           contextAndFast={
             connection?.status === "connected" && "contextAndFast" in connection.capabilities
           }

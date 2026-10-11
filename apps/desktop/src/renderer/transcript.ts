@@ -146,7 +146,11 @@ export type ApprovalResolution = Omit<
 
 export type Approval = Extract<Item, { kind: "approval" }>;
 
+/** The most recent main-session measurements, scoped to the account and provider that emitted them. */
+export type RequestUsage = Extract<AgentOutputItem, { kind: "requestUsage" }> & { at: string };
+
 export interface Transcript {
+  requestUsage?: RequestUsage;
   /** Absent until `agent.started` is in. */
   run?: AgentRun;
   items: Item[];
@@ -324,7 +328,7 @@ export function applyEvents(t: Transcript, events: LoggedEvent[], runId: string)
 }
 
 function applyEventsInner(t: Transcript, events: LoggedEvent[], runId: string): Transcript {
-  let { run, seq, turnDone, openTurns = 0 } = t;
+  let { run, seq, turnDone, openTurns = 0, requestUsage } = t;
   const items = [...t.items];
   const subagents = { ...t.subagents };
   const push = (item: Item) => items.push(item);
@@ -336,13 +340,24 @@ function applyEventsInner(t: Transcript, events: LoggedEvent[], runId: string): 
     const key = (i: number | string = 0) => `${at}:${i}`;
     const before = items.length;
 
+    const previous = run;
     run = updateRun(run, event);
+    if (
+      previous &&
+      run &&
+      (previous.backend !== run.backend ||
+        previous.accountId !== run.accountId ||
+        previous.model !== run.model ||
+        previous.contextWindow !== run.contextWindow)
+    )
+      requestUsage = undefined;
     switch (event.kind) {
       case "agent.started":
         turnDone = false;
         if (event.run) push({ kind: "user", key: key(), text: event.run.prompt });
         break;
       case "agent.accountFallback":
+        requestUsage = undefined;
         // The failed attempt's CLI ended, with its turns, without an agent.finished.
         openTurns = 0;
         push({
@@ -380,6 +395,18 @@ function applyEventsInner(t: Transcript, events: LoggedEvent[], runId: string): 
       }
       case "agent.output":
         event.items.forEach((item, i) => {
+          if (item.kind === "requestUsage")
+            requestUsage = {
+              ...item,
+              usage: { ...item.usage, model: item.usage.model ?? run?.model },
+              at: time,
+            };
+          if (item.kind === "contextCompaction") requestUsage = undefined;
+          if (item.kind === "sessionStarted") {
+            const lastSession = items.findLast((row) => row.kind === "session");
+            if (lastSession?.kind === "session" && lastSession.sessionId !== item.sessionId)
+              requestUsage = undefined;
+          }
           if (item.kind === "turnStarted") openTurns++;
           // A dropped follow-up never had a turnStarted, so it doesn't count.
           if (item.kind === "turnFinished") {
@@ -402,6 +429,7 @@ function applyEventsInner(t: Transcript, events: LoggedEvent[], runId: string): 
     Object.entries(subagents).some(([callId, sub]) => had[callId] !== sub);
   return {
     run,
+    requestUsage,
     items,
     subagents: changed ? subagents : t.subagents,
     seq,

@@ -779,6 +779,9 @@ export function AgentChat({
           }
           backend={run?.backend}
           started={run}
+          accountId={run?.accountId}
+          requestUsage={transcript.requestUsage}
+          connected={connected}
           hostId={hostId}
           contextAndFast={connected && "contextAndFast" in connection.capabilities}
           unavailable={unavailable}

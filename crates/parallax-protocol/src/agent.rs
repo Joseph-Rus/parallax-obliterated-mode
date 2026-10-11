@@ -634,6 +634,15 @@ pub enum AgentOutputItem {
         /// The thread that stopped it.
         from: RunId,
     },
+    /// The latest model request's reported usage, separate from cumulative billing totals.
+    RequestUsage {
+        /// The provider instance that made the request.
+        backend: String,
+        /// The account charged for the request, including fallback key accounts.
+        account_id: String,
+        /// The provider's request measurements. Missing values are unknown.
+        usage: AgentRequestUsage,
+    },
     /// Tokens and cost used since the previous `usage` item.
     Usage {
         /// The model, when the vendor breaks usage down by model.
@@ -1161,4 +1170,31 @@ mod tests {
             json!({"status": "completed"})
         );
     }
+}
+
+/// Measurements from the latest main-session model request, never cumulative billing totals.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentRequestUsage {
+    /// The actual model when the provider reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub model: Option<String>,
+    /// Claude's request input, Codex's last request total, or ACP's current context tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub context_tokens: Option<u64>,
+    /// The context window reported by the provider, never inferred from the model catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub context_window: Option<u64>,
+    /// Request input including cached input. The denominator for cache utilization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_tokens: Option<u64>,
+    /// Request input served from cache. Missing differs from zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cached_input_tokens: Option<u64>,
 }
