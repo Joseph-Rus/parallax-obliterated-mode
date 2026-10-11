@@ -455,7 +455,7 @@ export function useThreads(
     needsYou.current = onNeedsYou;
     lineageNow.current = lineage;
   });
-  const [watchKey, failed] = useWatchKey(hostId, connected);
+  const [watchKey, failed] = useWatchKey(hostId, connected, hostId);
 
   useEffect(() => {
     if (!watchKey) return;

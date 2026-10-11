@@ -62,7 +62,7 @@ let located: string | undefined;
 const child = () => children.at(-1)!;
 const state = () => states.at(-1);
 
-function connect(destination?: string) {
+function connect(destination?: string, replaceDaemon?: (version: string) => Promise<boolean>) {
   const connection = new Connection({
     command: () =>
       destination
@@ -72,6 +72,7 @@ function connect(destination?: string) {
           : [located, "attach"],
     ...(destination !== undefined && { destination }),
     clientVersion: "0.0.1",
+    ...(replaceDaemon && { replaceDaemon }),
     onState: (next) => states.push(next),
     spawn: (file, args) => {
       spawned.push([file, ...args]);
@@ -92,6 +93,69 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+});
+
+test.each([false, true])(
+  "replaces the old daemon before publishing its handshake (incompatible: %s)",
+  async (mismatch) => {
+    let replaced!: (value: boolean) => void;
+    const replaceDaemon = vi.fn(() => new Promise<boolean>((resolve) => (replaced = resolve)));
+    const connection = connect(undefined, replaceDaemon);
+    const old = child();
+    connection.watch({ shell: true }, () => {});
+    old.reply({
+      id: old.request("initialize").id,
+      ...(mismatch ? { error: incompatible } : { result: { ...initialized, plxd: "old" } }),
+    });
+    expect(replaceDaemon).toHaveBeenCalledOnce();
+    expect(state()?.status).toBe("connecting");
+    expect(old.sent.map((message) => message.method)).toEqual(["initialize"]);
+    expect(await connection.request("host/health", {})).toHaveProperty("error");
+    // serve exits during replacement. Do not reconnect until its service operation finishes.
+    old.emit("close", 0, null);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(children).toHaveLength(1);
+    replaced(true);
+    await Promise.resolve();
+    expect(children).toHaveLength(2);
+    expect(states.some((next) => next.status === "connected")).toBe(false);
+    child().handshake();
+    replaced(false);
+    await Promise.resolve();
+    expect(state()?.status).toBe("connected");
+    expect(child().request("orchestration/subscribeShell")).toBeDefined();
+    connection.dispose();
+  },
+);
+
+test("a failed local upgrade exposes its error without connecting or retrying automatically", async () => {
+  const connection = connect(undefined, async () => {
+    throw new Error("service restart failed");
+  });
+  child().handshake();
+  await Promise.resolve();
+  expect(state()).toMatchObject({
+    status: "failed",
+    retrying: false,
+    error: { message: "Couldn't update the bundled local plxd: service restart failed" },
+  });
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(children).toHaveLength(1);
+  connection.dispose();
+});
+
+test("an external incompatible daemon stays failed when replacement declines", async () => {
+  const connection = connect(undefined, async () => false);
+  child().reply({ id: child().request("initialize").id, error: incompatible });
+  child().emit("close", 0, null);
+  await Promise.resolve();
+  expect(state()).toMatchObject({
+    status: "failed",
+    retrying: false,
+    error: { reason: "incompatibleProtocol" },
+  });
+  expect(children).toHaveLength(1);
+  connection.dispose();
 });
 
 test("handshakes, then heartbeats, and reconnects when plxd goes silent", () => {

@@ -101,7 +101,7 @@ export function useAgentRun(hostId: string, runId: string, connected: boolean): 
   const [older, setOlder] = useState(false);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
   const [held, setHeld] = useState(false);
-  const [watchKey, failed] = useWatchKey(`${hostId}\n${runId}`, connected);
+  const [watchKey, failed] = useWatchKey(`${hostId}\n${runId}`, connected, hostId);
 
   // Loads the page before `p`'s oldest event into it, one at a time: `false` while another is
   // on its way, or once a fresh snapshot replaced `p` or the page failed.

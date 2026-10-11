@@ -12,7 +12,6 @@ import {
   HOME_VARS,
   NPM_INSTALLS,
   type ConnectState,
-  type ConnectionState,
   type DeviceHost,
   type DeviceIcon,
   iconFor,
@@ -105,7 +104,7 @@ const settingsFile = () => path.join(app.getPath("userData"), "settings.json");
  * serves the `window.parallax` calls that reach plxd or edit the hosts.
  */
 export function startHosts(): void {
-  void repointService();
+  initialServiceCheck = repointService();
   addConnection("local", () => {
     const plxd = localPlxd();
     return plxd === undefined ? undefined : [plxd, "attach"];
@@ -518,10 +517,11 @@ const localPlxd = () =>
   });
 
 /**
- * How often this launch has compared the local `plxd serve`'s version with its plxd's: at most
- * twice, so a re-attach to a serve still shutting down gets one more try.
+ * How many bundled serves this launch has replaced: at most twice, so a re-attach to a serve
+ * still shutting down gets one more try. External daemons do not use up these attempts.
  */
 let serveChecks = 0;
+let initialServiceCheck: Promise<void> | undefined;
 
 /**
  * After an update, the local `plxd serve` may still be the previous app's, since attach reuses a
@@ -531,25 +531,46 @@ let serveChecks = 0;
  * a plxd on PATH. Not on Windows, whose installer stops every process running from the app's
  * folder, `plxd.exe` included.
  */
-async function replaceOtherServe(state: ConnectionState): Promise<void> {
-  if (!app.isPackaged || serveChecks >= 2 || process.platform === "win32") return;
-  const running =
-    state.status === "connected"
-      ? state.plxd
-      : state.status === "failed"
-        ? state.error.plxd
-        : undefined;
-  if (running === undefined) return;
-  serveChecks++;
+async function replaceOtherServe(running: string): Promise<boolean> {
+  if (!app.isPackaged || process.env["PLXD_PATH"] || process.platform === "win32") return false;
+  await initialServiceCheck;
   const plxd = localPlxd();
-  const bundled = plxd === undefined ? undefined : await plxdVersion(plxd);
+  // A PATH fallback is externally managed even in a packaged app.
+  if (plxd !== path.join(process.resourcesPath, "plxd")) return false;
+  const bundled = await plxdVersion(plxd);
+  if (bundled !== undefined && bundled !== running && serveChecks >= 2)
+    throw new Error("the local daemon still isn't running the bundled version. Restart Parallax.");
+  const service = servicePlxd();
   const { stopped, why } = await replaceServe(
     dataDir(process.env, process.platform, homedir()),
     running,
     bundled,
+    undefined,
+    service
+      ? {
+          status: async () => {
+            const { stdout } = await runPlxd(service, "service", "status");
+            const file = /^file: (.*)$/m.exec(stdout)?.[1];
+            const pid = /^pid: (\d+)$/m.exec(stdout)?.[1];
+            const program =
+              file && /^installed: true$/m.test(stdout)
+                ? plistProgram(await readFile(file, "utf8"))
+                : undefined;
+            return {
+              ...(program && { program }),
+              ...(pid && { pid: Number(pid) }),
+              ready: /^answers initialize: true$/m.test(stdout),
+            };
+          },
+          replace: async () => {
+            await runPlxd(service, "service", "install", "--replace");
+          },
+        }
+      : undefined,
   );
   console.log(`parallax: ${why}`);
-  if (stopped) connections.get("local")?.retry();
+  if (stopped) serveChecks++;
+  return stopped;
 }
 
 /**
@@ -568,6 +589,7 @@ function addConnection(
     ...(device !== undefined && { device }),
     ...(lan !== undefined && { lan }),
     clientVersion: app.getVersion(),
+    ...(hostId === "local" && { replaceDaemon: replaceOtherServe }),
     onState: (state) => {
       // A replaced or removed connection has nothing more to say.
       if (connections.get(hostId) !== created) return;
@@ -583,7 +605,6 @@ function addConnection(
         return queueMicrotask(() => created.retry());
       }
       broadcast("parallax:state", hostId, state);
-      if (hostId === "local") void replaceOtherServe(state);
       if (state.status !== "connected") return;
       if (hostId === "local") {
         void refreshConnect();
@@ -921,9 +942,12 @@ const runPlxd = (plxd: string, ...args: string[]) =>
  * from a random path that's gone once it quits, so a service can't point at it.
  */
 function servicePlxd(): string | undefined {
-  if (!app.isPackaged || process.platform !== "darwin") return undefined;
+  if (!app.isPackaged || process.platform !== "darwin" || process.env["PLXD_PATH"])
+    return undefined;
   const plxd = localPlxd();
-  return plxd && !plxd.includes("/AppTranslocation/") ? plxd : undefined;
+  return plxd === path.join(process.resourcesPath, "plxd") && !plxd.includes("/AppTranslocation/")
+    ? plxd
+    : undefined;
 }
 
 /**
