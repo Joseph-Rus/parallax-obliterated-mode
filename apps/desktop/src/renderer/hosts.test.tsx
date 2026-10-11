@@ -39,8 +39,8 @@ const untrusted: ConnectionState = {
 
 let states: Record<string, ConnectionState>;
 const listsNothing = async (_host: string, method: string): Promise<unknown> =>
-  method === "thread/list" || method === "agent/list"
-    ? { result: { repos: [], threads: [], runs: [], seq: 1 }, logId: "log" }
+  method === "thread/list" || method === "agent/list" || method === "project/list"
+    ? { result: { repos: [], threads: [], runs: [], projects: [], seq: 1 }, logId: "log" }
     : { error: { code: -32601, message: `${method} isn't faked` } };
 const request = vi.fn(listsNothing);
 const saveHost = vi.fn<(host: HostInput, id?: string) => Promise<string | undefined>>();
@@ -138,6 +138,25 @@ test("every connected host's threads are one list, newest prompt first, each ope
   const crumbs = [...document.querySelectorAll('[aria-label="Breadcrumb"] li')];
   expect(crumbs.map((li) => li.textContent)).toEqual(["Mac mini", "api", "Add the endpoint"]);
   expect(rows()[0]!.getAttribute("aria-current")).toBe("page");
+});
+
+test("a host whose plxd is too old says so in a notification naming it, not in the sidebar", async () => {
+  states[mini.id] = connected;
+  HTMLElement.prototype.showPopover = () => {};
+  // mini's plxd predates the shell subscription, so it answers Method not found.
+  request.mockImplementation(async (host: string, method: string) =>
+    host === mini.id
+      ? { error: { code: -32601, message: `Method not found: ${method}` } }
+      : listsNothing(host, method),
+  );
+  await renderApp();
+  const notices = document.querySelector('[aria-label="Notifications"]');
+  expect(notices?.textContent).toContain("Mac mini's plxd is out of date");
+  expect(notices?.textContent).not.toContain("This Mac");
+  const alerts = [...document.querySelectorAll('#sidebar [role="alert"]')];
+  expect(alerts.map((a) => a.textContent)).toEqual([]);
+  // Notices outlive a render, so this one is closed before the next test.
+  await click(notices!.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!);
 });
 
 test("a host that can't connect adds nothing to the list, and Connections shows why", async () => {
