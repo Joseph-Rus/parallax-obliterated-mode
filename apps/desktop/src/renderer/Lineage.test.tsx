@@ -170,6 +170,15 @@ const chip = (title: string) =>
   [...(chipGroup()?.querySelectorAll("li > button") ?? [])].find(
     (button) => button.querySelector("[data-lineage-title]")?.textContent === title,
   );
+// Lineage's collapsed section of finished children, and opening it.
+const previousToggle = () =>
+  [...document.querySelectorAll('[aria-label="Lineage"] button[aria-expanded]')].find((b) =>
+    b.textContent?.startsWith("Previous agents"),
+  );
+const openPrevious = async () => {
+  const toggle = previousToggle();
+  if (toggle?.getAttribute("aria-expanded") === "false") await click(toggle);
+};
 // A sidebar group's toggle, by its count.
 const toggle = (count: string) =>
   [...document.querySelectorAll("#sidebar button[aria-expanded]")].find((b) =>
@@ -198,6 +207,10 @@ test("a parent's lineage rows open its children, and a child's parent crumb open
   expect(crumbs()).toEqual(["This Mac", "parallax", "Ship lineage"]);
   expect(currentCrumb()).toBe("Ship lineage");
   expect(chipGroup()!.getAttribute("aria-label")).toBe("Lineage");
+  // The failed child is a previous agent, collapsed with a count.
+  expect(chips()).toEqual(["Style the chips"]);
+  expect(previousToggle()!.textContent).toBe("Previous agents (1)1 failed");
+  await openPrevious();
   expect(chips()).toEqual(["Style the chips", "Write the test"]);
   // Each chip's tooltip says what it's doing.
   expect(chip("Write the test")!.getAttribute("title")).toBe("Write the test · Failed");
@@ -214,6 +227,7 @@ test("a parent's lineage rows open its children, and a child's parent crumb open
 
   await click(crumb("Ship lineage"));
   expect(currentCrumb()).toBe("Ship lineage");
+  await openPrevious();
   expect(chips()).toEqual(["Style the chips", "Write the test"]);
 });
 
@@ -225,8 +239,14 @@ test("details lists every current and previous child, including descendants, wit
   runs.push(...["c", "d", "e", "f", "grandchild"].map((id) => run(id, "completed")));
   await renderApp();
   await click(sidebarRow("Ship lineage"));
+  // The working child is current; the finished ones are previous agents, collapsed.
+  expect(chips()).toEqual(["Style the chips"]);
+  expect(previousToggle()!.textContent).toBe("Previous agents (6)1 failed");
+  await openPrevious();
   expect(chips()).toEqual(["Style the chips", "Write the test", "c", "d", "e", "f", "grandchild"]);
-  expect(chip("Style the chips")!.querySelector(".mark-working")).not.toBeNull();
+  // The working mark sits at the right, after the time.
+  const styleRow = chip("Style the chips")!.firstElementChild!;
+  expect(styleRow.lastElementChild!.querySelector(".mark-working")).not.toBeNull();
   expect(chip("Write the test")!.textContent).toContain("Claude Sonnet 5 · Failed");
   expect(chip("grandchild")!.getAttribute("style")).toContain("22px");
   expect(document.querySelector('[aria-label="Breadcrumb"] [data-lineage-title]')).toBeNull();
@@ -238,17 +258,22 @@ test("Mod+Alt+Up goes to the parent, and Mod+Alt+Right and Left cycle through th
   await renderApp();
   await click(sidebarRow("Ship lineage"));
   await press("ArrowRight");
+  await openPrevious();
   expect(chips()).toEqual(["Style the chips*", "Write the test"]);
   await press("ArrowRight");
+  await openPrevious();
   expect(chips()).toEqual(["Style the chips", "Write the test*"]);
   await press("ArrowRight");
+  await openPrevious();
   expect(chips()).toEqual(["Style the chips*", "Write the test"]);
   await press("ArrowLeft");
+  await openPrevious();
   expect(chips()).toEqual(["Style the chips", "Write the test*"]);
   await press("ArrowUp");
   expect(currentCrumb()).toBe("Ship lineage");
   // From the parent, Left opens the last child.
   await press("ArrowLeft");
+  await openPrevious();
   expect(chips()).toEqual(["Style the chips", "Write the test*"]);
 });
 
@@ -427,7 +452,10 @@ test("an agent's own subagents are read-only lineage rows, and one opens without
   });
   await renderApp();
   await click(sidebarRow("Ship lineage"));
-  expect(chips()).toEqual(["Read the docs", "Read the tests", "Style the chips", "Write the test"]);
+  // The running subagent and child are current; the finished ones are previous.
+  expect(chips()).toEqual(["Read the tests", "Style the chips"]);
+  await openPrevious();
+  expect(chips()).toEqual(["Read the tests", "Style the chips", "Read the docs", "Write the test"]);
   const docs = chip("Read the docs")!;
   expect(docs.getAttribute("aria-label")).toBe("Read the docs, read-only subagent, Done");
   expect(chip("Read the tests")!.getAttribute("title")).toBe(
