@@ -20,6 +20,9 @@ const FAKE_PLXD: &str = "#!/bin/sh\nread -r v < \"${0%/*}/plxd.version\"\necho \
 
 const NEW: &str = "2610.10912.13045-nightly";
 
+/// The URL schemes the fake releases need.
+const FILE: &str = "=https,file";
+
 struct Fixture {
     dir: TempDir,
 }
@@ -181,6 +184,7 @@ async fn a_standalone_plxd_is_replaced_in_place_with_its_version_beside_it() {
     let installed = install_release(
         &fixture.launcher(),
         &releases,
+        FILE,
         NEW,
         &Placement::InPlace(exe.clone()),
         &fixture.path("home"),
@@ -211,6 +215,7 @@ async fn a_bundled_plxd_installs_to_parallax_plxd() {
     let installed = install_release(
         &fixture.launcher(),
         &releases,
+        FILE,
         NEW,
         &Placement::Shared(shared.clone()),
         &fixture.path("home"),
@@ -242,6 +247,7 @@ async fn a_folder_plxd_cant_write_falls_back_to_parallax_plxd() {
     let installed = install_release(
         &fixture.launcher(),
         &releases,
+        FILE,
         NEW,
         &Placement::InPlace(exe.clone()),
         &fixture.path("home"),
@@ -262,7 +268,7 @@ async fn a_checksum_mismatch_or_a_plxd_that_wont_run_replaces_nothing() {
     let exe = fixture.old_plxd("local/bin/plxd");
     let placement = Placement::InPlace(exe.clone());
     let home = fixture.path("home");
-    let error = install_release(&fixture.launcher(), &releases, NEW, &placement, &home)
+    let error = install_release(&fixture.launcher(), &releases, FILE, NEW, &placement, &home)
         .await
         .unwrap_err();
     assert!(error.contains("SHA-256"), "{error}");
@@ -270,15 +276,30 @@ async fn a_checksum_mismatch_or_a_plxd_that_wont_run_replaces_nothing() {
     let releases = fixture
         .release("#!/bin/sh\necho broken >&2\nexit 1\n", None)
         .unwrap();
-    let error = install_release(&fixture.launcher(), &releases, NEW, &placement, &home)
+    let error = install_release(&fixture.launcher(), &releases, FILE, NEW, &placement, &home)
         .await
         .unwrap_err();
     assert!(error.contains("doesn't run"), "{error}");
     assert!(error.contains("broken"), "{error}");
 
+    // A real host downloads over HTTPS only, so a `file://` release is refused.
+    let releases = fixture.release(FAKE_PLXD, None).unwrap();
+    let error = install_release(
+        &fixture.launcher(),
+        &releases,
+        "=https",
+        NEW,
+        &placement,
+        &home,
+    )
+    .await
+    .unwrap_err();
+    assert!(error.starts_with("Couldn't download"), "{error}");
+
     let error = install_release(
         &fixture.launcher(),
         "file:///nonexistent",
+        FILE,
         NEW,
         &placement,
         &home,
@@ -369,4 +390,38 @@ async fn a_development_build_refuses_to_update() {
         error.message
     );
     assert_eq!(fs::read_to_string(&exe).unwrap(), "old");
+}
+
+#[test]
+fn a_plxd_its_service_runs_exits_for_the_service_to_restart_it() {
+    use super::{Handover, fallback, in_unit_cgroup, run_by_service};
+
+    let program = PathBuf::from("/home/u/.local/bin/plxd");
+    assert_eq!(fallback(program.clone(), true), Handover::Exit);
+    assert_eq!(fallback(program.clone(), false), Handover::Spawn(program));
+
+    // The manager names this process as its service's.
+    assert!(run_by_service(Some(42), 42, false));
+    // Another process, or none: only the hint decides.
+    assert!(!run_by_service(Some(7), 42, false));
+    assert!(!run_by_service(None, 42, false));
+    assert!(run_by_service(None, 42, true));
+
+    let unit = "io.github.ryan-stoffel.parallax.plxd.service";
+    let in_unit = format!("0::/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}\n");
+    assert!(in_unit_cgroup(&in_unit, unit));
+    // cgroup v1 lines, one per controller.
+    assert!(in_unit_cgroup(
+        &format!("12:pids:/user.slice/user@1000.service/{unit}\n1:name=systemd:/x\n"),
+        unit
+    ));
+    // A terminal's scope, or another unit whose name only starts the same.
+    assert!(!in_unit_cgroup(
+        "0::/user.slice/user-1000.slice/session-3.scope\n",
+        unit
+    ));
+    assert!(!in_unit_cgroup(
+        &format!("0::/user.slice/user@1000.service/app.slice/{unit}.d\n"),
+        unit
+    ));
 }

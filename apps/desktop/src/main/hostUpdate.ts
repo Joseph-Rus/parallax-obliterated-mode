@@ -4,7 +4,8 @@ import type { HostUpdateResult } from "../protocol/generated/protocol";
 // Keeping every connected computer's plxd on the app's version (PLX-700, decision 0066). Once the
 // local plxd runs the app's version, so after an update, each remote host whose plxd is older is
 // updated once per launch: through its own `host/update` when it has it, else by the SSH install
-// for an SSH host, else the user is told how.
+// for an SSH host once no agent's turn is running there, else the user is told how. A host that
+// restarts and doesn't come back on the new plxd in time counts as failed.
 
 /** A release version's numbers, without its channel: `[2610, 10912, 13045]` (0030). */
 export function versionNumbers(version: string): number[] | undefined {
@@ -33,6 +34,12 @@ export const isOlder = (plxd: string, version: string) => (compareVersions(plxd,
 /** How a remote host is reached, which decides how its plxd updates without `host/update`. */
 export type HostKind = "ssh" | "remote";
 
+/** How often an SSH host with running agents is asked again before plxd is reinstalled there. */
+export const IDLE_POLL_MS = 15_000;
+
+/** How long a host that restarts now has to reconnect on the new plxd before it counts as failed. */
+export const RECONNECT_TIMEOUT_MS = 3 * 60_000;
+
 export type HostUpdaterDeps = {
   /** A packaged app, not a development build or one running `PLXD_PATH`. */
   packaged: boolean;
@@ -46,12 +53,23 @@ export type HostUpdaterDeps = {
   states: () => Iterable<[string, ConnectionState]>;
   /** Sends `host/update`, waiting as long as a download takes. */
   update: (hostId: string, version: string) => Promise<RpcResponse<HostUpdateResult>>;
+  /** Agents with a turn running on the host, from `host/health`; undefined when it didn't answer. */
+  runningAgents: (hostId: string) => Promise<number | undefined>;
   /** Installs the app's plxd over ssh and reconnects; resolves to an error for people. */
   installSsh: (hostId: string) => Promise<string | undefined>;
   /** The host's OS, as `host/version` names it. */
   osOf: (hostId: string) => Promise<string | undefined>;
   /** Tells the windows. */
   emit: (event: HostUpdateEvent) => void;
+};
+
+/** A host updating, which is done once it reconnects on `version`. */
+type Pending = {
+  version: string;
+  /** It restarted, or was reinstalled, so reconnecting on an older plxd means it failed. */
+  restarted: boolean;
+  /** Fails it if it hasn't reconnected on `version` in time. */
+  timer?: ReturnType<typeof setTimeout>;
 };
 
 /** What to tell a user whose plxd can't update itself, on a host the app can't reach by ssh. */
@@ -64,8 +82,10 @@ export function unsupportedMessage(plxd: string, os: string | undefined, channel
 export class HostUpdater {
   /** Hosts tried this launch, as `hostId@version`, so each is tried once. */
   private readonly tried = new Set<string>();
-  /** Hosts updating, by the version that's done when they reconnect on it. */
-  private readonly pending = new Map<string, string>();
+  /** Hosts updating now: from the first step until they reconnect updated or fail. */
+  private readonly active = new Set<string>();
+  /** Hosts waiting to reconnect on the new plxd. */
+  private readonly pending = new Map<string, Pending>();
   /** The local plxd ran the app's version once this launch. */
   private localCurrent = false;
 
@@ -82,16 +102,24 @@ export class HostUpdater {
     }
     const waiting = this.pending.get(hostId);
     if (waiting !== undefined) {
-      if (isOlder(state.plxd, waiting)) return;
-      this.pending.delete(hostId);
-      this.deps.emit({ hostId, status: "updated", version: state.plxd });
+      if (!isOlder(state.plxd, waiting.version)) {
+        this.done(hostId);
+        this.deps.emit({ hostId, status: "updated", version: state.plxd });
+      } else if (waiting.restarted) {
+        this.fail(
+          hostId,
+          `plxd restarted, but it's still plxd ${state.plxd}, not ${waiting.version}.`,
+        );
+      }
+      // Otherwise it's still the old plxd, waiting for its agents.
       return;
     }
     if (this.localCurrent) this.consider(hostId, state);
   }
 
-  /** Tries a host again, as the failure notice's Retry does. */
+  /** Tries a host again, as the failure notice's Retry does, unless it's updating already. */
   retry(hostId: string): void {
+    if (this.active.has(hostId)) return;
     this.tried.delete(`${hostId}@${this.deps.version}`);
     const state = new Map(this.deps.states()).get(hostId);
     if (state) this.consider(hostId, state);
@@ -103,8 +131,9 @@ export class HostUpdater {
     if (!packaged || state.status !== "connected" || !isOlder(state.plxd, version)) return;
     const kind = this.deps.kindOf(hostId);
     const key = `${hostId}@${version}`;
-    if (!kind || this.tried.has(key)) return;
+    if (!kind || this.tried.has(key) || this.active.has(hostId)) return;
     this.tried.add(key);
+    this.active.add(hostId);
     void this.run(hostId, kind, state).catch((error: unknown) =>
       this.fail(hostId, error instanceof Error ? error.message : String(error)),
     );
@@ -119,25 +148,65 @@ export class HostUpdater {
     if ("hostUpdate" in state.capabilities) {
       const answer = await this.deps.update(hostId, version);
       if ("error" in answer) return this.fail(hostId, answer.error.message);
+      if (answer.result.restart === "upToDate") return this.done(hostId);
       // It reconnects on the new version: now, or once its agents' turns end.
-      if (answer.result.restart !== "upToDate") this.pending.set(hostId, version);
+      this.wait(hostId, answer.result.restart === "now");
       return;
     }
     if (kind === "ssh") {
+      // The SSH install restarts plxd at once, so it waits until no agent's turn is running.
+      if (!(await this.idle(hostId))) return this.done(hostId);
       // The new connection may be up before this resolves, so it waits first.
-      this.pending.set(hostId, version);
+      this.wait(hostId, false);
       const error = await this.deps.installSsh(hostId);
-      if (error) {
-        this.pending.delete(hostId);
-        this.fail(hostId, error);
-      }
+      if (error) return this.fail(hostId, error);
+      // Unless it's back on the new plxd already, it has a while to reconnect on it.
+      if (this.pending.has(hostId)) this.wait(hostId, true);
       return;
     }
     const os = await this.deps.osOf(hostId);
     this.fail(hostId, unsupportedMessage(state.plxd, os, this.deps.channel));
   }
 
+  /**
+   * Resolves once `host/health` reports no running agents on `hostId`, asking every
+   * `IDLE_POLL_MS`; false if the host leaves Parallax meanwhile.
+   */
+  private async idle(hostId: string): Promise<boolean> {
+    for (;;) {
+      if (!this.deps.kindOf(hostId)) return false;
+      if ((await this.deps.runningAgents(hostId)) === 0) return true;
+      await new Promise((resolve) => setTimeout(resolve, IDLE_POLL_MS));
+    }
+  }
+
+  /** Waits for `hostId` to reconnect on the new plxd; within `RECONNECT_TIMEOUT_MS` if `restarted`. */
+  private wait(hostId: string, restarted: boolean): void {
+    const version = this.deps.version;
+    clearTimeout(this.pending.get(hostId)?.timer);
+    const pending: Pending = { version, restarted };
+    if (restarted) {
+      pending.timer = setTimeout(
+        () =>
+          this.fail(
+            hostId,
+            `plxd didn't come back on ${version} within ${RECONNECT_TIMEOUT_MS / 60_000} minutes of restarting.`,
+          ),
+        RECONNECT_TIMEOUT_MS,
+      );
+    }
+    this.pending.set(hostId, pending);
+  }
+
+  /** Stops following `hostId`'s update. */
+  private done(hostId: string): void {
+    clearTimeout(this.pending.get(hostId)?.timer);
+    this.pending.delete(hostId);
+    this.active.delete(hostId);
+  }
+
   private fail(hostId: string, error: string): void {
+    this.done(hostId);
     this.deps.emit({ hostId, status: "failed", error });
   }
 }

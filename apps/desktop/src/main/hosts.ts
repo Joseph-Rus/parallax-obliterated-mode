@@ -126,6 +126,10 @@ export function startHosts(): void {
       (await connections.get(hostId)?.request("host/update", { version }, UPDATE_TIMEOUT_MS)) ?? {
         error: { code: ErrorCodes.InternalError, message: "That host isn't in Parallax anymore." },
       },
+    runningAgents: async (hostId) => {
+      const answer = await connections.get(hostId)?.request("host/health", {});
+      return answer && "result" in answer ? answer.result.runningAgents : undefined;
+    },
     installSsh: (hostId) => installPlxdOn(hostId),
     osOf: async (hostId) => {
       const answer = await connections.get(hostId)?.request("host/version", {});

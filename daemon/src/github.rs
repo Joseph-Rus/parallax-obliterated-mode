@@ -481,13 +481,30 @@ async fn download_release(
     Ok(name)
 }
 
-/// Downloads `url` to `file` with the system `curl`, ignoring any `.curlrc` (`-q`).
+/// The URL schemes a download may use: HTTPS only, plus `file` in tests, which download fake
+/// releases from a folder.
+pub(crate) const DOWNLOAD_PROTOCOLS: &str = if cfg!(test) { "=https,file" } else { "=https" };
+
+/// Downloads `url` to `file` with the system `curl`, ignoring any `.curlrc` (`-q`), over HTTPS
+/// only, redirects included ([`DOWNLOAD_PROTOCOLS`]).
 pub(crate) async fn download(
     launcher: &Launcher,
     what: &str,
     url: &str,
     file: &Path,
     timeout: Duration,
+) -> Result<(), String> {
+    download_with(launcher, what, url, file, timeout, DOWNLOAD_PROTOCOLS).await
+}
+
+/// [`download`], allowing the URL schemes in `protocols`, as curl's `--proto` takes them.
+pub(crate) async fn download_with(
+    launcher: &Launcher,
+    what: &str,
+    url: &str,
+    file: &Path,
+    timeout: Duration,
+    protocols: &str,
 ) -> Result<(), String> {
     let mut spec = probe_spec("curl");
     spec.args = vec![
@@ -496,6 +513,8 @@ pub(crate) async fn download(
         "--silent".into(),
         "--show-error".into(),
         "--location".into(),
+        "--proto".into(),
+        protocols.into(),
         "--proto-redir".into(),
         "=https".into(),
         "--output".into(),

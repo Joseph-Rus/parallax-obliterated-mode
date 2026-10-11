@@ -1,11 +1,13 @@
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 import type { Capabilities } from "../protocol/generated/protocol";
 import type { ConnectionState, HostUpdateEvent } from "../preload/bridge";
 import {
   compareVersions,
   HostUpdater,
+  IDLE_POLL_MS,
   isOlder,
+  RECONNECT_TIMEOUT_MS,
   unsupportedMessage,
   type HostUpdaterDeps,
 } from "./hostUpdate";
@@ -32,6 +34,7 @@ function rig(states: Map<string, ConnectionState>, overrides: Partial<HostUpdate
     update: vi.fn(async (_id: string, version: string) => ({
       result: { version, restart: "now" as const, runningAgents: 0, message: "Installed." },
     })),
+    runningAgents: vi.fn(async () => 0),
     installSsh: vi.fn(async () => undefined),
     osOf: vi.fn(async () => "linux"),
     emit: (event) => events.push(event),
@@ -47,6 +50,10 @@ function rig(states: Map<string, ConnectionState>, overrides: Partial<HostUpdate
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 test("versions compare by their numbers, not their channel", () => {
   expect(compareVersions("0.1.0", APP)).toBeLessThan(0);
@@ -192,4 +199,120 @@ test("the unsupported message fits the computer's OS", () => {
   expect(unsupportedMessage("0.1.0", undefined, "stable")).toContain(
     "npx plx-connect setup --channel stable",
   );
+});
+
+test("an SSH host is reinstalled only once no agent's turn is running there", async () => {
+  vi.useFakeTimers();
+  const states = new Map<string, ConnectionState>();
+  const running = [2, undefined, 1, 0];
+  const runningAgents = vi.fn(async () => running.shift());
+  const { deps, set, updater } = rig(states, { runningAgents });
+  set("local", connected(APP));
+  set("ssh-box", connected("0.1.0"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(runningAgents).toHaveBeenCalledTimes(1);
+  expect(deps.installSsh).not.toHaveBeenCalled();
+  // Retry while it waits starts nothing new.
+  updater.retry("ssh-box");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(runningAgents).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(IDLE_POLL_MS * 2);
+  expect(runningAgents).toHaveBeenCalledTimes(3);
+  expect(deps.installSsh).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+  expect(runningAgents).toHaveBeenCalledTimes(4);
+  expect(deps.installSsh).toHaveBeenCalledExactlyOnceWith("ssh-box");
+});
+
+test("an SSH host removed while it waits for its agents is left alone", async () => {
+  vi.useFakeTimers();
+  const states = new Map<string, ConnectionState>();
+  let saved = true;
+  const { deps, events, set } = rig(states, {
+    runningAgents: vi.fn(async () => 1),
+    kindOf: (id) => (id === "ssh-box" && saved ? "ssh" : undefined),
+  });
+  set("local", connected(APP));
+  set("ssh-box", connected("0.1.0"));
+  await vi.advanceTimersByTimeAsync(0);
+  saved = false;
+  await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+  expect(deps.installSsh).not.toHaveBeenCalled();
+  expect(events).toEqual([]);
+});
+
+test("a host that restarts now fails if it comes back on the old plxd or not at all", async () => {
+  vi.useFakeTimers();
+  const states = new Map<string, ConnectionState>();
+  const { events, set, updater } = rig(states);
+  set("local", connected(APP));
+  set("tailnet:a", updatable("0.1.0"));
+  set("tailnet:b", updatable("0.1.0"));
+  await vi.advanceTimersByTimeAsync(0);
+
+  set("tailnet:a", { status: "connecting" });
+  set("tailnet:a", updatable("0.1.0"));
+  expect(events).toEqual([
+    {
+      hostId: "tailnet:a",
+      status: "failed",
+      error: `plxd restarted, but it's still plxd 0.1.0, not ${APP}.`,
+    },
+  ]);
+
+  await vi.advanceTimersByTimeAsync(RECONNECT_TIMEOUT_MS);
+  expect(events.at(-1)).toEqual({
+    hostId: "tailnet:b",
+    status: "failed",
+    error: `plxd didn't come back on ${APP} within 3 minutes of restarting.`,
+  });
+  // A late reconnect on the new plxd still says so.
+  updater.retry("tailnet:b");
+  await vi.advanceTimersByTimeAsync(0);
+  set("tailnet:b", updatable(APP));
+  expect(events.at(-1)).toEqual({ hostId: "tailnet:b", status: "updated", version: APP });
+  // Nothing fires after it's done.
+  await vi.advanceTimersByTimeAsync(RECONNECT_TIMEOUT_MS);
+  expect(events).toHaveLength(3);
+});
+
+test("an SSH install that doesn't reconnect on the new plxd fails", async () => {
+  vi.useFakeTimers();
+  const states = new Map<string, ConnectionState>();
+  const { events, set } = rig(states);
+  set("local", connected(APP));
+  set("ssh-box", connected("0.1.0"));
+  await vi.advanceTimersByTimeAsync(RECONNECT_TIMEOUT_MS);
+  expect(events).toEqual([
+    {
+      hostId: "ssh-box",
+      status: "failed",
+      error: `plxd didn't come back on ${APP} within 3 minutes of restarting.`,
+    },
+  ]);
+});
+
+test("Retry doesn't start a second update while one is running", async () => {
+  const states = new Map<string, ConnectionState>();
+  let answer!: (value: { error: { code: number; message: string } }) => void;
+  const update = vi.fn(
+    () =>
+      new Promise<{ error: { code: number; message: string } }>((resolve) => {
+        answer = resolve;
+      }),
+  );
+  const { events, set, updater } = rig(states, { update });
+  set("local", connected(APP));
+  set("tailnet:a", updatable("0.1.0"));
+  await settle();
+  updater.retry("tailnet:a");
+  await settle();
+  expect(update).toHaveBeenCalledTimes(1);
+
+  answer({ error: { code: -32000, message: "No network." } });
+  await settle();
+  expect(events).toEqual([{ hostId: "tailnet:a", status: "failed", error: "No network." }]);
+  updater.retry("tailnet:a");
+  await settle();
+  expect(update).toHaveBeenCalledTimes(2);
 });

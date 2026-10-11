@@ -571,11 +571,21 @@ fn serve(args: &ServeArgs) -> ExitCode {
             Ok(()) => {
                 // `host/update` shut it down to hand over to the plxd it installed (PLX-700).
                 #[cfg(unix)]
-                if let Some(program) = plxd::self_update::take_handover() {
-                    match plxd::self_update::start_serve(&program, &data_dir) {
-                        Ok(()) => info!(program = %program.display(), "started the updated plxd"),
-                        Err(error) => error!(%error, "could not start the updated plxd"),
+                match plxd::self_update::take_handover() {
+                    Some(plxd::self_update::Handover::Spawn(program)) => {
+                        match plxd::self_update::start_serve(&program, &data_dir) {
+                            Ok(()) => {
+                                info!(program = %program.display(), "started the updated plxd");
+                            }
+                            Err(error) => error!(%error, "could not start the updated plxd"),
+                        }
                     }
+                    // The service manager restarts it, from the path the update replaced.
+                    Some(plxd::self_update::Handover::Exit) => {
+                        info!("exiting for the service manager to start the updated plxd");
+                        return ExitCode::from(plxd::self_update::EXIT_RESTART);
+                    }
+                    None => {}
                 }
                 ExitCode::SUCCESS
             }

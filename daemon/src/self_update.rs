@@ -14,8 +14,11 @@
 //!   (`target/debug`, `target/release`) refuses.
 //! - **Handover**: plxd answers first, then restarts into the new binary once no agent's turn is
 //!   running. With its login service installed, it runs the new plxd's
-//!   `service install --replace`, detached, which points the service at it and restarts it; when
-//!   that fails, or without a service, plxd shuts down and its last act starts the new `serve`.
+//!   `service install --replace`, detached, which points the service at it and restarts it. When
+//!   that fails and the service manager runs this plxd, plxd exits with [`EXIT_RESTART`], so the
+//!   manager starts its program again, now the new binary for an in-place update; a `serve` it
+//!   started itself would die with the service's cgroup on Linux. Without a service, plxd shuts
+//!   down and its last act starts the new `serve`.
 //! - It never downgrades, and on Windows it refuses: Parallax's installer owns plxd there.
 
 use std::cmp::Ordering;
@@ -53,14 +56,44 @@ const ANSWER_GRACE: Duration = Duration::from_secs(1);
 /// How often a restart waiting for running agents checks on them.
 const RUNS_POLL: Duration = Duration::from_secs(5);
 
-/// The plxd `main` starts once `serve` has stopped, when a handover shut it down.
-static HANDOVER: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// The environment variable that points `host/update` at another releases folder, which may be a
+/// `file://` URL. Only tests should set it.
+pub const RELEASES_ENV: &str = "PLXD_RELEASES_URL";
 
-/// The plxd to start once `serve` stops, when `host/update` shut it down to hand over to it.
-/// `main` takes it after the server stops, when the lock is free for the new `serve`.
+/// The exit status that asks the service manager running plxd to start it again: any non-zero
+/// status does, under `Restart=on-failure` and `KeepAlive.SuccessfulExit=false`. 75 is
+/// `EX_TEMPFAIL`.
+pub const EXIT_RESTART: u8 = 75;
+
+/// What `main` does once `serve` has stopped for a handover.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Handover {
+    /// Starts this plxd's `serve`, detached: nothing else would start it.
+    Spawn(PathBuf),
+    /// Exits with [`EXIT_RESTART`], so the service manager running this plxd restarts it.
+    Exit,
+}
+
+/// What `main` does once `serve` has stopped, when a handover shut it down.
+static HANDOVER: Mutex<Option<Handover>> = Mutex::new(None);
+
+/// What to do once `serve` stops, when `host/update` shut it down to hand over to the plxd it
+/// installed. `main` takes it after the server stops, when the lock is free for the new `serve`.
 #[must_use]
-pub fn take_handover() -> Option<PathBuf> {
+pub fn take_handover() -> Option<Handover> {
     lock(&HANDOVER).take()
+}
+
+/// How plxd restarts into `program` when its login service didn't take it over: when the service
+/// manager runs this plxd (`managed`), by exiting so that it restarts it, since a `serve` started
+/// from inside the service's cgroup dies with it; otherwise by starting `program serve` itself.
+#[must_use]
+pub fn fallback(program: PathBuf, managed: bool) -> Handover {
+    if managed {
+        Handover::Exit
+    } else {
+        Handover::Spawn(program)
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -73,6 +106,9 @@ pub(crate) struct SelfUpdate {
     launcher: Launcher,
     /// [`RELEASES`], except in tests.
     releases: String,
+    /// The URL schemes the download may use, as curl's `--proto` takes them: HTTPS, and `file`
+    /// for tests' releases.
+    protocols: &'static str,
     /// The running plxd, symlinks resolved, and the home folder. `None` when unknown.
     exe: Option<PathBuf>,
     home: Option<PathBuf>,
@@ -101,9 +137,14 @@ impl SelfUpdate {
         let exe = std::env::current_exe()
             .ok()
             .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe));
+        let (releases, protocols) = match std::env::var(RELEASES_ENV) {
+            Ok(releases) if !releases.is_empty() => (releases, "=https,file"),
+            _ => (RELEASES.to_owned(), crate::github::DOWNLOAD_PROTOCOLS),
+        };
         Self {
             launcher,
-            releases: RELEASES.to_owned(),
+            releases,
+            protocols,
             exe,
             home: std::env::home_dir().filter(|home| home.is_absolute()),
             current: crate::version().to_owned(),
@@ -126,6 +167,7 @@ impl SelfUpdate {
         Self {
             launcher,
             releases: releases.to_owned(),
+            protocols: "=https,file",
             exe: Some(exe.to_owned()),
             home: Some(home.to_owned()),
             current: current.to_owned(),
@@ -200,11 +242,18 @@ impl SelfUpdate {
             state.busy = true;
         }
         // Clears `busy` however this ends, even when the request is dropped mid-download.
-        let busy = Busy(&self.state);
-        let installed =
-            install_release(&self.launcher, &self.releases, version, &placement, home).await;
-        drop(busy);
-        let mut state = lock(&self.state);
+        let busy = Busy(Some(&self.state));
+        let installed = install_release(
+            &self.launcher,
+            &self.releases,
+            self.protocols,
+            version,
+            &placement,
+            home,
+        )
+        .await;
+        // `busy` clears with `installed` set, under one lock, so no second call sees neither.
+        let mut state = busy.finish();
         let program = installed.map_err(failed)?;
         info!(version, program = %program.display(), "installed a plxd update");
         state.installed = Some((version.to_owned(), program));
@@ -222,12 +271,27 @@ impl SelfUpdate {
     }
 }
 
-/// Clears [`State::busy`] when dropped.
-struct Busy<'a>(&'a Mutex<State>);
+/// Clears [`State::busy`] when dropped, or when [`Busy::finish`] locks the state.
+struct Busy<'a>(Option<&'a Mutex<State>>);
+
+impl<'a> Busy<'a> {
+    /// The state, locked, with `busy` cleared.
+    fn finish(mut self) -> MutexGuard<'a, State> {
+        let mut state = lock(
+            self.0
+                .take()
+                .unwrap_or_else(|| unreachable!("finished twice")),
+        );
+        state.busy = false;
+        state
+    }
+}
 
 impl Drop for Busy<'_> {
     fn drop(&mut self) {
-        lock(self.0).busy = false;
+        if let Some(state) = self.0 {
+            lock(state).busy = false;
+        }
     }
 }
 
@@ -355,12 +419,14 @@ pub(crate) fn placement(exe: &Path, home: &Path) -> Result<Placement, String> {
     }
 }
 
-/// Downloads, checks, and installs plxd `version` from `releases` where `placement` says, and
-/// returns where it went. An in-place install whose folder plxd can't write goes to
-/// `~/.parallax-plxd` instead. Returns what went wrong, for people.
+/// Downloads, checks, and installs plxd `version` from `releases`, over the URL schemes in
+/// `protocols`, where `placement` says, and returns where it went. An in-place install whose
+/// folder plxd can't write goes to `~/.parallax-plxd` instead. Returns what went wrong, for
+/// people.
 pub(crate) async fn install_release(
     launcher: &Launcher,
     releases: &str,
+    protocols: &str,
     version: &str,
     placement: &Placement,
     home: &Path,
@@ -382,15 +448,24 @@ pub(crate) async fn install_release(
     let dir = temp.path();
     let url = |file: &str| format!("{releases}/v{version}/{file}");
     let new = dir.join("plxd");
-    crate::github::download(
+    crate::github::download_with(
         launcher,
         &format!("{name}.sha256"),
         &url(&format!("{name}.sha256")),
         &dir.join("plxd.sha256"),
         SMALL_DOWNLOAD_TIMEOUT,
+        protocols,
     )
     .await?;
-    crate::github::download(launcher, &name, &url(&name), &new, BINARY_TIMEOUT).await?;
+    crate::github::download_with(
+        launcher,
+        &name,
+        &url(&name),
+        &new,
+        BINARY_TIMEOUT,
+        protocols,
+    )
+    .await?;
     let sums = std::fs::read_to_string(dir.join("plxd.sha256")).unwrap_or_default();
     let expected = sums
         .lines()
@@ -425,9 +500,10 @@ pub(crate) async fn install_release(
         std::fs::rename(from, to)
             .map_err(|error| format!("Couldn't move plxd into {}: {error}.", to.display()))
     };
-    // The version first, as the app's SSH install does, so plxd never starts without it.
-    move_to(&version_file, &program.with_file_name(crate::VERSION_FILE))?;
+    // plxd first, then its version: if the second move fails, the new plxd reports the old
+    // version, which only makes the app try again, never the old plxd claiming the new one.
     move_to(&new, &program)?;
+    move_to(&version_file, &program.with_file_name(crate::VERSION_FILE))?;
     Ok(program)
 }
 
@@ -467,8 +543,9 @@ async fn handover_when_idle(daemon: Arc<Daemon>) {
     hand_over(&daemon, program).await;
 }
 
-/// Restarts into `program`: through the login service when it's installed and moving it works,
-/// else by shutting down, after which `main` starts `program serve` ([`take_handover`]).
+/// Restarts into `program`: through the login service when it's installed and moving it works;
+/// else by shutting down, after which `main` either exits for the service manager to restart it
+/// or starts `program serve` itself ([`take_handover`], [`fallback`]).
 #[cfg_attr(
     not(any(target_os = "macos", target_os = "linux")),
     expect(
@@ -478,38 +555,102 @@ async fn handover_when_idle(daemon: Arc<Daemon>) {
 )]
 async fn hand_over(daemon: &Arc<Daemon>, program: PathBuf) {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    match service_handover(daemon, &program).await {
+    let handover = match service_handover(daemon, &program).await {
         // The service manager stops this plxd now.
-        Ok(true) => return,
-        Ok(false) => {}
-        Err(error) => {
-            tracing::warn!(%error, "couldn't hand plxd over to its login service; restarting it instead");
+        ServiceHandover::Replaced => return,
+        ServiceHandover::NoService => Handover::Spawn(program),
+        ServiceHandover::Failed { error, managed } => {
+            tracing::warn!(%error, managed, "couldn't hand plxd over to its login service; restarting it instead");
+            fallback(program, managed)
         }
-    }
-    info!(program = %program.display(), "shutting down to restart into the plxd update");
-    *lock(&HANDOVER) = Some(program);
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let handover = Handover::Spawn(program);
+    info!(?handover, "shutting down to restart into the plxd update");
+    *lock(&HANDOVER) = Some(handover);
     daemon.self_update.restart.cancel();
 }
 
-/// Runs `program service install --replace` when plxd's login service is installed: detached,
-/// so it outlives this plxd, which the service manager stops. Waits for it on a thread of its
-/// own, which never holds up the process's exit, since only a failure comes back. `Ok(false)`
-/// when there is no service.
+/// How handing plxd over to its login service went.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-async fn service_handover(daemon: &Arc<Daemon>, program: &Path) -> Result<bool, String> {
-    use std::os::fd::AsFd as _;
+#[derive(Debug)]
+enum ServiceHandover {
+    /// `service install --replace` moved the service to the new plxd, and restarts it.
+    Replaced,
+    /// No service is installed, and none runs this plxd.
+    NoService,
+    /// It didn't work. `managed` when the service manager runs this plxd.
+    Failed { error: String, managed: bool },
+}
 
+/// Hands plxd over to its login service, when one is installed or runs this plxd.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+async fn service_handover(daemon: &Arc<Daemon>, program: &Path) -> ServiceHandover {
     let data_dir = daemon.data_dir.clone();
     let label = std::env::var(crate::service::SERVICE_LABEL_ENV)
         .unwrap_or_else(|_| crate::service::DEFAULT_LABEL.to_owned());
-    let checked = data_dir.clone();
-    let status = tokio::task::spawn_blocking(move || crate::service::status(&label, &checked))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-    if !status.installed {
-        return Ok(false);
+    let checked = (label.clone(), data_dir.clone());
+    let status =
+        tokio::task::spawn_blocking(move || crate::service::status(&checked.0, &checked.1))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|status| status.map_err(|e| e.to_string()));
+    let managed = run_by_service(
+        status.as_ref().ok().and_then(|status| status.state.pid()),
+        std::process::id(),
+        service_hint(&label),
+    );
+    match status {
+        Ok(status) if status.installed => match replace_service(&data_dir, program).await {
+            Ok(()) => ServiceHandover::Replaced,
+            Err(error) => ServiceHandover::Failed { error, managed },
+        },
+        _ if !managed => ServiceHandover::NoService,
+        Ok(_) => ServiceHandover::Failed {
+            error: "the service that runs plxd has no file to replace".to_owned(),
+            managed,
+        },
+        Err(error) => ServiceHandover::Failed { error, managed },
     }
+}
+
+/// Whether a service manager runs this plxd, whose pid is `own`: its service's main pid is
+/// `service_pid`, or `hint` says so when the manager couldn't be asked.
+#[must_use]
+pub fn run_by_service(service_pid: Option<u32>, own: u32, hint: bool) -> bool {
+    service_pid == Some(own) || hint
+}
+
+/// Whether this process runs in `label`'s systemd unit, by its cgroup.
+#[cfg(target_os = "linux")]
+fn service_hint(label: &str) -> bool {
+    std::fs::read_to_string("/proc/self/cgroup")
+        .is_ok_and(|cgroup| in_unit_cgroup(&cgroup, &crate::service::systemd::unit_name(label)))
+}
+
+/// Whether launchd started this process as `label`'s job, which it names in `XPC_SERVICE_NAME`.
+#[cfg(target_os = "macos")]
+fn service_hint(label: &str) -> bool {
+    std::env::var("XPC_SERVICE_NAME").is_ok_and(|name| name == label)
+}
+
+/// Whether `/proc/self/cgroup`'s text puts the process in systemd unit `unit`: a line whose path
+/// ends in it, such as `0::/user.slice/user-1000.slice/user@1000.service/app.slice/<unit>`.
+#[must_use]
+pub fn in_unit_cgroup(cgroup: &str, unit: &str) -> bool {
+    cgroup
+        .lines()
+        .filter_map(|line| line.rsplit_once(':').map(|(_, path)| path))
+        .any(|path| path.rsplit('/').next() == Some(unit))
+}
+
+/// Runs `program service install --replace`, detached, so it outlives this plxd, which the
+/// service manager stops. Waits for it on a thread of its own, which never holds up the
+/// process's exit, since only a failure comes back.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+async fn replace_service(data_dir: &crate::paths::DataDir, program: &Path) -> Result<(), String> {
+    use std::os::fd::AsFd as _;
+
     let log = crate::logging::open_log_file(&data_dir.log_file()).map_err(|e| e.to_string())?;
     let null = std::fs::File::open("/dev/null").map_err(|e| e.to_string())?;
     let mut command = data_dir.command(program);
@@ -527,7 +668,7 @@ async fn service_handover(daemon: &Arc<Daemon>, program: &Path) -> Result<bool, 
         let _ = done.send(waited.map(|w| w.and_then(|(_, status)| status.exit_status())));
     });
     match exited.await {
-        Ok(Ok(Some(0))) => Ok(true),
+        Ok(Ok(Some(0))) => Ok(()),
         Ok(Ok(code)) => Err(format!(
             "`plxd service install --replace` exited with {code:?}"
         )),
