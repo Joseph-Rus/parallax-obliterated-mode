@@ -27,6 +27,7 @@ pub mod fake;
 pub mod key_account;
 pub mod limits;
 pub mod namer;
+pub(crate) mod node_sdk;
 pub mod opencode;
 pub mod process;
 pub mod record;
@@ -483,6 +484,9 @@ pub struct Resume {
     /// Continue a copy of the session under a new id, leaving it as it is: a fork's first run
     /// (0050). Only a backend whose [`Capabilities::fork`] is set gets it.
     pub fork: bool,
+    /// Resume only up to this position, an [`Event::TurnCursor`] of the session, dropping what
+    /// came after: a rewind (0062). Only Claude reads it.
+    pub at: Option<String>,
 }
 
 impl Resume {
@@ -492,6 +496,7 @@ impl Resume {
             session_id: session_id.into(),
             usage_totals: Vec::new(),
             fork: false,
+            at: None,
         }
     }
 }
@@ -506,7 +511,7 @@ pub struct FollowUp {
     /// Images the CLI gets beside the message, as [`RunRequest::images`].
     pub images: Vec<PromptImage>,
     /// Goes into the turn running now rather than as the next one (PLX-370, decision 0048): as
-    /// Claude Code takes a message on stdin mid-turn, Codex app-server's `turn/steer`, or for
+    /// the Claude Agent SDK's `priority: "now"` (0061), Codex app-server's `turn/steer`, or for
     /// Cursor, which can't, by cancelling the turn and sending the message. With no turn
     /// running it is the next turn, as any follow-up is.
     pub steer: bool,

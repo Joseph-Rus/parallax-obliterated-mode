@@ -2563,6 +2563,7 @@ impl Actor {
             session_id,
             usage_totals: totals.into_iter().map(model_usage).collect(),
             fork: false,
+            at: None,
         })
     }
 
