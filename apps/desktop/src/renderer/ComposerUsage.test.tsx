@@ -234,3 +234,66 @@ test("the ring fills with context, tints by the fullest meter, and opens a card 
   expect(behaviorPrefs.get().composerUsage).toBe("row");
   setBehaviorPrefs({ composerUsage: before });
 });
+test("a click keeps the card open after hovering, and Escape or the switch hands focus on", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  window.parallax = {
+    request: vi.fn(async () => ({ error: { code: -32601, message: "Method not found" } })),
+  } as unknown as ParallaxBridge;
+  const before = behaviorPrefs.get().composerUsage;
+  const View = () => {
+    const view = behaviorPrefs.use().composerUsage;
+    return (
+      <ComposerUsage
+        view={view === "row" ? "row" : "ring"}
+        hostId="local"
+        connected
+        backend="claude"
+        kind="claude"
+        accountId="claude"
+        usage={usage}
+      />
+    );
+  };
+  setBehaviorPrefs({ composerUsage: "ring" });
+  root ??= createRoot(document.body.appendChild(document.createElement("div")));
+  await act(async () => root!.render(<View />));
+  const ring = () => document.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+  const card = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
+  expect(ring().getAttribute("aria-label")).toBe("Usage: 25% context, Limits unavailable");
+  // Hover opens it, and the click that follows keeps it open rather than closing it.
+  await act(async () =>
+    ring().parentElement!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })),
+  );
+  await act(async () => ring().click());
+  await act(async () =>
+    ring().parentElement!.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })),
+  );
+  await act(async () => vi.advanceTimersByTime(200));
+  expect(card().hidden).toBe(false);
+  await act(async () =>
+    ring().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  );
+  expect(card().hidden).toBe(true);
+  // Pinning the row moves focus to its collapse button, and collapsing gives it back to the ring.
+  await act(async () => card().querySelector<HTMLElement>('[role="switch"]')!.click());
+  const collapse = document.querySelector<HTMLElement>('[aria-label="Show usage as a ring"]')!;
+  expect(document.querySelector('[role="group"]')?.getAttribute("aria-label")).toBe(
+    "Provider usage",
+  );
+  expect(document.activeElement).toBe(collapse);
+  await act(async () => collapse.click());
+  expect(document.activeElement).toBe(ring());
+  expect(card().hidden).toBe(true);
+  setBehaviorPrefs({ composerUsage: before });
+});
+test("a nearly full context warns, and the warning names the window when one is", async () => {
+  window.parallax = {
+    request: vi.fn(async () => ({ result: { accounts: [] } })),
+  } as unknown as ParallaxBridge;
+  await render("claude", "claude", {
+    ...usage,
+    usage: { ...usage.usage, contextTokens: 182_000, contextWindow: 200_000 },
+  });
+  expect(document.querySelector('[role="status"]')?.textContent).toContain("Context 91% full");
+});

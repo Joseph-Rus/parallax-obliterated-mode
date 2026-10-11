@@ -407,10 +407,15 @@ function Behavior() {
       </Row>
       <Row
         title="Warn near a limit"
-        description="A line inside the prompt box when a limit window or the context is 90% used."
+        description={
+          prefs.composerUsage === "off"
+            ? "Shown only while usage is in the composer."
+            : "A line inside the prompt box when a limit window or the context is 90% used."
+        }
       >
         <Switch
           label="Warn near a limit"
+          disabled={prefs.composerUsage === "off"}
           checked={prefs.usageWarning}
           onChange={(usageWarning) => set({ usageWarning })}
         />

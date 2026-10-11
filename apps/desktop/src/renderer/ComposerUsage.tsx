@@ -276,6 +276,13 @@ export function useComposerUsage({
   };
 }
 
+/** The view that should take focus when it mounts: switching views removes the control used. */
+let focusNext: "ring" | "row" | undefined;
+const switchView = (view: "ring" | "row") => {
+  focusNext = view;
+  setBehaviorPrefs({ composerUsage: view });
+};
+
 const speedText = (speed?: number) =>
   speed === undefined ? "— tok/s" : `~${speed.toLocaleString()} tok/s`;
 
@@ -298,8 +305,15 @@ function Meter({ used, className }: { used?: number; className: string }) {
  * left, the thread's context, speed, and cache on the right. Its ✕ goes back to the ring.
  */
 export function UsageRow({ data }: { data: ComposerUsageData }) {
+  const collapse = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (focusNext !== "row") return;
+    focusNext = undefined;
+    collapse.current?.focus();
+  }, []);
   return (
     <div
+      role="group"
       aria-label="Provider usage"
       className="group/usage mx-3 flex flex-wrap items-center justify-between gap-x-5 gap-y-1.5 border-t border-border/60 px-1 pt-2 pb-2.5 text-[11.5px] text-muted-foreground tabular-nums"
     >
@@ -327,10 +341,11 @@ export function UsageRow({ data }: { data: ComposerUsageData }) {
         </span>
         <span title={data.cacheTitle}>{data.cache ?? "—"} cached</span>
         <button
+          ref={collapse}
           type="button"
           aria-label="Show usage as a ring"
           title="Show usage as a ring"
-          onClick={() => setBehaviorPrefs({ composerUsage: "ring" })}
+          onClick={() => switchView("ring")}
           className="-my-1 -mr-1 grid size-5 place-items-center rounded-md text-faint-foreground opacity-0 group-hover/usage:opacity-100 hover:bg-hover hover:text-foreground focus-visible:opacity-100 [&_svg]:size-3"
         >
           <X />
@@ -347,23 +362,43 @@ const ringTone = { normal: "text-accent", warning: "text-warning", danger: "text
  * meter. Hovering or focusing it opens a card with every meter and a switch that pins the row.
  */
 export function UsageRing({ data }: { data: ComposerUsageData }) {
-  const [open, setOpen] = useState(false);
+  // Hover and focus peek at the card; a click keeps it open until a second click, Escape, or
+  // focus leaving it, so a click right after hovering doesn't close what hovering opened.
+  const [peek, setPeek] = useState(false);
+  const [kept, setKept] = useState(false);
+  const open = peek || kept;
   const closing = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const button = useRef<HTMLButtonElement>(null);
+  // Focus given back after the row collapses shouldn't open the card again.
+  const quiet = useRef(false);
   const card = useId();
   const show = () => {
     clearTimeout(closing.current);
-    setOpen(true);
+    setPeek(true);
   };
   // A short delay lets the pointer cross from the ring to the card.
   const hide = () => {
     clearTimeout(closing.current);
-    closing.current = setTimeout(() => setOpen(false), 150);
+    closing.current = setTimeout(() => setPeek(false), 150);
   };
-  useEffect(() => () => clearTimeout(closing.current), []);
+  const close = () => {
+    clearTimeout(closing.current);
+    setPeek(false);
+    setKept(false);
+  };
+  useEffect(() => {
+    if (focusNext === "ring") {
+      focusNext = undefined;
+      quiet.current = true;
+      button.current?.focus();
+      quiet.current = false;
+    }
+    return () => clearTimeout(closing.current);
+  }, []);
   const r = 8.5;
   const around = 2 * Math.PI * r;
   const filled = data.contextUsed ?? 0;
-  const summary = `Usage: ${data.context ?? "—"} context${data.windows
+  const summary = `Usage: ${data.context ?? "—"} context${data.limitsNote ? `, ${data.limitsNote.text.replace(/…$/, "")}` : ""}${data.windows
     .filter((w) => w.used !== undefined)
     .map((w) => `, ${w.name} ${Math.floor(w.used!)}%`)
     .join("")}`;
@@ -372,23 +407,24 @@ export function UsageRing({ data }: { data: ComposerUsageData }) {
       className="relative"
       onMouseEnter={show}
       onMouseLeave={hide}
-      onFocus={show}
+      onFocus={() => quiet.current || show()}
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) hide();
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) close();
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape" && open) {
           e.stopPropagation();
-          setOpen(false);
+          close();
         }
       }}
     >
       <button
+        ref={button}
         type="button"
         aria-label={summary}
         aria-expanded={open}
         aria-controls={card}
-        onClick={() => setOpen((was) => !was)}
+        onClick={() => (kept ? close() : setKept(true))}
         className={`grid size-9 place-items-center rounded-full hover:bg-hover ${data.worst === undefined ? "text-faint-foreground" : ringTone[tone(data.worst)]}`}
       >
         <svg aria-hidden viewBox="0 0 22 22" className="size-[18px] -rotate-90">
@@ -451,7 +487,7 @@ export function UsageRing({ data }: { data: ComposerUsageData }) {
           type="button"
           role="switch"
           aria-checked={false}
-          onClick={() => setBehaviorPrefs({ composerUsage: "row" })}
+          onClick={() => switchView("row")}
           className="-mx-1.5 -my-1 flex w-[calc(100%+0.75rem)] items-center justify-between rounded-md px-1.5 py-1 hover:bg-hover"
         >
           <span>Show in composer</span>
