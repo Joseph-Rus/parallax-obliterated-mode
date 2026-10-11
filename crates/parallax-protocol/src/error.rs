@@ -120,6 +120,10 @@ pub enum ErrorKind {
     /// coordinator or a run started with `explore`, or `land/approve` or `land/sendBack` one that
     /// isn't waiting for approval (PLX-410). The message says which. Nothing changed.
     LandRefused,
+    /// `host/update` couldn't install or won't install the release (PLX-700): the download or
+    /// its checksum failed, the version is older than plxd's, plxd runs from a development build,
+    /// or the host's OS can't update plxd this way. The message says why, for people.
+    HostUpdateFailed,
     /// A kind this version does not know yet.
     #[serde(other)]
     #[ts(skip)]
@@ -233,6 +237,7 @@ mod tests {
             (ErrorKind::GitRefused, "gitRefused"),
             (ErrorKind::CommitFailed, "commitFailed"),
             (ErrorKind::GithubSetupFailed, "githubSetupFailed"),
+            (ErrorKind::HostUpdateFailed, "hostUpdateFailed"),
         ] {
             assert_eq!(serde_json::to_value(kind).unwrap(), json!(name));
             assert_eq!(

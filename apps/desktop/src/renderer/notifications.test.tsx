@@ -3,9 +3,15 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
-import type { ConnectionState, ParallaxBridge } from "../preload/bridge";
+import type { ConnectionState, HostUpdateEvent, ParallaxBridge } from "../preload/bridge";
 import type { AgentRun, Thread } from "../protocol/generated/protocol";
-import { threadNotice, useConnectionAlarms, useThreadAlarms, type ThreadMark } from "./alarms";
+import {
+  threadNotice,
+  useConnectionAlarms,
+  useHostUpdateAlarms,
+  useThreadAlarms,
+  type ThreadMark,
+} from "./alarms";
 import { NOTICE_MS, Notifications, notify } from "./notifications";
 import type { HostThreads } from "./Sidebar";
 import { emptyThreads, idleThreads, type ThreadsState } from "./threads";
@@ -220,4 +226,44 @@ test("a host connected before the window listened says so when it drops and come
   expect(titles()).toEqual(["Lost connection to dev box"]);
   act(() => change("dev", connected));
   expect(titles()).toEqual(["Reconnected to dev box"]);
+});
+
+test("a computer's plxd update says when it worked, and sticks with Retry when it didn't", () => {
+  vi.useFakeTimers();
+  let send: (event: HostUpdateEvent) => void = () => {};
+  const retryHostUpdate = vi.fn(async () => {});
+  window.parallax = {
+    onHostUpdate: (listener: typeof send) => {
+      send = listener;
+      return () => {};
+    },
+    retryHostUpdate,
+  } as Partial<ParallaxBridge> as ParallaxBridge;
+  function Alarms() {
+    useHostUpdateAlarms([{ id: "tailnet:tp", name: "thinkpad" }]);
+    return <Notifications />;
+  }
+  render(<Alarms />);
+
+  act(() => send({ hostId: "tailnet:tp", status: "failed", error: "plxd 0.1.0 is too old." }));
+  expect(titles()).toEqual(["Couldn't update plxd on thinkpad"]);
+  expect(document.body.textContent).toContain("plxd 0.1.0 is too old.");
+  // It stays until closed.
+  act(() => {
+    vi.advanceTimersByTime(NOTICE_MS * 2);
+  });
+  expect(titles()).toEqual(["Couldn't update plxd on thinkpad"]);
+  const retry = [...document.querySelectorAll("button")].find((b) => b.textContent === "Retry")!;
+  act(() => retry.click());
+  expect(retryHostUpdate).toHaveBeenCalledWith("tailnet:tp");
+  expect(titles()).toEqual([]);
+
+  act(() => send({ hostId: "tailnet:tp", status: "failed", error: "Again." }));
+  // Success replaces the host's failure, and goes by itself.
+  act(() => send({ hostId: "tailnet:tp", status: "updated", version: "2610.10912.13045" }));
+  expect(titles()).toEqual(["Updated plxd on thinkpad"]);
+  act(() => {
+    vi.advanceTimersByTime(NOTICE_MS);
+  });
+  expect(titles()).toEqual([]);
 });

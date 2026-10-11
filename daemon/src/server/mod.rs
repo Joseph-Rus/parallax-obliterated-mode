@@ -305,6 +305,8 @@ pub(crate) struct Daemon {
     pub schedules: crate::schedules::Schedules,
     /// The pull request watches' sweep (0063).
     pub pr_watches: crate::pr_watch::Watches,
+    /// `host/update`'s install and handover (PLX-700).
+    pub self_update: crate::self_update::SelfUpdate,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -464,6 +466,7 @@ impl Server {
             ),
             schedules: crate::schedules::Schedules::default(),
             pr_watches: crate::pr_watch::Watches::default(),
+            self_update: crate::self_update::SelfUpdate::new(launcher.clone()),
         });
         // Best effort: a project's context folder is also ensured lazily on its first
         // `context/*` call (#155), so a watcher that fails to start only loses live updates for
@@ -591,6 +594,17 @@ impl Server {
             Arc::clone(&daemon),
             shutdown.graceful.clone(),
         ));
+        // A `host/update` handover shuts the server down as a signal would (PLX-700).
+        let handover = {
+            let restart = daemon.self_update.restart.clone();
+            let stop = shutdown.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    () = restart.cancelled() => stop.trigger(),
+                    () = stop.graceful.cancelled() => {}
+                }
+            })
+        };
         let connections = TaskTracker::new();
         let abort = CancellationToken::new();
         let tailnet = tokio::spawn(tailnet::run(
@@ -681,6 +695,7 @@ impl Server {
         let _ = effects.await;
         let _ = schedules.await;
         let _ = pr_watches.await;
+        let _ = handover.await;
         daemon.store.stop().await;
         daemon.reader.stop().await;
         lock.release();
@@ -826,7 +841,7 @@ impl Daemon {
             commands: crate::commands::Commands::new(),
             orchestrator: crate::orchestrator::Orchestrator::default(),
             previews: crate::preview::Previews::new(launcher.clone()),
-            cursor: crate::backend::cursor_sdk::CursorAuth::new(launcher),
+            cursor: crate::backend::cursor_sdk::CursorAuth::new(launcher.clone()),
             connect: tailnet::Connect::new(
                 Arc::new(crate::tailnet::Absent),
                 parallax_protocol::CONNECT_PORT,
@@ -837,6 +852,7 @@ impl Daemon {
             remote: remote::Remote::new(crate::remote::PORT, None, None, remote::CODE_LIFETIME),
             schedules: crate::schedules::Schedules::default(),
             pr_watches: crate::pr_watch::Watches::default(),
+            self_update: crate::self_update::SelfUpdate::new(launcher),
         })
     }
 }

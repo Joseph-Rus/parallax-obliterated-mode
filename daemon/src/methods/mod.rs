@@ -197,6 +197,7 @@ async fn route(context: &Context, request: &Request) -> Result<Value, ErrorObjec
     routes!(context, request, {
         HostHealth => |p| ready(Ok(host::health(context, p))),
         HostVersion => |p| ready(Ok(host::version(context, p))),
+        HostUpdate => |p| daemon.self_update.update(daemon, p),
         HostSettingsGet => |p| host::settings(context, p),
         HostSettingsSet => |p| host::set_settings(context, p),
         ConnectDevices => |p| connect::devices(context, p),

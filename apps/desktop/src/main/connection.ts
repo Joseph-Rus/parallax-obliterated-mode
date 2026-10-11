@@ -246,9 +246,11 @@ export class Connection {
     for (const done of this.reconnectWaiters) done();
   }
 
+  /** Sends `method`, waiting `timeoutMs` for its answer: 30 s unless it takes longer. */
   request<M extends keyof ParallaxRequests>(
     method: M,
     params: ParallaxRequests[M]["params"],
+    timeoutMs = REQUEST_TIMEOUT_MS,
   ): Promise<HostResponse<ParallaxRequests[M]["result"]>> {
     const { client, logId } = this;
     if (this.state.status !== "connected" || !client || logId === undefined) {
@@ -258,7 +260,7 @@ export class Connection {
     }
     const outgoing = withCommandId(method, params);
     // Keep each attempt's log id with its response.
-    return client.request(method, outgoing, REQUEST_TIMEOUT_MS).then(async (first) => {
+    return client.request(method, outgoing, timeoutMs).then(async (first) => {
       let response = first;
       let responseLogId = logId;
       if (RECEIPTED_METHODS.has(method) && "error" in first) {
@@ -271,7 +273,7 @@ export class Connection {
               : undefined;
         if (retryClient && this.logId !== undefined) {
           responseLogId = this.logId;
-          response = await retryClient.request(method, outgoing, REQUEST_TIMEOUT_MS);
+          response = await retryClient.request(method, outgoing, timeoutMs);
         }
       }
       return "result" in response ? { ...response, logId: responseLogId } : response;

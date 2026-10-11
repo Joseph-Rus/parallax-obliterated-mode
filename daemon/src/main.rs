@@ -555,7 +555,7 @@ fn serve(args: &ServeArgs) -> ExitCode {
         if let Err(error) = std::env::set_current_dir("/") {
             warn!(%error, "could not change to the root folder");
         }
-        let server = match Server::start(Config::new(data_dir)) {
+        let server = match Server::start(Config::new(data_dir.clone())) {
             Ok(server) => server,
             Err(error @ StartError::AlreadyRunning { .. }) => {
                 warn!(%error, "not starting");
@@ -568,7 +568,27 @@ fn serve(args: &ServeArgs) -> ExitCode {
             }
         };
         match server.run(shutdown).await {
-            Ok(()) => ExitCode::SUCCESS,
+            Ok(()) => {
+                // `host/update` shut it down to hand over to the plxd it installed (PLX-700).
+                #[cfg(unix)]
+                match plxd::self_update::take_handover() {
+                    Some(plxd::self_update::Handover::Spawn(program)) => {
+                        match plxd::self_update::start_serve(&program, &data_dir) {
+                            Ok(()) => {
+                                info!(program = %program.display(), "started the updated plxd");
+                            }
+                            Err(error) => error!(%error, "could not start the updated plxd"),
+                        }
+                    }
+                    // The service manager restarts it, from the path the update replaced.
+                    Some(plxd::self_update::Handover::Exit) => {
+                        info!("exiting for the service manager to start the updated plxd");
+                        return ExitCode::from(plxd::self_update::EXIT_RESTART);
+                    }
+                    None => {}
+                }
+                ExitCode::SUCCESS
+            }
             Err(error) => {
                 error!(%error, "stopped with an error");
                 fail(&error.to_string())

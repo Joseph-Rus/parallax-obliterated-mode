@@ -1,4 +1,5 @@
-//! `initialize`, `host/health`, `host/version`, and `host/settings/*`.
+//! `initialize`, `host/health`, `host/version`, and `host/settings/*`. `host/update` is in
+//! `crate::self_update`.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -203,6 +204,7 @@ pub(crate) fn initialize(
 /// `schedules` (0063): `schedule/*`, and the webhooks the HTTPS listener serves.
 /// `prWatch` (0063): `pr/watch`, `pr/unwatch`, and `pr/watches`.
 /// `setupScripts` (PLX-650): `repo/scripts`, `repo/saveScripts`, and the `thread.script` event.
+/// `hostUpdate` (PLX-700, 0066): `host/update`, which installs a newer plxd and restarts into it.
 fn capabilities_advertised() -> Capabilities {
     let prompt_images = serde_json::Map::from_iter([
         ("maxImages".to_owned(), images::MAX_IMAGES.into()),
@@ -235,6 +237,7 @@ fn capabilities_advertised() -> Capabilities {
         ),
         ("githubSetup".to_owned(), serde_json::Map::new()),
         ("githubStatus".to_owned(), serde_json::Map::new()),
+        ("hostUpdate".to_owned(), serde_json::Map::new()),
         ("inbox".to_owned(), serde_json::Map::new()),
         ("integrationBranch".to_owned(), serde_json::Map::new()),
         ("landing".to_owned(), serde_json::Map::new()),

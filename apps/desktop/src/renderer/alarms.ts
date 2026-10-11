@@ -250,6 +250,36 @@ export function useOutdatedAlarms(hosts: HostThreads[]) {
   }, [hosts]);
 }
 
+/**
+ * A notification when main updated a computer's plxd to the app's version, and a sticky one,
+ * with Retry, when it couldn't (PLX-700). Each host has one, which the next replaces.
+ */
+export function useHostUpdateAlarms(hosts: Host[]) {
+  const names = useRef(hosts);
+  useEffect(() => {
+    names.current = hosts;
+  }, [hosts]);
+  useEffect(
+    () =>
+      window.parallax.onHostUpdate((event) => {
+        const { hostId } = event;
+        const name = names.current.find((h) => h.id === hostId)?.name ?? "a computer";
+        const key = `hostUpdate/${hostId}`;
+        if (event.status === "updated")
+          notify({ key, tone: "success", title: `Updated plxd on ${name}` });
+        else
+          notify({
+            key,
+            tone: "error",
+            title: `Couldn't update plxd on ${name}`,
+            body: event.error,
+            action: { label: "Retry", run: () => void window.parallax.retryHostUpdate(hostId) },
+          });
+      }),
+    [],
+  );
+}
+
 /** A notification when the user signs in to or out of their Parallax account (0037). */
 export function useAccountAlarms() {
   useEffect(() => {

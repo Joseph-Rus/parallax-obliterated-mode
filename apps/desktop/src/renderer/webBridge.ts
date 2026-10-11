@@ -508,6 +508,9 @@ export function webBridge(host: WebHost, name: string): ParallaxBridge {
     retry: async (hostId) => {
       if (hostId === LOCAL) host.retry();
     },
+    // A web client has only this host, whose plxd it doesn't update.
+    onHostUpdate: () => () => {},
+    retryHostUpdate: async () => {},
 
     hosts: async () => [],
     onHosts: none,

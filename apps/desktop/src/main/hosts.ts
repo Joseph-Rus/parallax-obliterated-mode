@@ -35,6 +35,7 @@ import {
   type SavedDevice,
 } from "./connect";
 import { Connection, LOCATE_PLXD, sshCommand } from "./connection";
+import { HostUpdater } from "./hostUpdate";
 import { installPlxd } from "./installPlxd";
 import {
   checkHost,
@@ -86,6 +87,11 @@ const ipcStats = process.env["PLX_IPC_STATS"]
 const rendererMethods = new Set<string>(REQUEST_METHODS);
 for (const method of withheldMethods) rendererMethods.delete(method);
 
+/** Keeps remote hosts' plxd on the app's version (PLX-700). */
+let hostUpdater: HostUpdater | undefined;
+/** How long `host/update` may take: it downloads plxd, about 30 MB, before it answers. */
+const UPDATE_TIMEOUT_MS = 15 * 60_000;
+
 /**
  * Every host's connection, by host id: `local`, each saved SSH host, each Connect device, and each
  * LAN computer.
@@ -105,6 +111,32 @@ const settingsFile = () => path.join(app.getPath("userData"), "settings.json");
  */
 export function startHosts(): void {
   initialServiceCheck = repointService();
+  hostUpdater = new HostUpdater({
+    packaged: app.isPackaged && !process.env["PLXD_PATH"],
+    version: app.getVersion(),
+    channel: channel(),
+    kindOf: (hostId) =>
+      savedHost(hostId)
+        ? "ssh"
+        : isLanHost(hostId) || hostId.startsWith("tailnet:")
+          ? "remote"
+          : undefined,
+    states: () => [...connections].map(([id, each]) => [id, each.state]),
+    update: async (hostId, version) =>
+      (await connections.get(hostId)?.request("host/update", { version }, UPDATE_TIMEOUT_MS)) ?? {
+        error: { code: ErrorCodes.InternalError, message: "That host isn't in Parallax anymore." },
+      },
+    runningAgents: async (hostId) => {
+      const answer = await connections.get(hostId)?.request("host/health", {});
+      return answer && "result" in answer ? answer.result.runningAgents : undefined;
+    },
+    installSsh: (hostId) => installPlxdOn(hostId),
+    osOf: async (hostId) => {
+      const answer = await connections.get(hostId)?.request("host/version", {});
+      return answer && "result" in answer ? answer.result.os : undefined;
+    },
+    emit: (event) => broadcast("parallax:hostUpdate", event),
+  });
   addConnection("local", () => {
     const plxd = localPlxd();
     return plxd === undefined ? undefined : [plxd, "attach"];
@@ -257,6 +289,9 @@ export function startHosts(): void {
 
   ipcMain.handle("parallax:connectionState", (_event, hostId: unknown) => connection(hostId).state);
   ipcMain.handle("parallax:retry", (_event, hostId: unknown) => connection(hostId).retry());
+  ipcMain.handle("parallax:retryHostUpdate", (_event, hostId: unknown) => {
+    if (typeof hostId === "string") hostUpdater?.retry(hostId);
+  });
 
   // A window's terminals (terminal.ts), by an id it picks, which plxd runs (PLX-637): a shell in a
   // thread's folder on its host, or on this computer, an SSH host's login, a CLI's or a provider
@@ -605,6 +640,7 @@ function addConnection(
         return queueMicrotask(() => created.retry());
       }
       broadcast("parallax:state", hostId, state);
+      hostUpdater?.onState(hostId, state);
       if (state.status !== "connected") return;
       if (hostId === "local") {
         void refreshConnect();

@@ -58,6 +58,7 @@ beforeEach(() => {
     setThemeSource: vi.fn(),
     connectionState: async (hostId) => states[hostId]!,
     onConnectionState: () => () => {},
+    onHostUpdate: () => () => {},
     watch: fakeWatch(() => window.parallax),
     subscribe: () => () => {},
     request: request as unknown as ParallaxBridge["request"],

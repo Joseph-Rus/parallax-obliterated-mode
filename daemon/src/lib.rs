@@ -79,6 +79,7 @@ pub mod remote;
 mod repo;
 pub mod routing;
 mod schedules;
+pub mod self_update;
 pub mod server;
 #[cfg(unix)]
 pub mod service;
