@@ -3084,6 +3084,14 @@ impl Actor {
                 self.resumes.take_reset();
                 self.save().await;
             }
+            Event::RequestUsage(usage) => {
+                self.push(AgentOutputItem::RequestUsage {
+                    backend: self.row.fields.backend.clone(),
+                    account_id: self.row.state.account_id.clone(),
+                    usage: usage.clone(),
+                })
+                .await;
+            }
             Event::Usage(_) | Event::RateLimit(_) => {
                 if let Event::RateLimit(window) = &event {
                     self.resumes.saw(window);

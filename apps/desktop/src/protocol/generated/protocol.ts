@@ -3071,7 +3071,19 @@ export type AgentOutputItem = { "kind": "sessionStarted",
 	/**
 	 * The thread that stopped it.
 	 */
-	from: RunId, } | { "kind": "usage",
+	from: RunId, } | { "kind": "requestUsage",
+	/**
+	 * The provider instance that made the request.
+	 */
+	backend: string,
+	/**
+	 * The account charged for the request, including fallback key accounts.
+	 */
+	accountId: string,
+	/**
+	 * The provider's request measurements. Missing values are unknown.
+	 */
+	usage: AgentRequestUsage, } | { "kind": "usage",
 	/**
 	 * The model, when the vendor breaks usage down by model.
 	 */
@@ -3207,6 +3219,41 @@ export type AgentApprovalBy = "user" | "timeout" | "cancel" | "stop" | "agent";
  * A newer plxd may send a value this version does not know; treat it as unknown.
  */
 export type AgentApprovalDecision = "allowed" | "denied" | "expired" | "withdrawn";
+
+/**
+ * Measurements from the latest main-session model request, never cumulative billing totals.
+ */
+export type AgentRequestUsage = {
+	/**
+	 * The actual model when the provider reports it.
+	 */
+	model?: string,
+	/**
+	 * Claude's request input, Codex's last request total, or ACP's current context tokens.
+	 */
+	contextTokens?: number,
+	/**
+	 * The context window reported by the provider, never inferred from the model catalog.
+	 */
+	contextWindow?: number,
+	/**
+	 * Request input including cached input. The denominator for cache utilization.
+	 */
+	inputTokens?: number,
+	/**
+	 * Request input served from cache. Missing differs from zero.
+	 */
+	cachedInputTokens?: number,
+	/**
+	 * Output tokens behind the latest approximate speed sample. Paired with `output_ms`.
+	 */
+	outputTokens?: number,
+	/**
+	 * Milliseconds those output tokens took by the provider's own timing: Claude's API time for
+	 * the last turn, or `OpenCode`'s text and reasoning streaming time. Never wall-clock turn time.
+	 */
+	outputMs?: number,
+};
 
 /**
  * How one of an agent's own subagents ended (PLX-382).

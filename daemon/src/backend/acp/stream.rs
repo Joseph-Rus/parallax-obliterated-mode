@@ -92,6 +92,9 @@ pub(super) struct Translator {
     text: String,
     /// The todo list, by id, in order, as `cursor/update_todos` merges into it.
     todos: Vec<(String, TodoItem)>,
+    /// The run's session, once `session/new` or `session/load` answered. Context use reported for
+    /// any other session, such as a subagent's, isn't the thread's.
+    pub session: Option<String>,
 }
 
 impl Translator {
@@ -126,6 +129,15 @@ impl Translator {
         match (method, message.get("id")) {
             (Some("session/update"), None) => {
                 if let Some(update) = update.filter(|_| !self.replaying) {
+                    let session = message
+                        .get("params")
+                        .and_then(|params| params.get("sessionId"))
+                        .and_then(Value::as_str);
+                    if kind(update) == Some("usage_update")
+                        && (self.session.is_none() || session != self.session.as_deref())
+                    {
+                        return steps;
+                    }
                     steps.extend(self.update(update));
                 }
             }
@@ -219,6 +231,16 @@ impl Translator {
                     .collect();
                 vec![Step::Emit(Event::TodoList { items })]
             }
+            Some("usage_update") => vec![Step::Emit(Event::RequestUsage(
+                parallax_protocol::AgentRequestUsage {
+                    context_tokens: update.get("used").and_then(Value::as_u64),
+                    context_window: update
+                        .get("size")
+                        .and_then(Value::as_u64)
+                        .filter(|window| *window > 0),
+                    ..Default::default()
+                },
+            ))],
             // Agents' own bookkeeping (a turn's tokens come on its answer instead), and the user's
             // own message echoed in a replay.
             Some(
@@ -226,7 +248,6 @@ impl Translator {
                 | "session_info_update"
                 | "current_mode_update"
                 | "config_option_update"
-                | "usage_update"
                 | "user_message_chunk"
                 | "subagent_spawned"
                 | "subagent_state_update",

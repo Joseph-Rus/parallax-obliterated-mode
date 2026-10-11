@@ -157,6 +157,18 @@ pub(super) struct Translator {
     limit_rejected: bool,
     /// How many `result`s arrived.
     pub results: usize,
+    /// Last main-session request, so result.modelUsage supplies only its reported window.
+    request_usage: Option<parallax_protocol::AgentRequestUsage>,
+    /// The window the last `result` reported for a model, reused for that model's later requests.
+    known_window: Option<(String, u64)>,
+    /// The session's running output tokens and API milliseconds, as of the last `result`.
+    api_totals: Option<(u64, u64)>,
+    /// The last turn's output tokens and API milliseconds, an approximate speed sample.
+    speed: Option<(u64, u64)>,
+    /// The request whose usage was last sent, as each of its content blocks repeats it.
+    usage_message: Option<String>,
+    /// The CLI resumed a session, whose running totals include turns from before this process.
+    resumed: bool,
     /// The last `result`'s failure, if it was one.
     pub last_failure: Option<Failure>,
     /// The last successful `result`'s text.
@@ -164,6 +176,38 @@ pub(super) struct Translator {
 }
 
 impl Translator {
+    /// Takes the turn's output tokens and API time from the `result`'s running session totals.
+    /// Both include subagents and the wait for each request's first token, so the rate they give
+    /// is approximate. A resumed session's totals carry over from before (0004), so its first
+    /// `result` only sets the baseline, as does a total that went down.
+    fn sample_speed(&mut self, message: &Map<String, Value>, totals: Option<&Map<String, Value>>) {
+        let Some(ms) = message.get("duration_api_ms").and_then(Value::as_u64) else {
+            return;
+        };
+        let Some(tokens) = totals.map(|totals| {
+            totals
+                .values()
+                .filter_map(|usage| usage.get("outputTokens").and_then(Value::as_u64))
+                .sum::<u64>()
+        }) else {
+            return;
+        };
+        let turn = match self.api_totals {
+            Some((before_tokens, before_ms)) => tokens
+                .checked_sub(before_tokens)
+                .zip(ms.checked_sub(before_ms)),
+            None if self.resumed => None,
+            None => Some((tokens, ms)),
+        };
+        self.api_totals = Some((tokens, ms));
+        let Some((turn_tokens, turn_ms)) = turn else {
+            return;
+        };
+        if turn_tokens > 0 && turn_ms > 0 {
+            self.speed = Some((turn_tokens, turn_ms));
+        }
+    }
+
     /// A translator for a run under `policy` whose `system/init` must report
     /// `expected_key_source` as its `apiKeySource`.
     pub fn new(policy: ToolPolicy, expected_key_source: &'static str) -> Self {
@@ -183,6 +227,12 @@ impl Translator {
             turn_error: None,
             limit_rejected: false,
             results: 0,
+            request_usage: None,
+            known_window: None,
+            api_totals: None,
+            speed: None,
+            resumed: false,
+            usage_message: None,
             last_failure: None,
             last_result: None,
         }
@@ -212,6 +262,12 @@ impl Translator {
     /// stdio` (PLX-222). Otherwise its control requests are skipped, as before.
     pub fn with_prompts(mut self, prompts: bool) -> Self {
         self.prompts = prompts;
+        self
+    }
+
+    /// Reads the first `result`'s running totals as the resumed session's baseline (0004).
+    pub fn with_resumed(mut self, resumed: bool) -> Self {
+        self.resumed = resumed;
         self
     }
 
@@ -308,9 +364,13 @@ impl Translator {
                 })]
             }
             Some("status") if text(message, "status") == Some("compacting") => {
+                self.request_usage = None;
                 vec![Step::Emit(Event::ContextCompaction { done: false })]
             }
-            Some("compact_boundary") => vec![Step::Emit(Event::ContextCompaction { done: true })],
+            Some("compact_boundary") => {
+                self.request_usage = None;
+                vec![Step::Emit(Event::ContextCompaction { done: true })]
+            }
             Some("api_retry") => {
                 let error = text(message, "error").unwrap_or("unknown");
                 self.turn_error = Some(api_error_kind(error));
@@ -454,6 +514,34 @@ impl Translator {
         let message_id = text(inner, "id").map(str::to_owned);
         let blocks = inner.get("content").and_then(Value::as_array);
         let mut steps = Vec::new();
+        // Subagents' usage belongs to their own context, not the main session's composer.
+        if message.get("parent_tool_use_id").is_none_or(Value::is_null)
+            && let Some(usage) = inner.get("usage")
+        {
+            let count = |key| usage.get(key).and_then(Value::as_u64);
+            let input = count("input_tokens").and_then(|input| {
+                input
+                    .checked_add(count("cache_read_input_tokens")?)?
+                    .checked_add(count("cache_creation_input_tokens")?)
+            });
+            let reported = parallax_protocol::AgentRequestUsage {
+                model: text(inner, "model").map(str::to_owned),
+                context_tokens: input,
+                input_tokens: input,
+                cached_input_tokens: count("cache_read_input_tokens"),
+                context_window: self.known_window.as_ref().and_then(|(model, window)| {
+                    (text(inner, "model") == Some(model.as_str())).then_some(*window)
+                }),
+                output_tokens: self.speed.map(|(tokens, _)| tokens),
+                output_ms: self.speed.map(|(_, ms)| ms),
+            };
+            // Claude Code sends a request's content blocks as separate lines with the same usage.
+            if message_id.is_none() || self.usage_message != message_id {
+                self.usage_message.clone_from(&message_id);
+                self.request_usage = Some(reported.clone());
+                steps.push(Step::Emit(Event::RequestUsage(reported)));
+            }
+        }
         for block in blocks.into_iter().flatten().filter_map(Value::as_object) {
             match text(block, "type") {
                 Some("text") => {
@@ -559,6 +647,18 @@ impl Translator {
         self.results += 1;
         let result = text(message, "result").map(str::to_owned);
         let mut steps = Vec::new();
+        self.sample_speed(message, totals);
+        self.usage_message = None;
+        if let Some(usage) = &mut self.request_usage {
+            usage.output_tokens = self.speed.map(|(tokens, _)| tokens);
+            usage.output_ms = self.speed.map(|(_, ms)| ms);
+            usage.context_window = usage
+                .model
+                .as_deref()
+                .and_then(|model| reported_context_window(model, totals));
+            self.known_window = usage.model.clone().zip(usage.context_window);
+            steps.push(Step::Emit(Event::RequestUsage(usage.clone())));
+        }
         for (model, usage) in totals.into_iter().flatten() {
             let usage = model_usage(usage);
             if !is_zero(&usage) {
@@ -952,4 +1052,32 @@ fn truncate(text: &str) -> String {
         Some((end, _)) => format!("{}...", &text[..end]),
         None => text.to_owned(),
     }
+}
+
+/// Match a reported model, including an unambiguous dated alias, without borrowing a subagent's
+/// capacity or a catalog default. Ambiguous and unknown models stay unavailable.
+fn reported_context_window(actual: &str, totals: Option<&Map<String, Value>>) -> Option<u64> {
+    let matches = |name: &str| {
+        actual == name
+            || actual.strip_prefix(name).is_some_and(|suffix| {
+                suffix.strip_prefix('-').is_some_and(|date| {
+                    date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit())
+                })
+            })
+    };
+    let mut candidates = totals?.iter().filter(|(name, value)| {
+        matches(name)
+            || value
+                .get("canonicalModel")
+                .and_then(Value::as_str)
+                .is_some_and(matches)
+    });
+    let (_, model) = candidates.next()?;
+    if candidates.next().is_some() {
+        return None;
+    }
+    model
+        .get("contextWindow")?
+        .as_u64()
+        .filter(|window| *window > 0)
 }

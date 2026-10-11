@@ -217,11 +217,19 @@ async fn launch(backend: &dyn Backend, request: RunRequest) -> Started {
     started
 }
 
+// Lifecycle tests consume the original flow. Request measurements are asserted independently
+// below and included in the real-session replay snapshot.
 async fn next(events: &mut EventStream) -> Event {
-    tokio::time::timeout(Duration::from_secs(10), events.next())
-        .await
-        .expect("no event within 10 s")
-        .expect("the stream ended")
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let event = events.next().await.expect("the stream ended");
+            if !matches!(event, Event::RequestUsage(_)) {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("no event within 10 s")
 }
 
 async fn rest(events: &mut EventStream) -> Vec<Event> {
@@ -3485,4 +3493,142 @@ fn naming_saves_no_session_and_has_no_tools() {
             .any(|arg| arg.contains(r#""autoMemoryEnabled":false"#)),
         "{args:?}"
     );
+}
+
+#[test]
+fn request_usage_uses_the_latest_main_request_and_matching_reported_window() {
+    use parallax_protocol::AgentRequestUsage;
+    use serde_json::json;
+    let mut translator = Translator::new(ToolPolicy::NoWrite, "none");
+    translator.line(
+        fixture("read-only")
+            .lines()
+            .find(|line| line.contains("\"subtype\":\"init\""))
+            .unwrap()
+            .as_bytes(),
+    );
+    let assistant = |model: &str, parent: Value, usage: Value| {
+        json!({
+            "type": "assistant", "parent_tool_use_id": parent,
+            "message": {"id": "request", "model": model, "content": [], "usage": usage}
+        })
+    };
+    let request = assistant(
+        "claude-haiku-4-5-20251001",
+        Value::Null,
+        json!({"input_tokens": 8, "cache_read_input_tokens": 36_458,
+            "cache_creation_input_tokens": 343, "output_tokens": 1}),
+    );
+    let steps = translator.line(request.to_string().as_bytes());
+    let expected = AgentRequestUsage {
+        model: Some("claude-haiku-4-5-20251001".into()),
+        context_tokens: Some(36_809),
+        input_tokens: Some(36_809),
+        cached_input_tokens: Some(36_458),
+        context_window: None,
+        ..Default::default()
+    };
+    assert_eq!(steps, [Step::Emit(Event::RequestUsage(expected.clone()))]);
+    let child = assistant(
+        "claude-opus-5-5",
+        json!("tool_child"),
+        json!({"input_tokens": 999_999, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}),
+    );
+    assert!(translator.line(child.to_string().as_bytes()).is_empty());
+    let result = json!({"type": "result", "subtype": "success", "modelUsage": {
+        "claude-haiku-4-5": {"canonicalModel": "claude-haiku-4-5", "contextWindow": 200_000,
+            "inputTokens": 9_999_999}, "claude-opus-5-5": {"contextWindow": 1_000_000}
+    }});
+    let steps = translator.line(result.to_string().as_bytes());
+    assert!(
+        steps.contains(&Step::Emit(Event::RequestUsage(AgentRequestUsage {
+            context_window: Some(200_000),
+            ..expected.clone()
+        })))
+    );
+    assert!(
+        translator
+            .line(request.to_string().as_bytes())
+            .contains(&Step::Emit(Event::RequestUsage(AgentRequestUsage {
+                context_window: Some(200_000),
+                ..expected
+            })))
+    );
+    translator.line(br#"{"type":"system","subtype":"compact_boundary"}"#);
+    assert!(
+        !translator
+            .line(result.to_string().as_bytes())
+            .iter()
+            .any(|step| matches!(step, Step::Emit(Event::RequestUsage(_))))
+    );
+    let unknown = assistant("unknown", Value::Null, json!({"input_tokens": 0}));
+    let steps = translator.line(unknown.to_string().as_bytes());
+    assert!(
+        steps.contains(&Step::Emit(Event::RequestUsage(AgentRequestUsage {
+            model: Some("unknown".into()),
+            ..Default::default()
+        })))
+    );
+}
+
+#[test]
+fn request_speed_is_the_turns_share_of_the_sessions_output_and_api_time() {
+    use serde_json::json;
+    let mut translator = Translator::new(ToolPolicy::NoWrite, "none");
+    translator.line(
+        fixture("read-only")
+            .lines()
+            .find(|line| line.contains("\"subtype\":\"init\""))
+            .unwrap()
+            .as_bytes(),
+    );
+    let assistant = json!({"type": "assistant", "parent_tool_use_id": null, "message": {
+        "id": "m", "model": "claude-opus-4-7", "content": [],
+        "usage": {"input_tokens": 1, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}});
+    let result = |ms: u64, opus: u64, haiku: u64| {
+        json!({"type": "result", "subtype": "success", "duration_api_ms": ms, "modelUsage": {
+            "claude-opus-4-7": {"outputTokens": opus}, "claude-haiku-4-5": {"outputTokens": haiku}}})
+    };
+    let speed = |steps: Vec<Step>| {
+        steps.into_iter().find_map(|step| match step {
+            Step::Emit(Event::RequestUsage(usage)) => Some((usage.output_tokens, usage.output_ms)),
+            _ => None,
+        })
+    };
+    translator.line(assistant.to_string().as_bytes());
+    let first = translator.line(result(4_000, 150, 50).to_string().as_bytes());
+    assert_eq!(speed(first), Some((Some(200), Some(4_000))));
+    // The next request carries the last sample until its own result.
+    let next = translator.line(assistant.to_string().as_bytes());
+    assert_eq!(speed(next), Some((Some(200), Some(4_000))));
+    let second = translator.line(result(10_000, 450, 50).to_string().as_bytes());
+    assert_eq!(speed(second), Some((Some(300), Some(6_000))));
+    // A turn with no new API time keeps the last sample.
+    translator.line(assistant.to_string().as_bytes());
+    let idle = translator.line(result(10_000, 450, 50).to_string().as_bytes());
+    assert_eq!(speed(idle), Some((Some(300), Some(6_000))));
+    // Totals that went down are a new baseline, not a sample.
+    translator.line(assistant.to_string().as_bytes());
+    let lower = translator.line(result(2_000, 80, 0).to_string().as_bytes());
+    assert_eq!(speed(lower), Some((Some(300), Some(6_000))));
+    translator.line(assistant.to_string().as_bytes());
+    let after = translator.line(result(3_000, 180, 0).to_string().as_bytes());
+    assert_eq!(speed(after), Some((Some(100), Some(1_000))));
+
+    // A resumed session's totals carry over from earlier processes (0004), so its first result is
+    // only the baseline: the whole session's output over one turn's time would read far too high.
+    let mut resumed = Translator::new(ToolPolicy::NoWrite, "none").with_resumed(true);
+    resumed.line(
+        fixture("read-only")
+            .lines()
+            .find(|line| line.contains("\"subtype\":\"init\""))
+            .unwrap()
+            .as_bytes(),
+    );
+    resumed.line(assistant.to_string().as_bytes());
+    let first = resumed.line(result(90_000, 40_000, 0).to_string().as_bytes());
+    assert_eq!(speed(first), Some((None, None)));
+    resumed.line(assistant.to_string().as_bytes());
+    let second = resumed.line(result(95_000, 40_400, 0).to_string().as_bytes());
+    assert_eq!(speed(second), Some((Some(400), Some(5_000))));
 }

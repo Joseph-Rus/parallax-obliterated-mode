@@ -266,6 +266,38 @@ function fakeTurn(runId: string, turnId: string | undefined, text: string | unde
     later(at, () => output(runId, { kind: "toolCall", callId, name, input }));
     later(at + ms, () => output(runId, { kind: "toolResult", callId, status: "ok", output: "…" }));
   };
+  // Each model request reports its context and cache use as Claude's would, with the last turn's
+  // speed sample until this turn's result brings a new one.
+  const run = db.runs.find((r) => r.id === runId);
+  const last = [...(logs.get(runId) ?? [])]
+    .reverse()
+    .flatMap((e) => (e.event.kind === "agent.output" ? [...e.event.items].reverse() : []))
+    .find((item) => item.kind === "requestUsage");
+  const base = last?.kind === "requestUsage" ? last.usage : undefined;
+  const request = (at: number, grow: number, speed?: [number, number]) =>
+    run &&
+    later(at, () => {
+      const contextTokens = (base?.contextTokens ?? 40_000) + grow;
+      output(runId, {
+        kind: "requestUsage",
+        backend: run.backend,
+        accountId: run.accountId,
+        usage: {
+          ...base,
+          model: run.model,
+          contextTokens,
+          inputTokens: contextTokens,
+          cachedInputTokens: contextTokens - 2_400,
+          contextWindow: run.contextWindow,
+          ...(speed && { outputTokens: speed[0], outputMs: speed[1] }),
+        },
+      });
+    });
+  request(1000, 2_100);
+  request(2050, 5_600);
+  request(3400, 9_800);
+  request(5200, 14_300);
+  request(7500, 16_900, [2_460, 26_800]);
   later(600, () =>
     output(runId, {
       kind: "reasoning",
@@ -735,6 +767,15 @@ const handlers: { [M in Method]?: Handler<M> } = {
     patchRun(p.runId, change);
     later(150, () => fakeTurn(p.runId, turnId, text));
     return { run: { ...run } };
+  },
+  // Only a message runs here, as agent/send does; the queue and its other commands aren't faked.
+  "orchestration/dispatch": (p) => {
+    if (p.type !== "message.dispatch") return fail(`The preview doesn't fake ${p.type}.`);
+    const run = runOf(p.threadId);
+    if (!run) return fail("no such run", "runNotFound");
+    patchRun(run.id, { status: "running" });
+    later(150, () => fakeTurn(run.id, p.messageId, p.text));
+    return { seq: 0 };
   },
   "agent/cancel": (p) => {
     const run = patchRun(p.runId, { status: "cancelled" });

@@ -260,6 +260,7 @@ export function ProjectChat({
           // Hidden while it starts, as the coordinator's chat keeps its run's.
           backend={starting ? undefined : backend}
           hostId={hostId}
+          connected={connected}
           disabledReason={disabledReason}
           tab={tab}
           imageCaps={imageCaps(connection)}

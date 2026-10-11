@@ -44,6 +44,8 @@ import type {
   PromptImage,
 } from "../protocol/generated/protocol";
 import { lastPrompt } from "./attention";
+import { UsageRing, UsageRow, UsageWarning, useComposerUsage } from "./ComposerUsage";
+import type { RequestUsage } from "./transcript";
 import { EffortMenu } from "./EffortMenu";
 import { accessPrefs } from "./accessPrefs";
 import { imageUrl, readImage, type ImageCaps } from "./images";
@@ -294,13 +296,6 @@ interface MenuEntry {
   pick: () => void;
 }
 
-/** The line under a run's box saying what queues and what steers. */
-function steerHint(sendKey: "enter" | "modEnter", mac: boolean): string {
-  const mod = mac ? "⌘ Enter" : "Ctrl+Enter";
-  if (sendKey === "enter") return `Enter queues · ${mod} steers now`;
-  return `${mod} queues · ${mac ? "⌘ ⇧ Enter" : "Ctrl+Shift+Enter"} steers now`;
-}
-
 /** A plain item in the composer's tab, sized like the pickers that can sit beside it. */
 export const tabItem =
   "flex min-w-0 items-center gap-1.5 px-2 py-1 text-[13.5px] text-muted-foreground [&_svg]:size-4 [&_svg]:shrink-0";
@@ -365,6 +360,12 @@ export interface ComposerProps {
    * Absent: the built-in ones.
    */
   hostId?: string;
+  /** Whether the host is connected, so usage is refreshed only while reachable. */
+  connected?: boolean;
+  /** The latest request measurements, scoped to the open run's provider and account. */
+  requestUsage?: RequestUsage;
+  /** The account actually charged for an open run, including automatic key fallback. */
+  accountId?: string;
   /** Instances the thread can't run on, by why, whose models it doesn't offer: those an open run
    * can't move to, or a new thread can't start on. */
   unavailable?: Partial<Record<Provider, string>>;
@@ -435,6 +436,9 @@ export function Composer({
   started,
   contextAndFast,
   hostId: host,
+  connected = false,
+  requestUsage,
+  accountId,
   unavailable,
   optionsDisabled,
   imageCaps,
@@ -477,7 +481,6 @@ export function Composer({
   // chat keeps its coordinator's backend, so it doesn't.
   const defaults = newThreadPrefs.use();
   const fresh = !started && !!newThread;
-  const { sendKey } = behaviorPrefs.use();
   // What `backend` can honor: another backend's pick falls back to its first model and `edit`.
   const catalog = useCatalog(host);
   const instanceOf = (id: string | undefined) => catalog.instances.find((i) => i.id === id);
@@ -540,6 +543,20 @@ export function Composer({
   const startedFast = started?.fast ?? (fresh ? defaults.fast : false);
   const fast = hasFast && (pickedFast ?? startedFast);
   const account = { kind: "subscription", backend: target! } as const;
+  // Usage for the provider the next message goes to. An open run's measurements show only while
+  // its provider, account, model, and context window are still picked.
+  const { composerUsage: usageView, usageWarning } = behaviorPrefs.use();
+  const usage = useComposerUsage({
+    hostId: host,
+    connected,
+    backend: usageView === "off" ? undefined : target,
+    kind: targetBackend?.kind,
+    accountId: target === backend ? (accountId ?? target) : target,
+    usage:
+      target === backend && model?.id === startedModel?.id && context === startedContext
+        ? requestUsage
+        : undefined,
+  });
   let options: RunOptions = {};
   // A started run sends only what changed, unless the message goes to another instance.
   if (run && started && target === backend)
@@ -1207,12 +1224,17 @@ export function Composer({
               e.target.value = "";
             }}
           />
+          {usage && usageView === "ring" && (
+            <div className="ml-auto">
+              <UsageRing data={usage} />
+            </div>
+          )}
           <button
             type="button"
             aria-label="Attach files"
             title="Attach files"
             onClick={() => filePicker.current?.click()}
-            className="mr-1.5 ml-auto grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-hover hover:text-foreground [&_svg]:size-4.5"
+            className={`mr-1.5 ${usage && usageView === "ring" ? "" : "ml-auto"} grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-hover hover:text-foreground [&_svg]:size-4.5`}
           >
             <Paperclip />
           </button>
@@ -1241,17 +1263,14 @@ export function Composer({
             </button>
           )}
         </div>
+        {usage && usageView === "row" && <UsageRow data={usage} />}
+        {usage?.warning && usageWarning && <UsageWarning text={usage.warning} />}
       </form>
       {tab && (
         // Tucked under the box, so what it shows reads as part of it.
         <div className="mx-5 -mt-4 flex min-w-0 items-center justify-between gap-2 rounded-b-3xl border border-t-0 border-border bg-surface px-3 pt-5 pb-1.5">
           {tab}
         </div>
-      )}
-      {onSteer && !disabledReason && (
-        <p className="px-2 pt-1.5 text-[11.5px] text-faint-foreground">
-          {steerHint(sendKey, window.parallax.platform === "darwin")}
-        </p>
       )}
       {error && (
         <p role="alert" className="px-2 pt-2 text-[13px] text-danger">

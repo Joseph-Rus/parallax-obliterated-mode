@@ -856,6 +856,20 @@ export function createFixtures(now = Date.now()): Fixtures {
         kind: "text",
         text: "Not without a setting, and 0028 keeps the channel out of settings on purpose: switching a stable install to nightlies would mean a downgrade path back. The supported way is to install a nightly build, which then follows nightlies on its own. I'd leave it as is; if you want an opt-in, it should be its own decision record.",
       },
+      {
+        kind: "requestUsage",
+        backend: "claude",
+        accountId: "claude",
+        usage: {
+          model: OPUS,
+          contextTokens: 184_300,
+          contextWindow: 1_000_000,
+          inputTokens: 184_300,
+          cachedInputTokens: 171_900,
+          outputTokens: 1_310,
+          outputMs: 15_900,
+        },
+      },
       { kind: "turnFinished" },
     )
     .update(ago(18), { status: "completed" })

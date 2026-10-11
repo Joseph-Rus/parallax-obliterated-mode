@@ -803,3 +803,44 @@ test("a provider turned off in Settings leaves the menu, and a new thread starts
   );
   setCliEnabled("claude", true);
 });
+
+test("choosing an explicit model from a default-model run hides its earlier request measurements", async () => {
+  setBehaviorPrefs({ composerUsage: "row" });
+  const request = vi.fn(async () => ({ error: { code: -32601, message: "Unavailable" } }));
+  window.parallax = {
+    platform: "darwin",
+    request,
+    onConnectionState: () => () => {},
+    connectionState: async () => ({ status: "disconnected" }),
+  } as unknown as ParallaxBridge;
+  render(async () => undefined, caps, {
+    backend: "claude",
+    started: {},
+    hostId: "local",
+    connected: true,
+    accountId: "claude",
+    requestUsage: {
+      kind: "requestUsage",
+      backend: "claude",
+      accountId: "claude",
+      at: "2026-10-11T00:00:00Z",
+      usage: {
+        contextTokens: 50_000,
+        contextWindow: 200_000,
+        inputTokens: 50_000,
+        cachedInputTokens: 25_000,
+      },
+    },
+  });
+  expect(document.body.textContent).toContain("25% context");
+  const menu = document.getElementById(
+    document.querySelector('[aria-label="Model: Default model"]')!.getAttribute("popovertarget")!,
+  )!;
+  const opus = [...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) =>
+    item.textContent?.startsWith("Claude Opus 5.5"),
+  )!;
+  await act(async () => opus.click());
+  expect(document.body.textContent).toContain("— context");
+  expect(document.body.textContent).not.toContain("25% context");
+  setBehaviorPrefs({ composerUsage: "ring" });
+});

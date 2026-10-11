@@ -1136,6 +1136,7 @@ impl Backend for ClaudeBackend {
         let (handle, answers) = handle.with_answers();
         let held = handle.held();
         let stop = Arc::new(Notify::new());
+        let resumed = request.resume.is_some();
         let baseline = request
             .resume
             .map(|resume| resume.usage_totals)
@@ -1154,7 +1155,8 @@ impl Backend for ClaudeBackend {
                 .with_thread(full)
                 .with_permission_mode(permission_mode(request.permission)?)
                 .with_prompts(asks)
-                .with_plan_exit(plan_exit),
+                .with_plan_exit(plan_exit)
+                .with_resumed(resumed),
             turns: VecDeque::new(),
             unreported: HashSet::new(),
             asks: HashMap::new(),

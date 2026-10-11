@@ -63,6 +63,15 @@ struct Call {
     finished: bool,
 }
 
+/// What one model request's parts showed, for its speed sample.
+#[derive(Debug, Default)]
+struct StepSeen {
+    /// It called a tool, whose arguments' tokens have no streaming time here.
+    tool: bool,
+    /// It streamed a reasoning part, so its reasoning tokens have a time.
+    reasoning: bool,
+}
+
 /// The state that reading one run's events needs.
 #[derive(Debug, Default)]
 pub(super) struct Translator {
@@ -86,6 +95,14 @@ pub(super) struct Translator {
     parts: HashMap<String, Part>,
     /// `step-finish` parts already counted.
     steps: HashSet<String>,
+    /// Text and reasoning parts whose streaming time the current step already counted.
+    timed: HashSet<String>,
+    /// The current step's text and reasoning streaming time, in milliseconds.
+    step_ms: u64,
+    /// What the current step's parts showed, which decides whether its timing is complete.
+    step_seen: StepSeen,
+    /// The last step without tool calls: its output tokens and streaming milliseconds.
+    speed: Option<(u64, u64)>,
     calls: HashMap<String, Call>,
     /// The agent's text since the turn's last tool call, the turn's result.
     text: String,
@@ -215,6 +232,26 @@ impl Translator {
         (!text.trim().is_empty()).then_some(text)
     }
 
+    /// Counts a finished text or reasoning part's streaming time toward its step, and notes a
+    /// tool call. The time runs from the part's first token to its last, so it leaves out the
+    /// wait for the first token and any tool running.
+    fn time(&mut self, id: &str, part: &Value) {
+        match part["type"].as_str() {
+            Some("tool") => self.step_seen.tool = true,
+            Some("text" | "reasoning") => {
+                let time = &part["time"];
+                if let (Some(start), Some(end)) = (time["start"].as_u64(), time["end"].as_u64())
+                    && end > start
+                    && self.timed.insert(id.to_owned())
+                {
+                    self.step_seen.reasoning |= part["type"] == "reasoning";
+                    self.step_ms += end - start;
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn part(&mut self, part: &Value) -> Vec<Step> {
         let (Some(id), Some(message)) = (part["id"].as_str(), part["messageID"].as_str()) else {
             return Vec::new();
@@ -222,6 +259,7 @@ impl Translator {
         if self.prompts.contains(message) {
             return Vec::new();
         }
+        self.time(id, part);
         match part["type"].as_str() {
             Some("text") if part["synthetic"] != true => {
                 let full = part["text"].as_str().unwrap_or_default();
@@ -274,10 +312,33 @@ impl Translator {
                     cache_write_tokens: count(&tokens["cache"]["write"]),
                     cost_usd_micros: None,
                 };
-                (usage != Usage::default())
-                    .then_some(Step::Emit(Event::Usage(ModelUsage { model: None, usage })))
-                    .into_iter()
-                    .collect()
+                let generated = usage.output_tokens;
+                let step_ms = std::mem::take(&mut self.step_ms);
+                let seen = std::mem::take(&mut self.step_seen);
+                // Hidden reasoning's tokens would count with none of their time.
+                let untimed = count(&tokens["reasoning"]) > 0 && !seen.reasoning;
+                if !seen.tool && !untimed && generated > 0 && step_ms > 0 {
+                    self.speed = Some((generated, step_ms));
+                }
+                let mut steps = Vec::new();
+                if usage != Usage::default() {
+                    steps.push(Step::Emit(Event::Usage(ModelUsage { model: None, usage })));
+                }
+                let input = tokens["input"].as_u64().and_then(|input| {
+                    input
+                        .checked_add(tokens["cache"]["read"].as_u64()?)?
+                        .checked_add(tokens["cache"]["write"].as_u64()?)
+                });
+                steps.push(Step::Emit(Event::RequestUsage(
+                    parallax_protocol::AgentRequestUsage {
+                        input_tokens: input,
+                        cached_input_tokens: tokens["cache"]["read"].as_u64(),
+                        output_tokens: self.speed.map(|(tokens, _)| tokens),
+                        output_ms: self.speed.map(|(_, ms)| ms),
+                        ..Default::default()
+                    },
+                )));
+                steps
             }
             _ => Vec::new(),
         }

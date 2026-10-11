@@ -49,6 +49,11 @@ export type BehaviorPrefs = {
   sendKey: "enter" | "modEnter";
   /** Where a pull request's Open on GitHub goes: the system browser, or the side panel's Browser. */
   openPrsIn: "external" | "browser";
+  /** How the composer shows provider usage: a ring by send with details on hover, the full row
+   * inside the box, or nothing. */
+  composerUsage: "ring" | "row" | "off";
+  /** A line inside the composer when a limit window or the context is nearly full. */
+  usageWarning: boolean;
 };
 
 export const behaviorDefaults: BehaviorPrefs = {
@@ -57,6 +62,8 @@ export const behaviorDefaults: BehaviorPrefs = {
   timeFormat: "system",
   sendKey: "enter",
   openPrsIn: "external",
+  composerUsage: "ring",
+  usageWarning: true,
 };
 
 export const behaviorPrefs = stored("parallax.behavior", behaviorDefaults, merged);

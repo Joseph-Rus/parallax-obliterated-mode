@@ -884,3 +884,44 @@ test("a script's end replaces its start where it was (PLX-650)", () => {
   );
   expect(of(restarted.items, "script")).toMatchObject([{ status: "interrupted" }]);
 });
+
+test("request measurements survive snapshots and replay but clear on compaction, session and account switches", () => {
+  const measured: AgentOutputItem = {
+    kind: "requestUsage",
+    backend: "claude",
+    accountId: "claude",
+    usage: {
+      contextTokens: 50_000,
+      contextWindow: 200_000,
+      inputTokens: 50_000,
+      cachedInputTokens: 25_000,
+    },
+  };
+  const events = [output({ kind: "sessionStarted", sessionId: "session-a" }), output(measured)];
+  const t = build(...events);
+  expect(t.requestUsage?.usage.contextTokens).toBe(50_000);
+  expect(rebuild(t, events, runId).requestUsage).toEqual(t.requestUsage);
+  expect(applyEvents(t, events, runId).requestUsage).toEqual(t.requestUsage);
+  expect(
+    applyEvents(t, [output({ kind: "contextCompaction", done: false })], runId).requestUsage,
+  ).toBeUndefined();
+  expect(
+    applyEvents(t, [output({ kind: "sessionStarted", sessionId: "session-b" })], runId)
+      .requestUsage,
+  ).toBeUndefined();
+  expect(
+    applyEvents(
+      t,
+      [
+        at({
+          kind: "agent.accountFallback",
+          runId,
+          fromAccount: "claude",
+          toAccount: "key-account",
+          reason: "rateLimited",
+        }),
+      ],
+      runId,
+    ).requestUsage,
+  ).toBeUndefined();
+});

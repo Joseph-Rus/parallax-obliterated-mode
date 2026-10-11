@@ -412,6 +412,13 @@ async fn a_thread_at_a_server_url_streams_asks_and_finishes() {
         })
         .collect();
     assert_eq!(usage.len(), 1);
+    assert!(
+        seen.contains(&Event::RequestUsage(parallax_protocol::AgentRequestUsage {
+            input_tokens: Some(150),
+            cached_input_tokens: Some(50),
+            ..Default::default()
+        }))
+    );
     assert_eq!(
         (
             usage[0].input_tokens,
@@ -929,4 +936,61 @@ fn the_translator_keeps_to_its_session_and_the_turn_in_flight() {
     );
     assert!(translator.event(&busy()).is_empty());
     assert_eq!(translator.event(&idle()), [Step::Idle]);
+}
+
+#[test]
+fn request_speed_comes_from_streaming_time_in_steps_without_tool_calls() {
+    let mut translator = Translator::default();
+    translator.session = "ses_1".into();
+    let usage = |steps: Vec<Step>| {
+        steps.into_iter().find_map(|step| match step {
+            Step::Emit(Event::RequestUsage(usage)) => Some(usage),
+            _ => None,
+        })
+    };
+    let finish = |id: &str, output: u64| {
+        part(json!({"id": id, "type": "step-finish",
+            "tokens": {"input": 10, "output": output, "reasoning": 0, "cache": {"read": 0, "write": 0}}}))
+    };
+    // 300 tokens over 1.5 s of streaming text and reasoning, counted once per part.
+    let text = part(
+        json!({"id": "prt_t", "type": "text", "text": "a", "time": {"start": 1_000, "end": 2_000}}),
+    );
+    translator.event(&text);
+    translator.event(&text);
+    translator.event(&part(
+        json!({"id": "prt_r", "type": "reasoning", "text": "b", "time": {"start": 500, "end": 1_000}}),
+    ));
+    let first = usage(translator.event(&finish("prt_s1", 300))).unwrap();
+    assert_eq!(
+        (first.output_tokens, first.output_ms),
+        (Some(300), Some(1_500))
+    );
+    // A step with a tool call keeps the last sample: its arguments have no streaming time.
+    translator.event(&part(
+        json!({"id": "prt_t2", "type": "text", "text": "c", "time": {"start": 3_000, "end": 3_100}}),
+    ));
+    translator.event(&call("call_9", "running"));
+    let second = usage(translator.event(&finish("prt_s2", 900))).unwrap();
+    assert_eq!(
+        (second.output_tokens, second.output_ms),
+        (Some(300), Some(1_500))
+    );
+    // Neither does a step whose parts report no time.
+    let third = usage(translator.event(&finish("prt_s3", 50))).unwrap();
+    assert_eq!(
+        (third.output_tokens, third.output_ms),
+        (Some(300), Some(1_500))
+    );
+    // Nor one with reasoning tokens but no streamed reasoning, whose time would be missing.
+    translator.event(&part(
+        json!({"id": "prt_t4", "type": "text", "text": "d", "time": {"start": 4_000, "end": 4_100}}),
+    ));
+    let hidden = part(json!({"id": "prt_s4", "type": "step-finish",
+        "tokens": {"input": 10, "output": 20, "reasoning": 900, "cache": {"read": 0, "write": 0}}}));
+    let fourth = usage(translator.event(&hidden)).unwrap();
+    assert_eq!(
+        (fourth.output_tokens, fourth.output_ms),
+        (Some(300), Some(1_500))
+    );
 }
