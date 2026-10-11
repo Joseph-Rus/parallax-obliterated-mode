@@ -184,6 +184,13 @@ export interface ParallaxBridge {
   onConnectionState(listener: (hostId: string, state: ConnectionState) => void): () => void;
   /** Reconnects a failed host now, including one that stopped retrying. */
   retry(hostId: string): Promise<void>;
+  /**
+   * Each time main updated a remote host's plxd to the app's version, or couldn't (PLX-700).
+   * Returns the unsubscribe function.
+   */
+  onHostUpdate(listener: (event: HostUpdateEvent) => void): () => void;
+  /** Tries again to update a host's plxd that couldn't be updated. */
+  retryHostUpdate(hostId: string): Promise<void>;
 
   /**
    * The saved SSH hosts, oldest first, then the computers paired on the LAN. This computer is
@@ -505,6 +512,7 @@ export const withheldMethods = [
   "agent/requestChanges",
   "agent/wait",
   "context/write",
+  "host/update",
   "land/approve",
   "land/queue",
   "land/sendBack",
@@ -554,6 +562,13 @@ export type SubscriptionMessage =
   | { type: "resync" }
   /** The subscription ended with an error, such as `projectNotFound`. */
   | { type: "error"; error: RpcError };
+
+/** How updating a remote host's plxd to the app's version went (PLX-700). */
+export type HostUpdateEvent =
+  /** It reconnected on `version`. */
+  | { hostId: string; status: "updated"; version: string }
+  /** `error` says why, for people. */
+  | { hostId: string; status: "failed"; error: string };
 
 export type ConnectionState =
   | { status: "connecting" }

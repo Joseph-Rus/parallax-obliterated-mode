@@ -1468,6 +1468,8 @@ export const mockBridge: ParallaxBridge = {
     return () => connectionListeners.delete(listener);
   },
   retry: () => delay(undefined),
+  onHostUpdate: () => () => {},
+  retryHostUpdate: () => delay(undefined),
 
   hosts: () => delay([...lan.hosts]),
   sshSuggestions: () => delay(["mac-mini", "devbox", "100.87.92.42", "github.com"]),

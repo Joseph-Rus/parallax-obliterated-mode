@@ -72,7 +72,8 @@ ${posixTail}`;
 
 /**
  * Linux: installs the release's static plxd in ~/.local/bin, so no AppImage runtime has to run
- * (NixOS won't run one). Then installs bubblewrap and socat, which Claude Code's worker sandbox
+ * (NixOS won't run one), with its version in `plxd.version` beside it, where plxd reads it (0030);
+ * without it, plxd reports its build's placeholder, 0.1.0. Then installs bubblewrap and socat, which Claude Code's worker sandbox
  * needs (0013), when it can without a password: `nix profile install` on NixOS (unless the user's
  * profile is nix-env's), else the package
  * manager as root or with passwordless sudo. Otherwise, and for nix-ld on NixOS, which agent CLIs'
@@ -83,6 +84,7 @@ ${posixTail}`;
 export function linuxScript(installer) {
   return `set -eu
 url=${shQuote(installer.url)}
+version=${shQuote(installer.version)}
 mkdir -p "$HOME/.local/bin"
 echo "Downloading $url"
 if command -v curl >/dev/null 2>&1; then
@@ -91,6 +93,7 @@ else
   wget -q -O "$HOME/.local/bin/.plxd.new" "$url"
 fi
 chmod +x "$HOME/.local/bin/.plxd.new"
+printf '%s\\n' "$version" > "$HOME/.local/bin/plxd.version"
 mv -f "$HOME/.local/bin/.plxd.new" "$HOME/.local/bin/plxd"
 plxd="$HOME/.local/bin/plxd"
 echo "Installed $plxd"

@@ -40,6 +40,7 @@ import {
   useAccountAlarms,
   useConnectionAlarms,
   useOutdatedAlarms,
+  useHostUpdateAlarms,
   useNeedsYouAlarm,
   useSnoozeAlarms,
   useThreadAlarms,
@@ -382,6 +383,7 @@ export function App() {
   useThreadAlarms(listed, openHostThread, settings ? [] : panes.map((id) => `${host.id}/${id}`));
   useConnectionAlarms(hosts);
   useOutdatedAlarms(listed);
+  useHostUpdateAlarms(hosts);
   useAccountAlarms();
   useUpdateAlarms();
   const needsYou = useNeedsYouAlarm(listed, (hostId, projectId) =>

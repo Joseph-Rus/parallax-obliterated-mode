@@ -4,10 +4,12 @@ use std::collections::BTreeMap;
 
 use parallax_protocol::framing::MAX_FRAME_BYTES;
 use parallax_protocol::jsonrpc::{INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, Request};
-use parallax_protocol::methods::{HostHealth, HostVersion, Initialize, ProjectList, RequestMethod};
+use parallax_protocol::methods::{
+    HostHealth, HostUpdate, HostVersion, Initialize, ProjectList, RequestMethod,
+};
 use parallax_protocol::{
-    Capabilities, ErrorKind, HostHealthParams, HostVersionParams, IncompatibleProtocolDetail,
-    ProjectListParams, ProtocolRange, StoreState,
+    Capabilities, ErrorKind, HostHealthParams, HostUpdateParams, HostUpdateRestart,
+    HostVersionParams, IncompatibleProtocolDetail, ProjectListParams, ProtocolRange, StoreState,
 };
 use serde_json::json;
 
@@ -51,6 +53,7 @@ async fn the_handshake_agrees_on_a_version_and_reports_the_host() {
             ),
             ("githubSetup".to_owned(), serde_json::Map::new()),
             ("githubStatus".to_owned(), serde_json::Map::new()),
+            ("hostUpdate".to_owned(), serde_json::Map::new()),
             ("inbox".to_owned(), serde_json::Map::new()),
             ("integrationBranch".to_owned(), serde_json::Map::new()),
             ("landing".to_owned(), serde_json::Map::new()),
@@ -124,6 +127,51 @@ async fn the_handshake_agrees_on_a_version_and_reports_the_host() {
     assert!(version.os.starts_with("macOS "), "{}", version.os);
     #[cfg(target_os = "linux")]
     assert_eq!(version.os, "linux");
+}
+
+#[tokio::test]
+async fn host_update_refuses_what_it_cant_install_and_stays_up() {
+    let dir = temp_dir();
+    let plxd = Plxd::start(dir.path()).await;
+    let mut client = Client::connect(&plxd.socket).await;
+    client.initialize().await.unwrap();
+    let mut update = async |version: &str| {
+        client
+            .call::<HostUpdate>(HostUpdateParams {
+                version: version.to_owned(),
+            })
+            .await
+    };
+
+    // Windows' installer owns plxd; elsewhere this test's plxd is a cargo build.
+    let newer = update("9912.13123.15959").await.unwrap_err();
+    assert_eq!(kind(&newer), ErrorKind::HostUpdateFailed);
+    if cfg!(windows) {
+        assert!(newer.message.contains("Windows"), "{}", newer.message);
+        return;
+    }
+    assert!(
+        newer.message.contains("development build"),
+        "{}",
+        newer.message
+    );
+
+    let older = update("0.0.1").await.unwrap_err();
+    assert!(
+        older.message.contains("never downgrades"),
+        "{}",
+        older.message
+    );
+    let same = update(plxd::version()).await.unwrap();
+    assert_eq!(same.restart, HostUpdateRestart::UpToDate);
+    let invalid = update("latest").await.unwrap_err();
+    assert_eq!(kind(&invalid), ErrorKind::HostUpdateFailed);
+
+    let health = client
+        .call::<HostHealth>(HostHealthParams {})
+        .await
+        .unwrap();
+    assert_eq!(health.store, StoreState::Ok);
 }
 
 #[tokio::test]

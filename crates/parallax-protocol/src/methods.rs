@@ -46,11 +46,11 @@ use crate::{
     EventsSubscribeResult, EventsUnsubscribeParams, EventsUnsubscribeResult, GitStatus,
     GithubInstallParams, GithubSignIn, GithubSignInCancelParams, GithubSignInCancelResult,
     GithubSignInParams, GithubStatus, GithubStatusParams, HostHealthParams, HostHealthResult,
-    HostSettings, HostSettingsGetParams, HostSettingsSetParams, HostVersionParams,
-    HostVersionResult, InboxListParams, InboxListResult, InboxSeenParams, InboxSeenResult,
-    InitializeParams, InitializeResult, LandApproveParams, LandQueueParams, LandResult,
-    LandSendBackParams, MemoryDeleteParams, MemoryDeleteResult, MemoryListParams, MemoryListResult,
-    MemoryProposeParams, MemoryProposeResult, MemoryReadParams, MemoryReadResult,
+    HostSettings, HostSettingsGetParams, HostSettingsSetParams, HostUpdateParams, HostUpdateResult,
+    HostVersionParams, HostVersionResult, InboxListParams, InboxListResult, InboxSeenParams,
+    InboxSeenResult, InitializeParams, InitializeResult, LandApproveParams, LandQueueParams,
+    LandResult, LandSendBackParams, MemoryDeleteParams, MemoryDeleteResult, MemoryListParams,
+    MemoryListResult, MemoryProposeParams, MemoryProposeResult, MemoryReadParams, MemoryReadResult,
     MemoryWriteParams, MemoryWriteResult, OrchestrationCommand, PrActParams, PrDiffResult,
     PrViewParams, PrWatchResult, PrWatchesParams, PrWatchesResult, PreviewCallParams,
     PreviewCallResult, PreviewFrameParams, PreviewFrameResult, PreviewInputParams,
@@ -155,6 +155,10 @@ method_table! {
         /// `host/version`: plxd's release and protocol versions, operating system, and CPU
         /// architecture.
         HostVersion = "host/version": HostVersionParams => HostVersionResult;
+        /// `host/update`: installs plxd `version` from its GitHub release, checked against the
+        /// release's SHA-256, and restarts into it once no agent's turn is running. It never
+        /// downgrades. Gated on the `hostUpdate` capability (PLX-700, decision 0066).
+        HostUpdate = "host/update": HostUpdateParams => HostUpdateResult;
         /// `project/list`: every project, and the event log's `seq` from before the read.
         ProjectList = "project/list": ProjectListParams => ProjectListResult;
         /// `project/create`: creates a project, idempotent on its client-generated id.
@@ -563,6 +567,7 @@ mod tests {
                 "initialize",
                 "host/health",
                 "host/version",
+                "host/update",
                 "project/list",
                 "project/create",
                 "events/subscribe",

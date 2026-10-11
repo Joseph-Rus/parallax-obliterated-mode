@@ -14,6 +14,7 @@ const bridge: Partial<ParallaxBridge> = {
   setThemeSource: vi.fn(),
   connectionState: async () => ({ status: "connecting" }),
   onConnectionState: () => () => {},
+  onHostUpdate: () => () => {},
   hosts: async () => [],
   onHosts: () => () => {},
   onConnect: () => () => {},

@@ -118,7 +118,8 @@ pub use handshake::{
 };
 pub use host::{
     HostHealthParams, HostHealthResult, HostQueues, HostSettings, HostSettingsGetParams,
-    HostSettingsSetParams, HostVersionParams, HostVersionResult, QueueStats, StoreState,
+    HostSettingsSetParams, HostUpdateParams, HostUpdateRestart, HostUpdateResult,
+    HostVersionParams, HostVersionResult, QueueStats, StoreState,
 };
 pub use id::InvalidId;
 pub use inbox::{

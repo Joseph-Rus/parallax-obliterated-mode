@@ -117,6 +117,7 @@ beforeEach(() => {
     }),
   };
   window.parallax = {
+    onHostUpdate: () => () => {},
     onProfile: () => () => {},
     platform: "darwin",
     setThemeSource: vi.fn(),

@@ -38,6 +38,12 @@ export type ParallaxRequests = {
 	 */
 	"host/version": { params: HostVersionParams, result: HostVersionResult },
 	/**
+	 * `host/update`: installs plxd `version` from its GitHub release, checked against the
+	 * release's SHA-256, and restarts into it once no agent's turn is running. It never
+	 * downgrades. Gated on the `hostUpdate` capability (PLX-700, decision 0066).
+	 */
+	"host/update": { params: HostUpdateParams, result: HostUpdateResult },
+	/**
 	 * `project/list`: every project, and the event log's `seq` from before the read.
 	 */
 	"project/list": { params: ProjectListParams, result: ProjectListResult },
@@ -630,6 +636,7 @@ export const REQUEST_METHODS = [
 	"initialize",
 	"host/health",
 	"host/version",
+	"host/update",
 	"project/list",
 	"project/create",
 	"events/subscribe",
@@ -988,6 +995,49 @@ export type HostVersionResult = {
 	 */
 	arch: string,
 };
+
+/**
+ * Params of `host/update`, behind the `hostUpdate` capability (PLX-700, decision 0066): install
+ * plxd `version` from its GitHub release and restart into it.
+ */
+export type HostUpdateParams = {
+	/**
+	 * The release to install, such as `2610.10912.13045-nightly`: the app's own version.
+	 */
+	version: string,
+};
+
+/**
+ * Result of `host/update`: plxd installed the release and says when it restarts into it. Every
+ * failure, such as a download that fails, a checksum that doesn't match, a version older than
+ * plxd's, or a host plxd can't update itself on, is a `hostUpdateFailed` error whose message is
+ * for people.
+ */
+export type HostUpdateResult = {
+	/**
+	 * The version plxd installed, or already runs.
+	 */
+	version: string,
+	/**
+	 * When plxd hands over to it.
+	 */
+	restart: HostUpdateRestart,
+	/**
+	 * Agents with a turn running, which plxd waits for under `afterRuns`.
+	 */
+	runningAgents: number,
+	/**
+	 * What happened, for people.
+	 */
+	message: string,
+};
+
+/**
+ * When plxd restarts into the version `host/update` installed.
+ *
+ * A newer plxd may send values that are not listed here. Treat those as unknown.
+ */
+export type HostUpdateRestart = "now" | "afterRuns" | "upToDate";
 
 /**
  * Params of `project/list`.
@@ -7421,7 +7471,7 @@ export type ErrorData = {
  * A newer plxd may send kinds that are not listed here. Treat those as unknown errors, so a
  * `switch` over this type must not end in an exhaustiveness assertion.
  */
-export type ErrorKind = "notInitialized" | "incompatibleProtocol" | "resyncRequired" | "projectNotFound" | "accountNotFound" | "keychainUnavailable" | "idConflict" | "contextNotFound" | "contextTooLarge" | "notARepository" | "runNotFound" | "runNotResumable" | "workerUnavailable" | "worktreeFailed" | "runAccepted" | "mergeRefused" | "mergeConflict" | "repoNotFound" | "threadNotFound" | "noDefaultAccount" | "unsupportedOption" | "prRefused" | "pushFailed" | "ghUnavailable" | "prFailed" | "imageTooLarge" | "imageNotFound" | "approvalNotFound" | "gitRefused" | "commitFailed" | "githubSetupFailed" | "queuedMessageNotFound" | "landRefused";
+export type ErrorKind = "notInitialized" | "incompatibleProtocol" | "resyncRequired" | "projectNotFound" | "accountNotFound" | "keychainUnavailable" | "idConflict" | "contextNotFound" | "contextTooLarge" | "notARepository" | "runNotFound" | "runNotResumable" | "workerUnavailable" | "worktreeFailed" | "runAccepted" | "mergeRefused" | "mergeConflict" | "repoNotFound" | "threadNotFound" | "noDefaultAccount" | "unsupportedOption" | "prRefused" | "pushFailed" | "ghUnavailable" | "prFailed" | "imageTooLarge" | "imageNotFound" | "approvalNotFound" | "gitRefused" | "commitFailed" | "githubSetupFailed" | "queuedMessageNotFound" | "landRefused" | "hostUpdateFailed";
 
 /**
  * The `detail` of `incompatibleProtocol`. Its shape never changes, so every client can read it

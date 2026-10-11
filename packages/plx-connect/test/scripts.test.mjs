@@ -41,6 +41,8 @@ test("macOS copies the app out of the dmg and replaces only another version", ()
 test("Linux downloads the static plxd into ~/.local/bin and turns on lingering", () => {
   assert.match(linux, /curl -fsSL --retry 3 -o "\$HOME\/\.local\/bin\/\.plxd\.new" "\$url"/);
   assert.match(linux, /mv -f "\$HOME\/\.local\/bin\/\.plxd\.new" "\$HOME\/\.local\/bin\/plxd"/);
+  assert.match(linux, /^version='2610\.10522\.11930-nightly'$/m);
+  assert.match(linux, /printf '%s\\n' "\$version" > "\$HOME\/\.local\/bin\/plxd\.version"/);
   assert.doesNotMatch(linux, /AppImage/);
   assert.match(linux, /loginctl enable-linger/);
 });

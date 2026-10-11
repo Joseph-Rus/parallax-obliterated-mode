@@ -86,6 +86,50 @@ pub struct HostVersionResult {
     pub arch: String,
 }
 
+/// Params of `host/update`, behind the `hostUpdate` capability (PLX-700, decision 0066): install
+/// plxd `version` from its GitHub release and restart into it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HostUpdateParams {
+    /// The release to install, such as `2610.10912.13045-nightly`: the app's own version.
+    pub version: String,
+}
+
+/// Result of `host/update`: plxd installed the release and says when it restarts into it. Every
+/// failure, such as a download that fails, a checksum that doesn't match, a version older than
+/// plxd's, or a host plxd can't update itself on, is a `hostUpdateFailed` error whose message is
+/// for people.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HostUpdateResult {
+    /// The version plxd installed, or already runs.
+    pub version: String,
+    /// When plxd hands over to it.
+    pub restart: HostUpdateRestart,
+    /// Agents with a turn running, which plxd waits for under `afterRuns`.
+    pub running_agents: u32,
+    /// What happened, for people.
+    pub message: String,
+}
+
+/// When plxd restarts into the version `host/update` installed.
+///
+/// A newer plxd may send values that are not listed here. Treat those as unknown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum HostUpdateRestart {
+    /// In a moment, right after the answer: connections drop and reconnect to the new plxd.
+    Now,
+    /// Once the last running agent's turn ends, since restarting would cut it off.
+    AfterRuns,
+    /// Never: plxd already runs that version, or a newer one with the same number.
+    UpToDate,
+    /// A value this version does not know yet.
+    #[serde(other)]
+    #[ts(skip)]
+    Unknown,
+}
+
 /// Params of `host/settings/get`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -182,7 +226,41 @@ pub struct HostSettings {
 mod tests {
     use serde_json::json;
 
-    use super::{HostHealthParams, StoreState};
+    use super::{HostHealthParams, HostUpdateRestart, HostUpdateResult, StoreState};
+
+    #[test]
+    fn update_results_round_trip_and_unknown_restarts_decode_as_unknown() {
+        let result = HostUpdateResult {
+            version: "2610.10912.13045".to_owned(),
+            restart: HostUpdateRestart::AfterRuns,
+            running_agents: 2,
+            message: "Installed plxd 2610.10912.13045.".to_owned(),
+        };
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "version": "2610.10912.13045",
+                "restart": "afterRuns",
+                "runningAgents": 2,
+                "message": "Installed plxd 2610.10912.13045."
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<HostUpdateResult>(value).unwrap(),
+            result
+        );
+        for (restart, name) in [
+            (HostUpdateRestart::Now, "now"),
+            (HostUpdateRestart::UpToDate, "upToDate"),
+        ] {
+            assert_eq!(serde_json::to_value(restart).unwrap(), json!(name));
+        }
+        assert_eq!(
+            serde_json::from_value::<HostUpdateRestart>(json!("atLogin")).unwrap(),
+            HostUpdateRestart::Unknown
+        );
+    }
 
     #[test]
     fn unknown_store_states_decode_as_unknown() {

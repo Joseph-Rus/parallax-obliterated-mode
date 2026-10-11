@@ -98,6 +98,7 @@ beforeEach(() => {
       capabilities,
     }),
     onConnectionState: () => () => {},
+    onHostUpdate: () => () => {},
     watch: fakeWatch(() => window.parallax),
     subscribe: () => () => {},
     request,
