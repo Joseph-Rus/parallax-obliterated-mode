@@ -111,6 +111,43 @@ impl Store {
         Ok(Self { conn })
     }
 
+    /// Turns SQLite's `secure_delete` on or off for this connection: on, deleted content is
+    /// overwritten with zeros rather than left in freed pages, as when wiping a secret (PLX-648).
+    ///
+    /// # Errors
+    ///
+    /// A database error.
+    pub fn set_secure_delete(&self, on: bool) -> Result<(), StoreError> {
+        self.conn
+            .pragma_update(None, "secure_delete", if on { "ON" } else { "OFF" })?;
+        Ok(())
+    }
+
+    /// Sets how long this connection waits for another's lock before failing with `busy`.
+    ///
+    /// # Errors
+    ///
+    /// A database error.
+    pub fn set_busy_timeout(&self, timeout: Duration) -> Result<(), StoreError> {
+        self.conn.busy_timeout(timeout)?;
+        Ok(())
+    }
+
+    /// Rebuilds the database with `VACUUM`, which leaves no freed page behind, then checkpoints
+    /// the WAL and truncates it. Returns whether the checkpoint finished: a reader still on an
+    /// older snapshot stops it.
+    ///
+    /// # Errors
+    ///
+    /// A database error, such as an open transaction.
+    pub fn vacuum(&self) -> Result<bool, StoreError> {
+        self.conn.execute_batch("VACUUM")?;
+        let busy: i64 = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))?;
+        Ok(busy == 0)
+    }
+
     /// Starts a read transaction (`BEGIN`), so several reads see one snapshot. The event log's
     /// own paged readers use it so a compact sweep cannot land between their pages (0052).
     ///

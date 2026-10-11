@@ -56,6 +56,11 @@ const CANCELLED: u8 = 2;
 
 type Job = Box<dyn FnOnce(&mut Tx) + Send>;
 
+/// How long a test holds [`StoreHandle::vacuum`]'s job on the store's thread before it runs, so
+/// a write can arrive while it does.
+#[cfg(test)]
+pub(crate) static VACUUM_HOLD_MS: AtomicU64 = AtomicU64::new(0);
+
 enum Message {
     /// A job and when it was sent.
     Job(Instant, Job),
@@ -547,6 +552,28 @@ impl StoreHandle {
                 Err(unavailable())
             }
         })
+    }
+
+    /// Runs [`Store::vacuum`] on the store's thread, outside a transaction as `VACUUM` needs, so
+    /// writes queue behind it rather than fail on its lock.
+    pub async fn vacuum(&self) -> Result<bool, ErrorObject> {
+        let State::Open { jobs, .. } = &self.state else {
+            return Err(unavailable());
+        };
+        let (reply, result) = oneshot::channel();
+        let job: Job = Box::new(move |tx| {
+            #[cfg(test)]
+            std::thread::sleep(Duration::from_millis(
+                VACUUM_HOLD_MS.load(Ordering::Relaxed),
+            ));
+            let _ = reply.send(tx.store.vacuum().map_err(|error| failed(&error)));
+        });
+        self.counters.sending();
+        if jobs.send(Message::Job(Instant::now(), job)).is_err() {
+            self.counters.unsent();
+            return Err(unavailable());
+        }
+        result.await.unwrap_or_else(|_| Err(unavailable()))
     }
 
     /// Stores and publishes one event in a job of its own, and returns its `seq`. With the store
