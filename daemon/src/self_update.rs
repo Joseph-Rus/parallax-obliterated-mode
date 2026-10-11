@@ -26,7 +26,7 @@ use std::time::Duration;
 use parallax_protocol::jsonrpc::ErrorObject;
 use parallax_protocol::{ErrorKind, HostUpdateParams, HostUpdateRestart, HostUpdateResult};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::backend::process::Launcher;
 use crate::server::Daemon;
@@ -115,7 +115,7 @@ impl SelfUpdate {
 
     /// A self-update that installs from `releases` for the plxd at `exe` running `current`, in
     /// `home`, and never restarts.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn for_tests(
         launcher: Launcher,
         releases: &str,
@@ -450,6 +450,7 @@ fn make_executable(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+#[expect(clippy::unnecessary_wraps, reason = "matches the Unix signature")]
 fn make_executable(_: &Path) -> Result<(), String> {
     Ok(())
 }
@@ -468,6 +469,13 @@ async fn handover_when_idle(daemon: Arc<Daemon>) {
 
 /// Restarts into `program`: through the login service when it's installed and moving it works,
 /// else by shutting down, after which `main` starts `program serve` ([`take_handover`]).
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "linux")),
+    expect(
+        clippy::unused_async,
+        reason = "awaits the service handover on macOS and Linux"
+    )
+)]
 async fn hand_over(daemon: &Arc<Daemon>, program: PathBuf) {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     match service_handover(daemon, &program).await {
@@ -475,7 +483,7 @@ async fn hand_over(daemon: &Arc<Daemon>, program: PathBuf) {
         Ok(true) => return,
         Ok(false) => {}
         Err(error) => {
-            warn!(%error, "couldn't hand plxd over to its login service; restarting it instead");
+            tracing::warn!(%error, "couldn't hand plxd over to its login service; restarting it instead");
         }
     }
     info!(program = %program.display(), "shutting down to restart into the plxd update");
