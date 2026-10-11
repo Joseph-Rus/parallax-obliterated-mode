@@ -26,7 +26,7 @@ import { NewThreadPicker } from "./NewThreadPicker";
 import { Notifications } from "./notifications";
 import { localId, useHosts } from "./hosts";
 import { iconImageBytes } from "./images";
-import { ThreadDetails } from "./ThreadDetails";
+import { ThreadDetails, ThreadDetailsButton, useThreadDetailsOpen } from "./ThreadDetails";
 import { AgentsPanel, useProjectAgents } from "./ProjectAgents";
 import { ProjectChat } from "./ProjectChat";
 import { ProjectHome, waitingCount } from "./ProjectHome";
@@ -146,6 +146,8 @@ export function App() {
       [panelKey]: typeof next === "function" ? next(panels[panelKey] ?? false) : next,
     }));
   const [panelExpanded, setPanelExpanded] = useState(false);
+  // Thread details, docked at the thread's right, shown or hidden for every thread.
+  const [detailsOpen, toggleDetails] = useThreadDetailsOpen();
   // The folders whose terminal drawer is open, by key (ThreadTerminal.tsx).
   const [drawers, setDrawers] = useState<ReadonlySet<string>>(new Set());
   // The page a repository action last opened in the side panel's Browser view.
@@ -763,56 +765,7 @@ export function App() {
               )}
               <Breadcrumb items={crumbs} />
               <div className="ml-auto flex shrink-0 items-center gap-2">
-                <ThreadDetails
-                  key={panelKey}
-                  hostName={host.name}
-                  hostId={host.id}
-                  folder={folder?.path === "~" ? undefined : folder?.path}
-                  worktree={
-                    !!threadRun?.worktreePath &&
-                    threadRun.worktreePath !==
-                      threads.state.repos.find((repo) => repo.id === group.id)?.path
-                  }
-                  actions={
-                    selection.kind !== "project" && group.id !== noRepo
-                      ? {
-                          hostId: host.id,
-                          repoId: group.id,
-                          canRun: !!folder,
-                          onRun: runAction,
-                        }
-                      : undefined
-                  }
-                  git={
-                    selection.kind === "thread"
-                      ? {
-                          hostId: host.id,
-                          run: threadRun,
-                          title: threads.state.titles[selection.threadId],
-                          onPrOpened: linksPrs ? openPr : undefined,
-                          onSetUpGithub: setUpGithub,
-                          onChanges: () => {
-                            setPanelOpen(true);
-                            setShowChanges({});
-                          },
-                        }
-                      : undefined
-                  }
-                  lineage={
-                    openThread
-                      ? {
-                          state: threads.state,
-                          includeThreads: "threadLineage" in threads.capabilities,
-                          root: lineage ? rootOf(threads.state, openThread) : openThread,
-                          openId: openThread.id,
-                          onOpen: openThreadId,
-                          subagents: subagents.filter((sub) => !sub.parent),
-                          activeSubagent: subagentOpen,
-                          onOpenSubagent: (callId) => openSubagent(openThread.id, callId),
-                        }
-                      : undefined
-                  }
-                />
+                <ThreadDetailsButton open={detailsOpen} onToggle={toggleDetails} />
                 {folder && (
                   <IconButton
                     label={drawerOpen ? "Hide terminal" : "Show terminal"}
@@ -838,180 +791,241 @@ export function App() {
                 )}
               </div>
             </TopBar>
-            {selection.kind === "thread" ? (
-              <div
-                className="relative flex min-h-0 flex-1"
-                onDragOver={(e) => {
-                  const side = dropSideOf(e);
-                  setDropSide(side);
-                  if (side === undefined) return;
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "copy";
-                }}
-                onDragLeave={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node | null))
-                    setDropSide(undefined);
-                }}
-                onDrop={(e) => {
-                  const side = dropSideOf(e);
-                  setDropSide(undefined);
-                  const thread = draggedThread(e.dataTransfer);
-                  if (side === undefined || !thread) return;
-                  e.preventDefault();
-                  // A split's threads are one computer's.
-                  if (thread.hostId === host.id) openBeside(thread.runId, side);
-                }}
-              >
-                {dropSide !== undefined && (
+            <div className="flex min-h-0 flex-1">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                {selection.kind === "thread" ? (
                   <div
-                    aria-hidden
-                    className={`pointer-events-none absolute inset-y-2 z-20 grid w-[calc(50%-1rem)] place-items-center rounded-xl border-2 border-dashed border-accent bg-background/85 backdrop-blur-sm ${dropSide === 0 ? "left-2" : "right-2"}`}
+                    className="relative flex min-h-0 flex-1"
+                    onDragOver={(e) => {
+                      const side = dropSideOf(e);
+                      setDropSide(side);
+                      if (side === undefined) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "copy";
+                    }}
+                    onDragLeave={(e) => {
+                      if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+                        setDropSide(undefined);
+                    }}
+                    onDrop={(e) => {
+                      const side = dropSideOf(e);
+                      setDropSide(undefined);
+                      const thread = draggedThread(e.dataTransfer);
+                      if (side === undefined || !thread) return;
+                      e.preventDefault();
+                      // A split's threads are one computer's.
+                      if (thread.hostId === host.id) openBeside(thread.runId, side);
+                    }}
                   >
-                    <span className="flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-foreground [&_svg]:size-4">
-                      <Columns2 />
-                      {paired ? "Open here" : "Open side by side"}
-                    </span>
-                  </div>
-                )}
-                {panes.map((threadId, side) => {
-                  const focused = threadId === selection.threadId;
-                  const paneThread = threads.state.threads.find((t) => t.id === threadId);
-                  const paneParent =
-                    "threadLineage" in threads.capabilities && paneThread
-                      ? lineageOf(threads.state, paneThread)?.parent?.id
-                      : undefined;
-                  const title = threads.state.titles[threadId];
-                  // Keyed, so another run starts from an empty transcript.
-                  return (
-                    <section
-                      key={`${host.id}/${threadId}`}
-                      data-pane={paired ? side : undefined}
-                      data-focused={paired && focused ? "" : undefined}
-                      aria-label={paired ? (title ?? "Thread") : undefined}
-                      // Clicking or tabbing into a side focuses it.
-                      onPointerDownCapture={() => !focused && openThreadId(threadId)}
-                      // Not focus the window or the app gives with nothing focused before, such as a
-                      // notification's click or an approval card's.
-                      onFocusCapture={(e) => !focused && e.relatedTarget && openThreadId(threadId)}
-                      className={`flex min-w-0 flex-1 flex-col ${side > 0 ? "border-l border-border" : ""}`}
-                    >
-                      {paired && (
-                        <PaneHeader
-                          side={side as 0 | 1}
-                          title={title ?? "Thread"}
-                          repo={threads.state.repos.find((r) => r.id === paneThread?.repo)}
-                          focused={focused}
-                          onClose={() => closePane(threadId)}
-                        />
-                      )}
-                      <AgentChat
-                        hostId={host.id}
-                        host={host}
-                        runId={threadId}
-                        title={title}
-                        notice={notice?.threadId === threadId ? notice.text : undefined}
-                        prompt={threads.state.runs[threadId]?.prompt}
-                        // The list's status goes stale once the run moves on, so only a start says so.
-                        going={focused && selection.started}
-                        noRepo={
-                          (paneThread ? groupOf(threads.state, paneThread) : noRepo) === noRepo
-                        }
-                        pullRequests={
-                          focused &&
-                          prs.urls.length > 0 && <PullRequestChip prs={prs} onOpen={openPr} />
-                        }
-                        onPrOpened={linksPrs ? openPr : undefined}
-                        onSetUpGithub={setUpGithub}
-                        compose={focused ? compose : undefined}
-                        onComposed={composed}
-                        threadLinks={threadLinks}
-                        subagent={focused ? selection.subagent : undefined}
-                        onOpenSubagent={openSubagent}
-                        onSubagents={reportNative}
-                        onPreview={(runId, reveal) => void showPreviews(runId, reveal)}
-                        strip={
-                          paneParent && (
-                            <ChildStrip
-                              name={threads.state.titles[paneParent] ?? "Thread"}
-                              onOpenName={() => openThreadId(paneParent)}
-                              onBack={() => openThreadId(paneParent)}
+                    {dropSide !== undefined && (
+                      <div
+                        aria-hidden
+                        className={`pointer-events-none absolute inset-y-2 z-20 grid w-[calc(50%-1rem)] place-items-center rounded-xl border-2 border-dashed border-accent bg-background/85 backdrop-blur-sm ${dropSide === 0 ? "left-2" : "right-2"}`}
+                      >
+                        <span className="flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-foreground [&_svg]:size-4">
+                          <Columns2 />
+                          {paired ? "Open here" : "Open side by side"}
+                        </span>
+                      </div>
+                    )}
+                    {panes.map((threadId, side) => {
+                      const focused = threadId === selection.threadId;
+                      const paneThread = threads.state.threads.find((t) => t.id === threadId);
+                      const paneParent =
+                        "threadLineage" in threads.capabilities && paneThread
+                          ? lineageOf(threads.state, paneThread)?.parent?.id
+                          : undefined;
+                      const title = threads.state.titles[threadId];
+                      // Keyed, so another run starts from an empty transcript.
+                      return (
+                        <section
+                          key={`${host.id}/${threadId}`}
+                          data-pane={paired ? side : undefined}
+                          data-focused={paired && focused ? "" : undefined}
+                          aria-label={paired ? (title ?? "Thread") : undefined}
+                          // Clicking or tabbing into a side focuses it.
+                          onPointerDownCapture={() => !focused && openThreadId(threadId)}
+                          // Not focus the window or the app gives with nothing focused before, such as a
+                          // notification's click or an approval card's.
+                          onFocusCapture={(e) =>
+                            !focused && e.relatedTarget && openThreadId(threadId)
+                          }
+                          className={`flex min-w-0 flex-1 flex-col ${side > 0 ? "border-l border-border" : ""}`}
+                        >
+                          {paired && (
+                            <PaneHeader
+                              side={side as 0 | 1}
+                              title={title ?? "Thread"}
+                              repo={threads.state.repos.find((r) => r.id === paneThread?.repo)}
+                              focused={focused}
+                              onClose={() => closePane(threadId)}
                             />
-                          )
-                        }
-                        forked={!!paneThread?.forkedFrom}
-                        onFork={
-                          "threadFork" in threads.capabilities
-                            ? (turnId, choice) => forkThread(threadId, turnId, choice)
-                            : undefined
-                        }
-                      />
-                    </section>
-                  );
-                })}
-              </div>
-            ) : selection.kind === "new" ? (
-              <NewThread
-                hostId={host.id}
-                hosts={hosts}
-                onHostChange={pickHost}
-                groups={groups}
-                groupId={group.id}
-                onGroupChange={(groupId) => setSelection({ kind: "new", groupId })}
-                local={host.id === localId}
-                addRepo={threads.addRepo}
-                start={threads.start}
-                runOptions={
-                  connection?.status === "connected" && "runOptions" in connection.capabilities
-                }
-                onStarted={(threadId, text, background) => {
-                  setNotice(text ? { threadId, text } : undefined);
-                  if (!background) setSelection({ kind: "thread", threadId, started: true });
-                }}
-                disabledReason={offline}
-                threadLinks={threadLinks}
-              />
-            ) : agentId ? (
-              <AgentChat
-                key={`${host.id}/${agentId}`}
-                hostId={host.id}
-                runId={agentId}
-                title={agentTitle}
-                prompt={agent?.prompt}
-                // A Project's subagents are kept current.
-                going={isRunning(agent?.status)}
-                others={othersAsked(agentId)}
-                projectMode={project?.permission}
-                host={host}
-                strip={
+                          )}
+                          <AgentChat
+                            hostId={host.id}
+                            host={host}
+                            runId={threadId}
+                            title={title}
+                            notice={notice?.threadId === threadId ? notice.text : undefined}
+                            prompt={threads.state.runs[threadId]?.prompt}
+                            // The list's status goes stale once the run moves on, so only a start says so.
+                            going={focused && selection.started}
+                            noRepo={
+                              (paneThread ? groupOf(threads.state, paneThread) : noRepo) === noRepo
+                            }
+                            pullRequests={
+                              focused &&
+                              prs.urls.length > 0 && <PullRequestChip prs={prs} onOpen={openPr} />
+                            }
+                            onPrOpened={linksPrs ? openPr : undefined}
+                            onSetUpGithub={setUpGithub}
+                            compose={focused ? compose : undefined}
+                            onComposed={composed}
+                            threadLinks={threadLinks}
+                            subagent={focused ? selection.subagent : undefined}
+                            onOpenSubagent={openSubagent}
+                            onSubagents={reportNative}
+                            onPreview={(runId, reveal) => void showPreviews(runId, reveal)}
+                            strip={
+                              paneParent && (
+                                <ChildStrip
+                                  name={threads.state.titles[paneParent] ?? "Thread"}
+                                  onOpenName={() => openThreadId(paneParent)}
+                                  onBack={() => openThreadId(paneParent)}
+                                />
+                              )
+                            }
+                            forked={!!paneThread?.forkedFrom}
+                            onFork={
+                              "threadFork" in threads.capabilities
+                                ? (turnId, choice) => forkThread(threadId, turnId, choice)
+                                : undefined
+                            }
+                          />
+                        </section>
+                      );
+                    })}
+                  </div>
+                ) : selection.kind === "new" ? (
+                  <NewThread
+                    hostId={host.id}
+                    hosts={hosts}
+                    onHostChange={pickHost}
+                    groups={groups}
+                    groupId={group.id}
+                    onGroupChange={(groupId) => setSelection({ kind: "new", groupId })}
+                    local={host.id === localId}
+                    addRepo={threads.addRepo}
+                    start={threads.start}
+                    runOptions={
+                      connection?.status === "connected" && "runOptions" in connection.capabilities
+                    }
+                    onStarted={(threadId, text, background) => {
+                      setNotice(text ? { threadId, text } : undefined);
+                      if (!background) setSelection({ kind: "thread", threadId, started: true });
+                    }}
+                    disabledReason={offline}
+                    threadLinks={threadLinks}
+                  />
+                ) : agentId ? (
+                  <AgentChat
+                    key={`${host.id}/${agentId}`}
+                    hostId={host.id}
+                    runId={agentId}
+                    title={agentTitle}
+                    prompt={agent?.prompt}
+                    // A Project's subagents are kept current.
+                    going={isRunning(agent?.status)}
+                    others={othersAsked(agentId)}
+                    projectMode={project?.permission}
+                    host={host}
+                    strip={
+                      project && (
+                        <ChildStrip
+                          name={project.name}
+                          icon={<ProjectIcon icon={project.icon} className="size-3.5 shrink-0" />}
+                          onOpenName={() =>
+                            setSelection({ kind: "project", projectId: project.id })
+                          }
+                          onBack={() => openAgent()}
+                        />
+                      )
+                    }
+                  />
+                ) : (
                   project && (
-                    <ChildStrip
-                      name={project.name}
-                      icon={<ProjectIcon icon={project.icon} className="size-3.5 shrink-0" />}
-                      onOpenName={() => setSelection({ kind: "project", projectId: project.id })}
-                      onBack={() => openAgent()}
+                    <ProjectChat
+                      key={`${host.id}/${project.id}`}
+                      hostId={host.id}
+                      project={project}
+                      prompt={
+                        project.coordinator && threads.state.runs[project.coordinator]?.prompt
+                      }
+                      startCoordinator={threads.startCoordinator}
+                      updateProject={threads.updateProject}
+                      host={host}
+                      repo={threads.state.repos.find((r) => r.path === project.repoPath)?.id}
+                      others={othersAsked(project.coordinator)}
+                      agents={agents}
+                      titles={threads.state.titles}
+                      needs={needs}
+                      onOpenRun={(id) => openAgent(id === project.coordinator ? undefined : id)}
                     />
                   )
+                )}
+              </div>
+              <ThreadDetails
+                key={panelKey}
+                open={detailsOpen}
+                hostName={host.name}
+                hostId={host.id}
+                folder={folder?.path === "~" ? undefined : folder?.path}
+                worktree={
+                  !!threadRun?.worktreePath &&
+                  threadRun.worktreePath !==
+                    threads.state.repos.find((repo) => repo.id === group.id)?.path
+                }
+                actions={
+                  selection.kind !== "project" && group.id !== noRepo
+                    ? {
+                        hostId: host.id,
+                        repoId: group.id,
+                        canRun: !!folder,
+                        onRun: runAction,
+                      }
+                    : undefined
+                }
+                git={
+                  selection.kind === "thread"
+                    ? {
+                        hostId: host.id,
+                        run: threadRun,
+                        title: threads.state.titles[selection.threadId],
+                        onPrOpened: linksPrs ? openPr : undefined,
+                        onSetUpGithub: setUpGithub,
+                        onChanges: () => {
+                          setPanelOpen(true);
+                          setShowChanges({});
+                        },
+                      }
+                    : undefined
+                }
+                lineage={
+                  openThread
+                    ? {
+                        state: threads.state,
+                        includeThreads: "threadLineage" in threads.capabilities,
+                        root: lineage ? rootOf(threads.state, openThread) : openThread,
+                        openId: openThread.id,
+                        onOpen: openThreadId,
+                        subagents: subagents.filter((sub) => !sub.parent),
+                        activeSubagent: subagentOpen,
+                        onOpenSubagent: (callId) => openSubagent(openThread.id, callId),
+                      }
+                    : undefined
                 }
               />
-            ) : (
-              project && (
-                <ProjectChat
-                  key={`${host.id}/${project.id}`}
-                  hostId={host.id}
-                  project={project}
-                  prompt={project.coordinator && threads.state.runs[project.coordinator]?.prompt}
-                  startCoordinator={threads.startCoordinator}
-                  updateProject={threads.updateProject}
-                  host={host}
-                  repo={threads.state.repos.find((r) => r.path === project.repoPath)?.id}
-                  others={othersAsked(project.coordinator)}
-                  agents={agents}
-                  titles={threads.state.titles}
-                  needs={needs}
-                  onOpenRun={(id) => openAgent(id === project.coordinator ? undefined : id)}
-                />
-              )
-            )}
+            </div>
           </>
         )}
         {/* Outside the views, so the terminals live on behind Settings. */}
