@@ -10,6 +10,7 @@ import {
   forgetLimits,
   tokenPercent,
   tokensPerSecond,
+  UsageInline,
   UsageRing,
   useComposerUsage,
 } from "./ComposerUsage";
@@ -57,7 +58,7 @@ const line = () =>
     .querySelector("button[aria-expanded]")
     ?.getAttribute("aria-label")
     ?.replace(/^Usage: /, "");
-const card = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
+const card = () => document.querySelector<HTMLElement>('[role="group"][aria-label="Usage"]')!;
 const render = async (
   backend = "claude",
   accountId = backend,
@@ -285,4 +286,58 @@ test("focus leaving closes a card a click kept open", async () => {
     item.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: outside })),
   );
   expect(card().hidden).toBe(true);
+});
+test("the inline row shows each window, says when a used-up one is back, and only reported measurements", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  const week = {
+    ...limit,
+    window: "seven_day",
+    usedPercent: 100,
+    resetsAt: new Date(now + 3_600_000).toISOString(),
+  };
+  window.parallax = {
+    request: vi.fn(async () => ({
+      result: { accounts: [{ accountId: "claude", limits: [limit, week] }] },
+    })),
+  } as unknown as ParallaxBridge;
+  const Inline = (props: Parameters<typeof useComposerUsage>[0]) => {
+    const data = useComposerUsage(props);
+    return data ? <UsageInline data={data} /> : null;
+  };
+  root ??= createRoot(document.body.appendChild(document.createElement("div")));
+  const show = (measured?: RequestUsage) =>
+    act(async () =>
+      root!.render(
+        <Inline
+          hostId="local"
+          connected
+          backend="codex"
+          kind="codex"
+          accountId="codex"
+          usage={measured}
+        />,
+      ),
+    );
+  // Codex: windows from its account, and no timing, so no speed.
+  window.parallax = {
+    request: vi.fn(async () => ({
+      result: { accounts: [{ accountId: "codex", limits: [limit, week] }] },
+    })),
+  } as unknown as ParallaxBridge;
+  await show({ ...usage, backend: "codex", accountId: "codex" });
+  const row = document.querySelector('[role="group"][aria-label="Usage"]')!;
+  expect(row.textContent).toContain("5h35%");
+  expect(row.textContent).toMatch(/Weekback \d/);
+  expect(row.textContent).toContain("25% context·50% cached");
+  expect(row.textContent).not.toContain("tok/s");
+  // Nothing reported: no row at all.
+  forgetLimits();
+  window.parallax = {
+    request: vi.fn(async () => ({ result: { accounts: [] } })),
+  } as unknown as ParallaxBridge;
+  act(() => root?.unmount());
+  root = createRoot(document.body.appendChild(document.createElement("div")));
+  await show();
+  expect(document.querySelector('[role="group"][aria-label="Usage"]')).toBeNull();
 });

@@ -841,3 +841,42 @@ test("choosing an explicit model from a default-model run hides its earlier requ
   await act(async () => opus.click());
   expect(document.body.textContent).not.toContain("50K / 200K · 25%");
 });
+
+test("the appearance setting picks the ring, the inline row, or neither", async () => {
+  window.parallax = {
+    platform: "darwin",
+    request: vi.fn(async () => ({ error: { code: -32601, message: "Unavailable" } })),
+    onConnectionState: () => () => {},
+    connectionState: async () => ({ status: "disconnected" }),
+  } as unknown as ParallaxBridge;
+  const props = {
+    backend: "claude",
+    started: {},
+    hostId: "local",
+    connected: true,
+    accountId: "claude",
+    requestUsage: {
+      kind: "requestUsage" as const,
+      backend: "claude",
+      accountId: "claude",
+      at: "2026-10-11T00:00:00Z",
+      usage: { contextTokens: 50_000, contextWindow: 200_000 },
+    },
+  };
+  const ring = () => document.querySelector('button[aria-label^="Usage:"]');
+  const inline = () =>
+    document.querySelector('form [role="group"][aria-label="Usage"]:not([hidden])');
+  render(async () => undefined, caps, props);
+  expect(ring()?.getAttribute("aria-label")).toBe("Usage: 25% of context used");
+  expect(inline()).toBeNull();
+  await act(async () => setBehaviorPrefs({ composerUsage: "inline" }));
+  expect(ring()).toBeNull();
+  expect(inline()?.textContent).toContain("25% context");
+  // An earlier build's "row" still means the inline row.
+  await act(async () => setBehaviorPrefs({ composerUsage: "row" as never }));
+  expect(inline()).not.toBeNull();
+  await act(async () => setBehaviorPrefs({ composerUsage: "off" }));
+  expect(ring()).toBeNull();
+  expect(inline()).toBeNull();
+  await act(async () => setBehaviorPrefs({ composerUsage: behaviorDefaults.composerUsage }));
+});

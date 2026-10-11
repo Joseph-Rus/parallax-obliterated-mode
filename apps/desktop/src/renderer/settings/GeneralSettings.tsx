@@ -390,16 +390,6 @@ function Behavior() {
           <option value="browser">Side panel browser</option>
         </select>
       </Row>
-      <Row
-        title="Usage in the composer"
-        description="A ring by the attach button fills with the fullest limit window. Hover it for every window and the thread's context, cache, and speed."
-      >
-        <Switch
-          label="Usage in the composer"
-          checked={prefs.composerUsage !== "off"}
-          onChange={(shown) => set({ composerUsage: shown ? "tray" : "off" })}
-        />
-      </Row>
     </Section>
   );
 }

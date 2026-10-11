@@ -49,9 +49,9 @@ export type BehaviorPrefs = {
   sendKey: "enter" | "modEnter";
   /** Where a pull request's Open on GitHub goes: the system browser, or the side panel's Browser. */
   openPrsIn: "external" | "browser";
-  /** Whether the composer shows provider usage as a ring by the attach button. Earlier builds
-   * stored "ring" or "row" here, which read as shown. */
-  composerUsage: "tray" | "off";
+  /** How the composer shows provider usage: a ring by the attach button, a row inside the box,
+   * or not at all. Read it through `usageView`, which also takes earlier builds' values. */
+  composerUsage: "ring" | "inline" | "off";
 };
 
 export const behaviorDefaults: BehaviorPrefs = {
@@ -60,10 +60,17 @@ export const behaviorDefaults: BehaviorPrefs = {
   timeFormat: "system",
   sendKey: "enter",
   openPrsIn: "external",
-  composerUsage: "tray",
+  composerUsage: "ring",
 };
 
 export const behaviorPrefs = stored("parallax.behavior", behaviorDefaults, merged);
+
+/** The usage view a stored value means: earlier builds stored "row" for the inline row and
+ * "tray" for the item that became the ring. */
+export function usageView(stored: string | undefined): BehaviorPrefs["composerUsage"] {
+  if (stored === "off") return "off";
+  return stored === "inline" || stored === "row" ? "inline" : "ring";
+}
 
 export const setBehaviorPrefs = (change: Partial<BehaviorPrefs>) =>
   behaviorPrefs.set({ ...behaviorPrefs.get(), ...change });

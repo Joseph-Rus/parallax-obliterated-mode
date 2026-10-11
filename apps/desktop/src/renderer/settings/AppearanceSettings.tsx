@@ -2,6 +2,7 @@ import { useId } from "react";
 
 import type { ThemePreference } from "../../preload/bridge";
 import { setAppearance, useAppearance, type Appearance } from "../appearance";
+import { behaviorPrefs, setBehaviorPrefs, usageView } from "../prefs";
 import { Segmented } from "../ui";
 import { PageTitle, Row, Section, Switch } from "./parts";
 import { TypographySettings } from "./TypographySettings";
@@ -14,6 +15,14 @@ const accents = { light: "#2563eb", dark: "#3b82f6" };
 const swatches = {
   light: { bg: "#ffffff", side: "#f5f5f5", line: "#e5e5e5", card: "#ffffff", edge: "#e5e5e5" },
   dark: { bg: "#0d0d0d", side: "#000000", line: "#2a2a2a", card: "#171717", edge: "#2a2a2a" },
+};
+
+/** What each usage view shows, for its row's description. */
+const usageDescriptions = {
+  ring: "A ring by the attach button fills with the fullest limit. Hover it for every limit and the thread's context, cache, and speed.",
+  inline:
+    "A row inside the prompt box, under its pickers, with every limit and the thread's context, speed, and cache.",
+  off: "No usage in the composer. The Usage page still has it.",
 };
 
 /** A small drawing of the app in `mode`: the sidebar, a few lines, a card, and the composer. */
@@ -80,6 +89,7 @@ export function AppearanceSettings({
   onThemeChange: (theme: ThemePreference) => void;
 }) {
   const appearance = useAppearance();
+  const composerUsage = usageView(behaviorPrefs.use().composerUsage);
   const set = (change: Partial<Appearance>) => setAppearance(change);
   const scheme = useId();
 
@@ -152,6 +162,18 @@ export function AppearanceSettings({
             ]}
             value={appearance.diffColors}
             onChange={(diffColors) => set({ diffColors })}
+          />
+        </Row>
+        <Row title="Usage in the composer" description={usageDescriptions[composerUsage]}>
+          <Segmented
+            label="Usage in the composer"
+            options={[
+              { value: "ring", name: "Ring" },
+              { value: "inline", name: "Inline" },
+              { value: "off", name: "Off" },
+            ]}
+            value={composerUsage}
+            onChange={(view) => setBehaviorPrefs({ composerUsage: view })}
           />
         </Row>
       </Section>

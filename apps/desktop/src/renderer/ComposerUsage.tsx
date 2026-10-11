@@ -335,6 +335,67 @@ function Meter({ used, className }: { used?: number; className: string }) {
   );
 }
 
+/**
+ * The inline view: one row inside the prompt box, under its pickers. Limit windows sit on the
+ * left, each with a small meter, and a used-up one says when it comes back; the thread's context,
+ * speed, and cache sit on the right. Only what the provider reported shows, and the row is absent
+ * when there is nothing.
+ */
+export function UsageInline({ data }: { data: ComposerUsageData }) {
+  const thread = [
+    data.context && { key: "context", title: data.contextTitle, text: `${data.context} context` },
+    data.speed !== undefined && {
+      key: "speed",
+      title: data.speedTitle,
+      text: speedText(data.speed),
+    },
+    data.cache && { key: "cache", title: data.cacheTitle, text: `${data.cache} cached` },
+  ].filter((item): item is { key: string; title: string; text: string } => !!item);
+  if (data.windows.length === 0 && thread.length === 0) return null;
+  return (
+    <div
+      role="group"
+      aria-label="Usage"
+      className="mx-3 flex flex-wrap items-center justify-between gap-x-5 gap-y-1.5 border-t border-border px-1.5 pt-2 pb-2.5 text-[12px] text-muted-foreground tabular-nums"
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
+        {data.windows.map((w) => {
+          const capped = w.used !== undefined && w.used >= 100;
+          return (
+            <span
+              key={w.key}
+              title={w.title}
+              className={`flex items-center gap-1.5 whitespace-nowrap ${capped ? "text-danger" : ""}`}
+            >
+              {w.name}
+              <Meter used={w.used} className="h-1 w-9" />
+              {w.used === undefined
+                ? "—"
+                : capped && w.resetsAt
+                  ? `back ${resetTime(w.resetsAt, data.now)}`
+                  : `${Math.floor(w.used)}%`}
+            </span>
+          );
+        })}
+      </div>
+      {thread.length > 0 && (
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          {thread.map((item, i) => (
+            <span key={item.key} className="flex items-center gap-2">
+              {i > 0 && (
+                <span aria-hidden className="text-faint-foreground">
+                  ·
+                </span>
+              )}
+              <span title={item.title}>{item.text}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const ringTone = {
   normal: "text-muted-foreground",
   warning: "text-warning",
@@ -434,7 +495,7 @@ export function UsageRing({ data }: { data: ComposerUsageData }) {
       </button>
       <div
         id={card}
-        role="dialog"
+        role="group"
         aria-label="Usage"
         hidden={!open}
         className="absolute right-0 bottom-full z-20 mb-2 w-80 rounded-xl border border-border bg-surface p-3 text-[12.5px] text-foreground shadow-composer tabular-nums"
