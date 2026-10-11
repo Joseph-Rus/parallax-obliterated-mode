@@ -644,15 +644,18 @@ test("thread details opens children and stays docked beside the side panel", asy
   await page.getByRole("button", { name: "Thread details", exact: true, pressed: false }).click();
   // Opening a child keeps the panel docked, on the child.
   // A child that finished waits under the collapsed Previous agents; a working one is listed.
-  const child = async () => {
-    const row = details.getByRole("button", { name: /Write the changelog/ });
-    const previous = details.getByRole("button", { name: /^Previous agents/ });
-    await expect(row.or(previous).first()).toBeVisible();
-    if (!(await row.isVisible()) && (await previous.getAttribute("aria-expanded")) === "false")
-      await previous.click();
-    return row;
-  };
-  await (await child()).click();
+  // It can finish between looking and clicking, moving its row, so the pair is retried.
+  const openChild = () =>
+    expect(async () => {
+      const previous = details.getByRole("button", { name: /^Previous agents/ });
+      if (
+        (await previous.isVisible()) &&
+        (await previous.getAttribute("aria-expanded")) === "false"
+      )
+        await previous.click();
+      await details.getByRole("button", { name: /Write the changelog/ }).click({ timeout: 2000 });
+    }).toPass();
+  await openChild();
   await expect(details).toBeVisible();
   await expect(details.getByRole("button", { name: /Write the changelog/ })).toHaveAttribute(
     "aria-current",
@@ -677,7 +680,7 @@ test("thread details opens children and stays docked beside the side panel", asy
   }
   await expect(details).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("thread-details.png") });
-  await (await child()).click();
+  await openChild();
   await expect(page.getByRole("region", { name: "Child thread" })).toBeVisible();
   await page.getByRole("button", { name: "Thread details", exact: true, pressed: true }).click();
   await expect(details).toBeHidden();

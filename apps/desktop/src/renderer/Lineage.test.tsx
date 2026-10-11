@@ -254,6 +254,30 @@ test("details lists every current and previous child, including descendants, wit
   expect(chips()).toContain("e*");
 });
 
+test("opening a finished child shows Previous agents by itself", async () => {
+  await renderApp();
+  await click(sidebarRow("Ship lineage"));
+  expect(previousToggle()!.getAttribute("aria-expanded")).toBe("false");
+  // From the parent, Mod+Alt+Left opens the last child, the failed one.
+  await press("ArrowLeft");
+  expect(previousToggle()!.getAttribute("aria-expanded")).toBe("true");
+  expect(chips()).toEqual(["Style the chips", "Write the test*"]);
+});
+
+test("a working grandchild of a finished child isn't indented under the collapsed row", async () => {
+  threads.push(
+    thread("done", 10, { parent: "parent", title: "done" }),
+    thread("busy", 11, { parent: "done", title: "busy" }),
+  );
+  runs.push(run("done", "completed"), run("busy", "running"));
+  await renderApp();
+  await click(sidebarRow("Ship lineage"));
+  expect(chips()).toEqual(["Style the chips", "busy"]);
+  expect(chip("busy")!.getAttribute("style")).toContain("padding-left: 8px");
+  await openPrevious();
+  expect(chip("done")!.getAttribute("style")).toContain("padding-left: 8px");
+});
+
 test("Mod+Alt+Up goes to the parent, and Mod+Alt+Right and Left cycle through the children", async () => {
   await renderApp();
   await click(sidebarRow("Ship lineage"));

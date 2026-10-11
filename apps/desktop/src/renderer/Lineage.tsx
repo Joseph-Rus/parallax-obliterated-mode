@@ -1,5 +1,5 @@
 import { Bot, ChevronDown, Lock } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import type { AgentRun, Thread } from "../protocol/generated/protocol";
 import { attentionOf, type Attention } from "./attention";
@@ -79,6 +79,7 @@ export function LineageSection({
   visible: boolean;
   includeThreads?: boolean;
 }) {
+  const previousId = useId();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!visible) return;
@@ -215,7 +216,7 @@ export function LineageSection({
           <button
             type="button"
             aria-expanded={expanded}
-            aria-controls={`${root.id}-previous`}
+            aria-controls={previousId}
             onClick={() => setExpanded((was) => !was)}
             className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-[12.5px] text-faint-foreground hover:bg-hover"
           >
@@ -227,11 +228,9 @@ export function LineageSection({
               className={`size-3.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
             />
           </button>
-          {expanded && (
-            <ul id={`${root.id}-previous`} className="flex flex-col gap-px">
-              {previous.map(rowView)}
-            </ul>
-          )}
+          <ul id={previousId} hidden={!expanded} className="flex flex-col gap-px">
+            {expanded && previous.map(rowView)}
+          </ul>
         </>
       )}
       {rows.length === 0 && (
