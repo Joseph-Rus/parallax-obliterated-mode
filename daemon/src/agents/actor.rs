@@ -2693,15 +2693,17 @@ impl Actor {
             usage_totals: totals.into_iter().map(model_usage).collect(),
             fork: false,
             at: None,
+            fallback: None,
         })
     }
 
     /// The first message and the session of the run's next CLI, on `prepared`'s backend, and the
     /// backend a handoff's conversation ran on: `text` with the run's session `session_id` to
-    /// resume, where a revert went back to ([`revert::rewound`]), or with a fork's parent session
-    /// to fork ([`Actor::fork_source`]), or else a new session: told the conversation so far,
-    /// which ran on `from`, or for a fork's first message on its parent's backend, or told
-    /// nothing after a revert to the thread's start.
+    /// resume, where a revert went back to ([`revert::rewound`]), with a handoff for a new session
+    /// should the resume fail on a backend that takes one, or with a fork's parent session to
+    /// fork ([`Actor::fork_source`]), or else a new session: told the conversation so far, which
+    /// ran on `from`, or for a fork's first message on its parent's backend, or told nothing
+    /// after a revert to the thread's start.
     async fn opening(
         &mut self,
         session_id: Option<String>,
@@ -2722,11 +2724,26 @@ impl Actor {
         }
         if let Some(session_id) = session_id {
             info!(run = %self.id, "resuming an agent run's session");
+            // ponytail: every Codex resume reads the run's whole log for a fallback it rarely
+            // uses; build it only after `thread/resume` fails if long threads make this slow.
+            // The fallback never fails a resume that would succeed without it.
+            let fallback = if prepared.resolved.backend().resume_fallback() {
+                match self.handoff_prompt(&from, &text, &prepared.place).await {
+                    Ok(prompt) => Some(prompt),
+                    Err(error) => {
+                        warn!(run = %self.id, error = %error.message, "could not build a resume's fallback handoff");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
             let resume = Resume {
                 at: match rewound {
                     Some(revert::Rewound::At(at)) => Some(at),
                     _ => None,
                 },
+                fallback,
                 ..self.resume_of(session_id).await?
             };
             return Ok((text, Some(resume), None));
