@@ -1433,7 +1433,7 @@ export const RowView = memo(function RowView({
         row.partial && row.text.length >= SPLIT_FROM ? (
           <StreamingMarkdown text={row.text} />
         ) : (
-          <MarkdownText text={row.text} />
+          <MarkdownText text={row.text} streaming={row.partial} />
         );
       if (!reply || row.partial) return body;
       return (
@@ -2465,12 +2465,15 @@ const textOf = (node: TextNode): string => node.value ?? node.children?.map(text
 export const MarkdownText = memo(function MarkdownText({
   text,
   components,
+  streaming,
 }: {
   text: string;
   components?: Components;
+  /** Hides LaTeX that fails to typeset, since a streaming message's math may be unfinished. */
+  streaming?: boolean;
 }) {
   return (
-    <div className="markdown">
+    <div className={streaming ? "markdown streaming" : "markdown"}>
       <Markdown
         remarkPlugins={gfm}
         rehypePlugins={highlight}
@@ -2482,7 +2485,36 @@ export const MarkdownText = memo(function MarkdownText({
   );
 });
 
-const gfm = [remarkGfm, remarkMath];
+type MathNode = {
+  type: string;
+  children?: MathNode[];
+  position?: { start: { offset?: number } };
+  data?: { hProperties?: { className?: string[] } };
+};
+
+/**
+ * remark-math reads `$$...$$` within a line as inline math, which typesets small and cramped.
+ * Models write display equations that way, so mark those as display math.
+ */
+function displayDoubleDollar() {
+  return (tree: MathNode, file: { value: unknown }) => {
+    const source = String(file.value);
+    const walk = (node: MathNode) => {
+      const props = node.data?.hProperties;
+      if (
+        node.type === "inlineMath" &&
+        props &&
+        source.startsWith("$$", node.position?.start.offset)
+      ) {
+        props.className = ["language-math", "math-display"];
+      }
+      node.children?.forEach(walk);
+    };
+    walk(tree);
+  };
+}
+
+const gfm = [remarkGfm, remarkMath, displayDoubleDollar];
 
 /**
  * A streaming agent message, rendered as MarkdownText renders it, but block by block: an
@@ -2495,7 +2527,7 @@ function StreamingMarkdown({ text }: { text: string }) {
   const blocks = useRef<string[]>([]);
   blocks.current = markdownBlocks(text, blocks.current);
   return (
-    <div className="markdown">
+    <div className="markdown streaming">
       {blocks.current.map((block, i) => (
         <MarkdownBlock key={i} text={block} />
       ))}
