@@ -10,6 +10,8 @@ import {
   ChevronDown,
   Columns2,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsUpDown,
   CircleAlert,
   CircleCheck,
   CirclePause,
@@ -17,14 +19,12 @@ import {
   CircleUser,
   Ellipsis,
   FileDiff,
-  Folder,
-  FolderPlus,
   GitBranch,
   GitMerge,
   GitPullRequest,
   HardDrive,
+  Inbox,
   Keyboard,
-  ListFilter,
   LoaderCircle,
   Palette,
   PanelLeftClose,
@@ -98,6 +98,7 @@ import { stored } from "./stored";
 import { dragThread } from "./threadDrag";
 import {
   asksOf,
+  isRepository,
   projectRuns,
   threadProjects,
   type ForkChoice,
@@ -143,7 +144,7 @@ interface SidebarProps {
 /**
  * The left column. Its top row holds the macOS traffic lights, then the toggle at the same
  * spot the main pane shows it while this column is hidden, then the app's mark and name, which
- * open a new thread.
+ * open a new thread. `width` is the list's; the rail of places adds its own (index.css).
  */
 export function Sidebar({
   open,
@@ -158,8 +159,8 @@ export function Sidebar({
       id="sidebar"
       aria-label="Sidebar"
       hidden={!open}
-      style={{ width }}
-      className="relative flex min-w-0 shrink-0 flex-col border-r border-border bg-sidebar"
+      style={{ "--sidebar-w": `${width}px` } as CSSProperties}
+      className="relative flex w-(--sidebar-w) min-w-0 shrink-0 flex-col border-r border-border bg-sidebar"
     >
       {onResize && <PanelResize side="left" width={width} onResize={onResize} />}
       <TopBar className="traffic-light-inset">
@@ -259,10 +260,7 @@ export function RepoIcon({ repo }: { repo?: Repo }) {
   if (!repo || repo.scratch)
     return <SquareDashed aria-hidden className="size-4 shrink-0 text-faint-foreground" />;
   if (repo.icon) return <ProjectIcon icon={repo.icon} className="size-4 shrink-0" />;
-  const palette = iconColors.slice(1);
-  let hash = 0;
-  for (let i = 0; i < repo.name.length; i++) hash = (hash * 31 + repo.name.charCodeAt(i)) | 0;
-  const color = palette[Math.abs(hash) % palette.length]!.text;
+  const color = repoColor(repo);
   return (
     <span
       aria-hidden
@@ -274,17 +272,37 @@ export function RepoIcon({ repo }: { repo?: Repo }) {
   );
 }
 
+/** The text color of a repo with no icon of its own, picked from its name. */
+function repoColor(repo: Repo): string {
+  const palette = iconColors.slice(1);
+  let hash = 0;
+  for (let i = 0; i < repo.name.length; i++) hash = (hash * 31 + repo.name.charCodeAt(i)) | 0;
+  return palette[Math.abs(hash) % palette.length]!.text;
+}
+
 // How long a pointer rests on a thread before its card shows. Moving to another thread while
 // one shows switches at once.
 const cardDelay = 450;
 
-/** The Repos filter's choice: every repo, No Repo's threads, or one repo by host and id. */
+/**
+ * The place the list shows, which the rail and the place menu pick (PLX-739): every place, No
+ * Repo's threads, or one repo or Space by host and id.
+ */
 type RepoFilter = "all" | "none" | `${string}/${string}`;
 const filterKey = "parallax:repoFilter";
 /** Whether the Projects section is collapsed. */
 export const collapsedProjects = stored("parallax:projectsCollapsed", false, (raw) => raw === true);
 /** Whether the Threads section is collapsed. */
 export const collapsedThreads = stored("parallax:threadsCollapsed", false, (raw) => raw === true);
+/** Whether the rail of places shows beside the list (PLX-739). */
+export const placeRail = stored("parallax:placeRail", true, (raw, fallback) =>
+  typeof raw === "boolean" ? raw : fallback,
+);
+/** The rail's width, which the sidebar adds to its list's (index.css). */
+export const railWidth = 46;
+// How long the rail's Spring motion runs each way, as index.css times it.
+const railOpenMs = 1000;
+const railCloseMs = 400;
 
 /** A sidebar setting kept in localStorage, or null while there is none or storage is off. */
 function readStored(key: string): string | null {
@@ -318,8 +336,8 @@ type Item = (
 };
 
 /**
- * Search, the Repos filter, a menu to create a Project or add a repository, and New thread, then
- * every host's Projects and threads, each in a collapsible section, most recently active first
+ * The rail of places and the place menu, which pick the place the list shows (PLX-739), New
+ * thread, and search, then every host's Projects and threads, each in a collapsible section, most recently active first
  * (0033). A thread row shows its repo, how long ago it was prompted or what it asks of the user,
  * its title, branch, and provider. A thread's children (0041) nest under it, collapsed behind
  * their count and most urgent status, but a Project's children show only inside it, its row
@@ -351,15 +369,44 @@ export function ThreadList({
   const [deleteError, setDeleteError] = useState<string>();
   const [actionError, setActionError] = useState<string>();
   const [query, setQuery] = useState("");
-  const [filter, setFilterState] = useState<RepoFilter>(
+  const [chosen, setFilterState] = useState<RepoFilter>(
     () => (readStored(filterKey) as RepoFilter | null) ?? "all",
   );
+  // A place that's gone, deleted or not loaded yet, shows Inbox, keeping the choice for its return.
+  const filter: RepoFilter =
+    chosen === "all" ||
+    chosen === "none" ||
+    hosts.some(({ host: h, view }) =>
+      view.state.repos.some((r) => !r.scratch && `${h.id}/${r.id}` === chosen),
+    )
+      ? chosen
+      : "all";
   const setFilter = (next: RepoFilter) => {
     setFilterState(next);
     saveStored(filterKey, next);
   };
   const collapsed = collapsedProjects.use();
   const threadsCollapsed = collapsedThreads.use();
+  const railShown = placeRail.use();
+  // The rail's Spring motion while it plays: opening, or closing before it hides.
+  const [railMotion, setRailMotion] = useState<"in" | "out">();
+  const toggleRail = () => {
+    if (railMotion) return;
+    const still = document.documentElement.classList.contains("reduce-motion");
+    if (!railShown) placeRail.set(true);
+    if (still) {
+      if (railShown) placeRail.set(false);
+      return;
+    }
+    setRailMotion(railShown ? "out" : "in");
+    window.setTimeout(
+      () => {
+        if (railShown) placeRail.set(false);
+        setRailMotion(undefined);
+      },
+      railShown ? railCloseMs : railOpenMs,
+    );
+  };
   const { workingSection, pageArchived } = sidebarPrefs.use();
   // The Working drawer starts open, so a thread that just left the list stays in view.
   const [workingOpen, setWorkingOpen] = useState(true);
@@ -429,6 +476,14 @@ export function ThreadList({
   const pool = shown.filter((i) => i.kind === "thread" && !isArchived(i) && !isSnoozed(i));
   const snoozedItems = shown.filter((i) => !isArchived(i) && isSnoozed(i));
   const archived = shown.filter(isArchived);
+  // What each place asks of the user, for the rail: its live rows' attentions, by filter key.
+  const placeAttentions = new Map<RepoFilter, Attention[]>();
+  for (const i of items) {
+    if (isArchived(i) || isSnoozed(i)) continue;
+    const key: RepoFilter = !i.repo || i.repo.scratch ? "none" : `${i.host.id}/${i.repo.id}`;
+    for (const k of ["all", key] as const)
+      placeAttentions.set(k, [...(placeAttentions.get(k) ?? []), i.attention]);
+  }
   // The Projects section shows once any host has a Project, even while search or the filter hides
   // them all.
   const hasProjects = items.some((i) => i.kind === "project");
@@ -662,95 +717,117 @@ export function ThreadList({
 
   return (
     <>
-      <div className="flex items-center gap-1 px-2">
-        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5 focus-within:outline-2 focus-within:outline-ring">
-          <Search aria-hidden className="size-4 shrink-0 text-faint-foreground" />
-          <input
-            type="search"
-            aria-label="Search threads and Projects"
-            placeholder="Search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-            className="min-w-0 flex-1 bg-transparent text-[13px] placeholder:text-faint-foreground focus-visible:outline-none"
-          />
-        </label>
-        <RepoFilterMenu hosts={hosts} filter={filter} onFilter={setFilter} many={many} />
-        <IconButton label="New project or repository" onClick={() => addDialog.current?.open()}>
-          <FolderPlus />
-        </IconButton>
-        <IconButton label="New thread" command="newThread" onClick={onNewThread}>
-          <SquarePen />
-        </IconButton>
-      </div>
-      <div onScroll={hideCard} className="mt-2 min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {errors.map((e) => (
-          <p key={e} role="alert" className="px-2 pb-1 text-[12px] text-danger">
-            {e}
-          </p>
-        ))}
-        {split && (
-          <SplitGroup
-            split={split}
+      <div className="flex min-h-0 flex-1">
+        {(railShown || railMotion) && (
+          <PlaceRail
             hosts={hosts}
-            selection={selection}
-            hostId={host.id}
-            onOpen={(threadId) => onSelect(split.hostId, { kind: "thread", threadId })}
-            onClose={onClosePane}
+            filter={filter}
+            onFilter={setFilter}
+            attentions={(key) => placeAttentions.get(key) ?? []}
+            many={many}
+            motion={railMotion}
+            onAdd={() => addDialog.current?.open()}
           />
         )}
-        {hasProjects && (
-          <>
-            {/* The heading holds only its toggle, so its name is just "Projects". */}
-            <div className={sectionHeading}>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-center gap-1 px-2 pb-2">
+            <PlaceMenu
+              hosts={hosts}
+              filter={filter}
+              onFilter={setFilter}
+              attentions={(key) => placeAttentions.get(key) ?? []}
+              many={many}
+              railShown={railShown && railMotion !== "out"}
+              onAdd={() => addDialog.current?.open()}
+            />
+            <IconButton label="New thread" command="newThread" onClick={onNewThread}>
+              <SquarePen />
+            </IconButton>
+          </div>
+          <div className="flex items-center px-2">
+            <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5 focus-within:outline-2 focus-within:outline-ring">
+              <Search aria-hidden className="size-4 shrink-0 text-faint-foreground" />
+              <input
+                type="search"
+                aria-label="Search threads and Projects"
+                placeholder="Search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+                className="min-w-0 flex-1 bg-transparent text-[13px] placeholder:text-faint-foreground focus-visible:outline-none"
+              />
+            </label>
+          </div>
+          <div onScroll={hideCard} className="mt-2 min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+            {errors.map((e) => (
+              <p key={e} role="alert" className="px-2 pb-1 text-[12px] text-danger">
+                {e}
+              </p>
+            ))}
+            {split && (
+              <SplitGroup
+                split={split}
+                hosts={hosts}
+                selection={selection}
+                hostId={host.id}
+                onOpen={(threadId) => onSelect(split.hostId, { kind: "thread", threadId })}
+                onClose={onClosePane}
+              />
+            )}
+            {hasProjects && (
+              <>
+                {/* The heading holds only its toggle, so its name is just "Projects". */}
+                <div className={sectionHeading}>
+                  <SectionToggle
+                    label="Projects"
+                    collapsed={collapsed}
+                    controls={projectsId}
+                    onToggle={() => collapsedProjects.set(!collapsed)}
+                  />
+                </div>
+                <div id={projectsId} hidden={collapsed}>
+                  <ul aria-label="Projects" className="flex flex-col gap-0.5">
+                    {projects.map((i) => row(i))}
+                  </ul>
+                  {projects.length === 0 && <p className={emptyNote}>Nothing matches</p>}
+                </div>
+              </>
+            )}
+            <div className={`${sectionHeading} ${hasProjects ? "mt-2" : ""}`}>
               <SectionToggle
-                label="Projects"
-                collapsed={collapsed}
-                controls={projectsId}
-                onToggle={() => collapsedProjects.set(!collapsed)}
+                label="Threads"
+                collapsed={threadsCollapsed}
+                controls={threadsId}
+                onToggle={() => collapsedThreads.set(!threadsCollapsed)}
               />
             </div>
-            <div id={projectsId} hidden={collapsed}>
-              <ul aria-label="Projects" className="flex flex-col gap-0.5">
-                {projects.map((i) => row(i))}
+            <div id={threadsId} hidden={threadsCollapsed}>
+              <ul aria-label="Threads" className="flex flex-col gap-0.5">
+                {topThreads.map((i) => tree(i, false))}
               </ul>
-              {projects.length === 0 && <p className={emptyNote}>Nothing matches</p>}
+              {topThreads.length === 0 && workingTops.length === 0 && (
+                <p className={emptyNote}>
+                  {q || filter !== "all" ? "Nothing matches" : "No threads yet"}
+                </p>
+              )}
             </div>
-          </>
-        )}
-        <div className={`${sectionHeading} ${hasProjects ? "mt-2" : ""}`}>
-          <SectionToggle
-            label="Threads"
-            collapsed={threadsCollapsed}
-            controls={threadsId}
-            onToggle={() => collapsedThreads.set(!threadsCollapsed)}
+          </div>
+          <Drawer
+            label="Working"
+            items={workingTops}
+            row={(item) => tree(item, false)}
+            defaultOpen
+            onOpenChange={setWorkingOpen}
+          />
+          <Drawer label="Snoozed" items={snoozedItems} row={row} />
+          <Drawer
+            label="Archived"
+            items={archived}
+            row={row}
+            pageSize={pageArchived ? archivePageSize : undefined}
           />
         </div>
-        <div id={threadsId} hidden={threadsCollapsed}>
-          <ul aria-label="Threads" className="flex flex-col gap-0.5">
-            {topThreads.map((i) => tree(i, false))}
-          </ul>
-          {topThreads.length === 0 && workingTops.length === 0 && (
-            <p className={emptyNote}>
-              {q || filter !== "all" ? "Nothing matches" : "No threads yet"}
-            </p>
-          )}
-        </div>
       </div>
-      <Drawer
-        label="Working"
-        items={workingTops}
-        row={(item) => tree(item, false)}
-        defaultOpen
-        onOpenChange={setWorkingOpen}
-      />
-      <Drawer label="Snoozed" items={snoozedItems} row={row} />
-      <Drawer
-        label="Archived"
-        items={archived}
-        row={row}
-        pageSize={pageArchived ? archivePageSize : undefined}
-      />
       <RowCard ref={card} />
       <AddDialog
         ref={addDialog}
@@ -777,7 +854,12 @@ export function ThreadList({
       </ConfirmDialog>
       <div className="border-t border-border p-2">
         <ConnectionStatus hostId={host.id} />
-        <Footer onOpenSettings={onOpenSettings} onOpenPullRequests={onOpenPullRequests} />
+        <Footer
+          onOpenSettings={onOpenSettings}
+          onOpenPullRequests={onOpenPullRequests}
+          railShown={railShown && railMotion !== "out"}
+          onToggleRail={toggleRail}
+        />
       </div>
     </>
   );
@@ -900,36 +982,199 @@ function Drawer<T>({
   );
 }
 
+// A place's dot: its most urgent attention, or none while it's settled.
+const attentionDot: Partial<Record<Attention, string>> = {
+  needsYou: "bg-warning",
+  failed: "bg-danger",
+  done: "bg-added",
+  working: "bg-working",
+};
+const attentionWords: Partial<Record<Attention, string>> = {
+  needsYou: "needs you",
+  failed: "failed",
+  done: "done",
+  working: "working",
+};
+
+/** A place's color on the rail and in the place menu: its icon's, else one picked from its name. */
+const placeColor = (repo: Repo) =>
+  repo.icon?.image
+    ? "text-muted-foreground"
+    : repo.icon
+      ? iconLook(repo.icon).color
+      : repoColor(repo);
+
+/** A place's glyph, sized by its tile: its icon, or else its initials in the tile's type. */
+function PlaceGlyph({ repo }: { repo: Repo }) {
+  if (repo.icon) return <ProjectIcon icon={repo.icon} />;
+  // Drawn from the attribute, as RepoIcon's, so the tile adds nothing to the text around it.
+  return (
+    <span
+      aria-hidden
+      data-initials={initials(repo.name)}
+      className="leading-none before:content-[attr(data-initials)]"
+    />
+  );
+}
+
 /**
- * The Repos filter (0033): a searchable menu of All repos, No repo, and each host's repositories,
- * each with its icon. Where the repo's plxd keeps icons, its gear opens the icon picker.
+ * The rail of places (PLX-739) on the sidebar's left edge: Inbox, which is every thread, then each
+ * host's Spaces as circles, its repositories as rounded squares, No repo while it has threads, and
+ * a button that adds one. Picking a place shows its threads, as the place menu does. A place's dot is its most urgent
+ * attention, and Inbox counts what needs the user. `motion` plays the Spring opening or closing
+ * (index.css).
  */
-function RepoFilterMenu({
+function PlaceRail({
   hosts,
   filter,
   onFilter,
+  attentions,
   many,
+  motion,
+  onAdd,
 }: {
   hosts: HostThreads[];
   filter: RepoFilter;
   onFilter: (filter: RepoFilter) => void;
+  attentions: (key: RepoFilter) => Attention[];
   many: boolean;
+  motion?: "in" | "out";
+  onAdd: () => void;
+}) {
+  const places = hosts.flatMap(({ host, view }) =>
+    view.state.repos.filter((r) => !r.scratch).map((repo) => ({ host, repo })),
+  );
+  const asks = attentions("all").filter((a) => a === "needsYou" || a === "failed").length;
+  // Inbox's label carries its count, which its badge shows only to the eye.
+  const inboxWords = asks > 0 ? `${asks} need${asks === 1 ? "s" : ""} you` : undefined;
+  const tile = (
+    key: RepoFilter,
+    name: string,
+    round: boolean,
+    color: string,
+    glyph: ReactNode,
+    badge?: ReactNode,
+    words?: string,
+  ) => {
+    const urgent = mostUrgent(attentions(key));
+    const label = [name, words ?? attentionWords[urgent]].filter(Boolean).join(", ");
+    return (
+      <button
+        key={key}
+        type="button"
+        aria-label={label}
+        title={label}
+        aria-pressed={filter === key}
+        onClick={() => onFilter(key)}
+        className={`relative grid size-[30px] shrink-0 place-items-center bg-current/12 ring-current ring-offset-2 ring-offset-sidebar hover:bg-current/20 aria-pressed:ring-[1.5px] aria-pressed:before:absolute aria-pressed:before:top-1.5 aria-pressed:before:-left-2 aria-pressed:before:h-[18px] aria-pressed:before:w-[3px] aria-pressed:before:rounded-r-full aria-pressed:before:bg-foreground [&_svg]:size-4 ${round ? "rounded-full" : "rounded-lg"} ${color}`}
+      >
+        {glyph}
+        {badge ??
+          (attentionDot[urgent] && (
+            <span
+              aria-hidden
+              data-badge
+              className={`absolute -top-[3px] -right-[3px] box-content size-2 rounded-full border-2 border-sidebar ${attentionDot[urgent]}`}
+            />
+          ))}
+      </button>
+    );
+  };
+  const place = ({ host, repo }: (typeof places)[number]) =>
+    tile(
+      `${host.id}/${repo.id}`,
+      many ? `${repo.name} on ${host.name}` : repo.name,
+      !!repo.space,
+      placeColor(repo),
+      <PlaceGlyph repo={repo} />,
+    );
+  const spaces = places.filter((p) => p.repo.space);
+  const repos = places.filter((p) => isRepository(p.repo));
+  const rule = (key: string) => (
+    <span key={key} aria-hidden className="h-px w-5 shrink-0 bg-border" />
+  );
+  return (
+    <div
+      role="group"
+      aria-label="Places"
+      data-motion={motion}
+      className="place-rail flex w-[46px] shrink-0 flex-col items-center gap-[7px] overflow-y-auto border-r border-border pt-1 pb-2.5 text-[10px] font-bold [scrollbar-width:none]"
+    >
+      {tile(
+        "all",
+        "Inbox",
+        false,
+        "text-muted-foreground",
+        <Inbox aria-hidden />,
+        asks > 0 && (
+          <span
+            aria-hidden
+            data-badge
+            className="absolute -top-1 -right-1 box-content h-3.5 min-w-3.5 rounded-full border-2 border-sidebar bg-warning px-0.5 text-center text-[9px] leading-3.5 font-bold text-white"
+          >
+            {asks}
+          </span>
+        ),
+        inboxWords ?? "",
+      )}
+      {spaces.length > 0 && rule("spaces")}
+      {spaces.map(place)}
+      {repos.length > 0 && rule("repos")}
+      {repos.map(place)}
+      {/* Also while it's the filter, so the rail always marks what the list shows. */}
+      {(attentions("none").length > 0 || filter === "none") &&
+        tile("none", "No repo", false, "text-faint-foreground", <SquareDashed aria-hidden />)}
+      <button
+        type="button"
+        aria-label="New project or repository"
+        title="New project or repository"
+        onClick={onAdd}
+        className="grid size-[30px] shrink-0 place-items-center rounded-lg border border-dashed border-border text-faint-foreground hover:bg-hover hover:text-foreground [&_svg]:size-4"
+      >
+        <Plus aria-hidden />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The place menu (PLX-739): the sidebar's heading, which names the place the list shows and opens
+ * every place to switch to, Inbox, each host's Spaces and repositories, and No repo, with what each
+ * asks of the user, then New Space or repo. While the rail shows, the heading says what kind of
+ * place it is; hidden, it shows it switches, as the rail would. A Space's row renames or deletes
+ * it, and where the repo's plxd keeps icons, a row's gear opens the icon picker.
+ */
+function PlaceMenu({
+  hosts,
+  filter,
+  onFilter,
+  attentions,
+  many,
+  railShown,
+  onAdd,
+}: {
+  hosts: HostThreads[];
+  filter: RepoFilter;
+  onFilter: (filter: RepoFilter) => void;
+  attentions: (key: RepoFilter) => Attention[];
+  many: boolean;
+  railShown: boolean;
+  onAdd: () => void;
 }) {
   const menuId = useId();
   const pickerId = useId();
   const menu = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLDivElement>(null);
-  const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<{ view: ThreadsView; repo: Repo }>();
-  // The Space dialog's subject: a new Space, or one to rename or delete (0069).
+  // The Space dialog's subject: a Space to rename or delete (0069).
   const [spaceDialog, setSpaceDialog] = useState<
-    { kind: "new" | "rename" | "delete"; view: ThreadsView; repo?: Repo } | undefined
+    { kind: "rename" | "delete"; view: ThreadsView; repo: Repo } | undefined
   >();
   const [spaceName, setSpaceName] = useState("");
   const [spaceError, setSpaceError] = useState<string>();
   const spaceRef = useRef<HTMLDialogElement>(null);
   const openSpaceDialog = (next: NonNullable<typeof spaceDialog>) => {
-    setSpaceName(next.repo?.name ?? "");
+    setSpaceName(next.repo.name);
     setSpaceError(undefined);
     setSpaceDialog(next);
     menu.current?.hidePopover();
@@ -939,50 +1184,174 @@ function RepoFilterMenu({
   const saveSpace = async () => {
     if (!spaceDialog) return;
     const { kind, view, repo } = spaceDialog;
-    const name = spaceName.trim();
     const error =
-      kind === "new"
-        ? await view.createSpace(name)
-        : kind === "rename"
-          ? await view.renameSpace(repo!.id, name)
-          : await view.deleteSpace(repo!.id);
+      kind === "rename"
+        ? await view.renameSpace(repo.id, spaceName.trim())
+        : await view.deleteSpace(repo.id);
     setSpaceError(error);
     if (error) spaceRef.current?.showModal();
     else setSpaceDialog(undefined);
   };
-  // ponytail: a new Space goes on the first host that has Spaces; add a host choice if it matters.
-  const spaceHost = hosts.find(({ view }) => "spaces" in view.capabilities)?.view;
-  const q = query.trim().toLowerCase();
-  const repos = hosts.flatMap(({ host, view }) =>
-    view.state.repos
-      .filter((r) => !r.scratch && (!q || r.name.toLowerCase().includes(q)))
-      .map((repo) => ({ host, view, repo })),
+  const places = hosts.flatMap(({ host, view }) =>
+    view.state.repos.filter((r) => !r.scratch).map((repo) => ({ host, view, repo })),
   );
-  const current = repos.find((r) => filter === `${r.host.id}/${r.repo.id}`);
+  const current = places.find((p) => filter === `${p.host.id}/${p.repo.id}`);
+  const asks = attentions("all").filter((a) => a === "needsYou" || a === "failed").length;
   const choose = (next: RepoFilter) => {
     onFilter(next);
     menu.current?.hidePopover();
   };
-  const check = (on: boolean) => (
-    <Check aria-hidden className={`ml-auto ${on ? "" : "invisible"}`} />
+  // A place's tile in the heading or a row: its shape, color, and glyph.
+  const tile = (round: boolean, color: string, glyph: ReactNode, size: string) => (
+    <span
+      aria-hidden
+      className={`grid shrink-0 place-items-center bg-current/12 font-bold ${size} ${round ? "rounded-full" : "rounded-[5px]"} ${color}`}
+    >
+      {glyph}
+    </span>
   );
+  const inboxTile = (size: string) => tile(false, "text-muted-foreground", <Inbox />, size);
+  const noRepoTile = (size: string) => tile(false, "text-faint-foreground", <SquareDashed />, size);
+  const placeTile = (repo: Repo, size: string) =>
+    tile(!!repo.space, placeColor(repo), <PlaceGlyph repo={repo} />, size);
+  const heading = "size-6 text-[9.5px] [&_svg]:size-3.5";
+  const row = "size-5 text-[8.5px] [&_svg]:size-3";
+
+  const name = current ? current.repo.name : filter === "none" ? "No repo" : "Inbox";
+  const kind = current
+    ? current.repo.space
+      ? "Space"
+      : many
+        ? current.host.name
+        : undefined
+    : filter === "none"
+      ? undefined
+      : "All places";
+  const status = (key: RepoFilter, on: boolean) => {
+    const urgent = mostUrgent(attentions(key));
+    return (
+      <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[12px] text-faint-foreground">
+        {key === "all"
+          ? asks > 0 && <span className="font-medium text-warning">{asks}</span>
+          : attentionDot[urgent] && (
+              <span aria-hidden className={`size-1.5 rounded-full ${attentionDot[urgent]}`} />
+            )}
+        <Check aria-hidden className={on ? "" : "invisible"} />
+      </span>
+    );
+  };
+  const item = (key: RepoFilter, label: string, glyph: ReactNode, extra?: string) => (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-label={[
+        label,
+        key === "all"
+          ? asks > 0 && `${asks} need${asks === 1 ? "s" : ""} you`
+          : attentionWords[mostUrgent(attentions(key))],
+      ]
+        .filter(Boolean)
+        .join(", ")}
+      aria-checked={filter === key}
+      className={`${menuItem} ${extra ?? ""}`}
+      onClick={() => choose(key)}
+    >
+      {glyph}
+      <span data-name className="min-w-0 truncate">
+        {label}
+      </span>
+      {status(key, filter === key)}
+    </button>
+  );
+  const placeRow = ({ host, view, repo }: (typeof places)[number]) => {
+    const key = `${host.id}/${repo.id}` as const;
+    const canEdit = repo.space && "spaces" in view.capabilities;
+    const canIcon = "threadAttention" in view.capabilities;
+    // Room for the hover actions, which the row makes by pushing its content left.
+    const actions = (canEdit ? 2 : 0) + (canIcon ? 1 : 0);
+    return (
+      <div
+        key={key}
+        style={{ "--actions": `${actions * 1.5 + 0.5}rem` } as CSSProperties}
+        className="group/repo relative"
+      >
+        {item(
+          key,
+          many ? `${repo.name} on ${host.name}` : repo.name,
+          placeTile(repo, row),
+          "group-focus-within/repo:pr-(--actions) group-hover/repo:pr-(--actions)",
+        )}
+        <div className="absolute top-1/2 right-1 flex -translate-y-1/2 gap-0.5 opacity-0 group-hover/repo:opacity-100 focus-within:opacity-100">
+          {canEdit && (
+            <>
+              <button
+                type="button"
+                aria-label={`Rename ${repo.name}`}
+                title="Rename"
+                onClick={() => openSpaceDialog({ kind: "rename", view, repo })}
+                className="grid size-6 place-items-center rounded-md text-faint-foreground hover:bg-hover hover:text-foreground [&_svg]:size-3.5"
+              >
+                <Pencil />
+              </button>
+              <button
+                type="button"
+                aria-label={`Delete ${repo.name}`}
+                title="Delete"
+                onClick={() => openSpaceDialog({ kind: "delete", view, repo })}
+                className="grid size-6 place-items-center rounded-md text-faint-foreground hover:bg-hover hover:text-foreground [&_svg]:size-3.5"
+              >
+                <Trash2 />
+              </button>
+            </>
+          )}
+          {canIcon && (
+            <button
+              type="button"
+              aria-label={`Change ${repo.name}'s icon`}
+              title="Change icon"
+              onClick={(e) => {
+                setEditing({ view, repo });
+                picker.current?.showPopover({ source: e.currentTarget });
+              }}
+              className="grid size-6 place-items-center rounded-md text-faint-foreground hover:bg-hover hover:text-foreground [&_svg]:size-3.5"
+            >
+              <Settings />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+  const group = (label: string, rows: typeof places) =>
+    rows.length > 0 && (
+      <div role="group" aria-label={label}>
+        <p aria-hidden className="px-2 pt-1.5 pb-0.5 text-[11.5px] text-faint-foreground">
+          {label}
+        </p>
+        {rows.map(placeRow)}
+      </div>
+    );
 
   return (
     <>
       <button
         type="button"
-        aria-label={`Repos: ${current?.repo.name ?? (filter === "none" ? "No repo" : "All repos")}`}
-        title="Filter by repo"
-        aria-pressed={filter !== "all"}
+        aria-label={`Place: ${name}`}
+        title="Switch place"
+        aria-haspopup="menu"
         popoverTarget={menuId}
-        className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground aria-pressed:bg-selected aria-pressed:text-foreground [&_svg]:size-4"
+        className="mr-auto flex min-w-0 items-center gap-2 rounded-md py-0.5 pr-1.5 pl-1 hover:bg-hover"
       >
-        {current ? (
-          <RepoIcon repo={current.repo} />
-        ) : filter === "none" ? (
-          <SquareDashed />
+        {current
+          ? placeTile(current.repo, heading)
+          : filter === "none"
+            ? noRepoTile(heading)
+            : inboxTile(heading)}
+        <span className="min-w-0 truncate text-[14px] font-semibold">{name}</span>
+        {railShown ? (
+          kind && <span className="shrink-0 text-[11.5px] text-faint-foreground">{kind}</span>
         ) : (
-          <ListFilter />
+          <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-faint-foreground" />
         )}
       </button>
       <div
@@ -990,152 +1359,49 @@ function RepoFilterMenu({
         id={menuId}
         popover="auto"
         role="menu"
-        aria-label="Repos"
+        aria-label="Places"
         onToggle={(e: ToggleEvent<HTMLDivElement>) => {
-          if (e.newState === "open") e.currentTarget.querySelector("input")?.focus();
-          else setQuery("");
+          if (e.newState === "open") e.currentTarget.querySelector("button")?.focus();
         }}
         onKeyDown={moveFocus}
-        className={`${menuPanel("end")} w-64 p-1`}
+        className={`${menuPanel("start")} w-64 p-1`}
       >
-        <label className="mb-1 flex items-center gap-2 border-b border-border px-2 py-1.5">
-          <Search aria-hidden className="size-3.5 shrink-0 text-faint-foreground" />
-          <input
-            aria-label="Search repos"
-            placeholder="Search repos…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="min-w-0 flex-1 bg-transparent text-[13px] placeholder:text-faint-foreground focus-visible:outline-none"
-          />
-        </label>
-        {!q && (
-          <>
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={filter === "all"}
-              className={menuItem}
-              onClick={() => choose("all")}
-            >
-              <Folder aria-hidden />
-              All repos
-              {check(filter === "all")}
-            </button>
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={filter === "none"}
-              className={menuItem}
-              onClick={() => choose("none")}
-            >
-              <SquareDashed aria-hidden />
-              No repo
-              {check(filter === "none")}
-            </button>
-          </>
+        {item("all", "Inbox", inboxTile(row))}
+        <div role="separator" className="my-1 h-px bg-border" />
+        {group(
+          "Spaces",
+          places.filter((p) => p.repo.space),
         )}
-        {repos.map(({ host, view, repo }) => {
-          const key = `${host.id}/${repo.id}` as const;
-          const canEdit = repo.space && "spaces" in view.capabilities;
-          const canIcon = "threadAttention" in view.capabilities;
-          // Room for the hover actions, which the row makes by pushing its content left.
-          const actions = (canEdit ? 2 : 0) + (canIcon ? 1 : 0);
-          return (
-            <div
-              key={key}
-              style={{ "--actions": `${actions * 1.5 + 0.5}rem` } as CSSProperties}
-              className="group/repo relative"
-            >
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={filter === key}
-                className={`${menuItem} group-focus-within/repo:pr-(--actions) group-hover/repo:pr-(--actions)`}
-                onClick={() => choose(key)}
-              >
-                <RepoIcon repo={repo} />
-                <span className="min-w-0 truncate">{repo.name}</span>
-                {many && <span className="shrink-0 text-faint-foreground">{host.name}</span>}
-                {check(filter === key)}
-              </button>
-              <div className="absolute top-1/2 right-1 flex -translate-y-1/2 gap-0.5 opacity-0 group-hover/repo:opacity-100 focus-within:opacity-100">
-                {canEdit && (
-                  <>
-                    <button
-                      type="button"
-                      aria-label={`Rename ${repo.name}`}
-                      title="Rename"
-                      onClick={() => openSpaceDialog({ kind: "rename", view, repo })}
-                      className="grid size-6 place-items-center rounded-md text-faint-foreground hover:bg-hover hover:text-foreground [&_svg]:size-3.5"
-                    >
-                      <Pencil />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${repo.name}`}
-                      title="Delete"
-                      onClick={() => openSpaceDialog({ kind: "delete", view, repo })}
-                      className="grid size-6 place-items-center rounded-md text-faint-foreground hover:bg-hover hover:text-foreground [&_svg]:size-3.5"
-                    >
-                      <Trash2 />
-                    </button>
-                  </>
-                )}
-                {canIcon && (
-                  <button
-                    type="button"
-                    aria-label={`Change ${repo.name}'s icon`}
-                    title="Change icon"
-                    onClick={(e) => {
-                      setEditing({ view, repo });
-                      picker.current?.showPopover({ source: e.currentTarget });
-                    }}
-                    className="grid size-6 place-items-center rounded-md text-faint-foreground hover:bg-hover hover:text-foreground [&_svg]:size-3.5"
-                  >
-                    <Settings />
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-        {q && repos.length === 0 && (
-          <p className="px-2 py-1.5 text-[12.5px] text-faint-foreground">No repos match</p>
+        {group(
+          "Repos",
+          places.filter((p) => isRepository(p.repo)),
         )}
-        {spaceHost && !q && (
-          <button
-            type="button"
-            role="menuitem"
-            className={`${menuItem} mt-1 border-t border-border`}
-            onClick={() => openSpaceDialog({ kind: "new", view: spaceHost })}
-          >
-            <Plus aria-hidden />
-            New Space
-          </button>
-        )}
+        {(attentions("none").length > 0 || filter === "none") &&
+          item("none", "No repo", noRepoTile(row))}
+        <div role="separator" className="my-1 h-px bg-border" />
+        <button
+          type="button"
+          role="menuitem"
+          className={`${menuItem} text-muted-foreground`}
+          onClick={() => {
+            menu.current?.hidePopover();
+            onAdd();
+          }}
+        >
+          <Plus aria-hidden />
+          New Space or repo
+        </button>
       </div>
       {spaceDialog && (
         <SettingDialog
           ref={spaceRef}
-          label={
-            spaceDialog.kind === "new"
-              ? "New Space"
-              : spaceDialog.kind === "rename"
-                ? `Rename ${spaceDialog.repo?.name}`
-                : `Delete ${spaceDialog.repo?.name}`
-          }
-          action={
-            spaceDialog.kind === "new"
-              ? "Create"
-              : spaceDialog.kind === "rename"
-                ? "Rename"
-                : "Delete"
-          }
+          label={`${spaceDialog.kind === "rename" ? "Rename" : "Delete"} ${spaceDialog.repo.name}`}
+          action={spaceDialog.kind === "rename" ? "Rename" : "Delete"}
           onSave={() => void saveSpace()}
         >
           {spaceDialog.kind === "delete" ? (
             <p className="text-[13px] text-muted-foreground">
-              Delete {spaceDialog.repo?.name} and every chat in it? This can't be undone.
+              Delete {spaceDialog.repo.name} and every chat in it? This can't be undone.
             </p>
           ) : (
             <label className="block text-[13px]">
@@ -1164,16 +1430,33 @@ function RepoFilterMenu({
 }
 
 /**
- * The footer's buttons: Profile, which opens Settings > Account and shows the account's picture or
- * initials (0067), Settings, Pull requests, Usage, and Update when `updatable` (Update.tsx).
+ * The footer's buttons: the rail of places' toggle first, so it keeps its spot whether the rail
+ * shows or not (PLX-739), then Profile, which opens Settings > Account and shows the account's
+ * picture or initials (0067), Settings, Pull requests, Usage, and Update when `updatable`
+ * (Update.tsx).
  */
 function Footer({
   onOpenSettings,
   onOpenPullRequests,
-}: Pick<ThreadListProps, "onOpenSettings" | "onOpenPullRequests">) {
+  railShown,
+  onToggleRail,
+}: Pick<ThreadListProps, "onOpenSettings" | "onOpenPullRequests"> & {
+  railShown: boolean;
+  onToggleRail: () => void;
+}) {
   const profile = useProfile();
   return (
     <div className="flex items-center gap-1">
+      <IconButton
+        label={railShown ? "Hide places" : "Show places"}
+        aria-expanded={railShown}
+        onClick={onToggleRail}
+      >
+        <ChevronsLeft
+          className={`motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-[cubic-bezier(.34,1.56,.64,1)] ${railShown ? "" : "rotate-180"}`}
+        />
+      </IconButton>
+      <span aria-hidden className="mx-0.5 h-4 w-px bg-border" />
       <IconButton
         label={profile ? profile.name || profile.email : "Profile"}
         onClick={() => onOpenSettings("account")}
