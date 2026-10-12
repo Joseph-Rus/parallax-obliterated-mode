@@ -4,13 +4,24 @@
     scripts/bench/threads.py <plxd binary> <repo path> [threads] [model]
 
 Runs `plxd serve` in a temporary data folder, adds a fresh clone of the repo, sends N `thread/start` requests at
-the same moment, and reports per-thread start latency (request to response), time to first text,
-and time to the first turn's end, plus plxd's CPU time. Needs a signed-in `claude` CLI.
+the same moment, and reports per-thread start latency (request to response), time to the CLI's
+session start, time to first text, and time to the first turn's end, plus plxd's CPU time. Needs a
+signed-in `claude` CLI.
+
+Session start is the Claude sidecar and the CLI starting up after `thread/start` answers, with no
+model time in it; the time from there to first text is the model's. The bench first starts N
+`claude` CLIs at once in the same clone, with only the stream-json flags and the model, and fails
+when plxd's median time from `thread/start`'s response to `sessionStarted` is more than
+`OVERHEAD_BUDGET_S` over theirs from spawn to `system/init` (PLX-711). Timing both in one run takes
+out some of a busy machine's noise, not all of it: at 20 threads the overhead varied by about 1 s
+between runs. It deletes the `~/.claude/projects` folders its CLIs create.
 """
 
 import asyncio
+import glob
 import json
 import os
+import re
 import secrets
 import shutil
 import statistics
@@ -21,6 +32,37 @@ import time
 import uuid
 
 PROMPT = "Reply with the numbers 1 to 40, one per line, and nothing else. Do not use any tools."
+
+
+# The most plxd's median session start, from `thread/start`'s response, may trail a bare CLI's
+# (PLX-711). Measured at 0.02-0.07 s for 1 to 5 threads, and below zero at 20, where plxd's
+# `thread/start` responses spread its CLIs' starts out.
+OVERHEAD_BUDGET_S = 0.5
+
+
+async def bare_sessions(count, model, cwd):
+    """Starts `count` bare `claude` CLIs at once in `cwd`, each sent the prompt, and returns each
+    one's time to its `system/init`, killing it there."""
+
+    async def one():
+        cli = await asyncio.create_subprocess_exec(
+            "claude", "--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
+            "--model", model, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, limit=64 << 20,
+        )
+        message = {"type": "user", "message": {"role": "user", "content": PROMPT}}
+        cli.stdin.write(json.dumps(message).encode() + b"\n")
+        try:
+            while line := await cli.stdout.readline():
+                if json.loads(line).get("subtype") == "init":
+                    return time.monotonic() - t0
+        finally:
+            cli.kill()
+            await cli.wait()
+        raise RuntimeError("a bare claude exited before its session started")
+
+    t0 = time.monotonic()
+    return await asyncio.gather(*(one() for _ in range(count)))
 
 
 def uuid7() -> str:
@@ -84,6 +126,7 @@ def pct(values, p):
 
 
 async def main():
+    over = False
     plxd, source = sys.argv[1], os.path.abspath(sys.argv[2])
     count = int(sys.argv[3]) if len(sys.argv) > 3 else 20
     model = sys.argv[4] if len(sys.argv) > 4 else "claude-haiku-4-5"
@@ -96,6 +139,10 @@ async def main():
     try:
         socket = os.path.join(data, "plxd.sock")
         client = await connect(socket)
+        # Install the Claude Agent SDK before timing, so no thread waits for npm.
+        while any(p.get("installing") for p in (await client.call("providers/list", {}))["providers"]):
+            await asyncio.sleep(0.5)
+        bare = statistics.median(await bare_sessions(count, model, repo))
         added = await client.call("repo/add", {"id": uuid7(), "path": repo})
         scope = added["repo"]["id"]
         await client.call("events/subscribe", {"after": 0, "project": scope})
@@ -128,6 +175,8 @@ async def main():
                 continue
             output_events += 1
             for item in event["items"]:
+                if item["kind"] == "sessionStarted":
+                    run.setdefault("session", at - t0)
                 if item["kind"] in ("text", "textDelta"):
                     run.setdefault("first", at - t0)
                 if item["kind"] == "turnFinished" and "done" not in run:
@@ -143,18 +192,35 @@ async def main():
         print(f"threads={count} model={model} wall={wall:.2f}s plxd_cpu={cpu} output_events={output_events}")
         if failed:
             print(f"finished early: {failed[:3]}")
-        for key, label in (("start", "thread/start"), ("first", "first text"), ("done", "turn done")):
+        rows = (("start", "thread/start"), ("session", "session start"), ("first", "first text"),
+                ("done", "turn done"))
+        for key, label in rows:
             values = [r[key] for r in runs.values() if key in r]
             if values:
                 print(
                     f"{label:>13}: p50={statistics.median(values):6.2f}s "
                     f"p90={pct(values, 90):6.2f}s max={max(values):6.2f}s n={len(values)}"
                 )
+        sessions = [r["session"] - r["start"] for r in runs.values() if "session" in r and "start" in r]
+        after_start = statistics.median(sessions) if sessions else float("inf")
+        overhead = after_start - bare
+        print(f"  bare claude: session start p50={bare:6.2f}s; plxd from thread/start's response "
+              f"p50={after_start:6.2f}s; overhead {overhead:.2f}s")
+        if overhead > OVERHEAD_BUDGET_S:
+            print(f"FAIL: plxd's session start overhead is over its {OVERHEAD_BUDGET_S}s budget")
+            over = True
     finally:
         daemon.terminate()
         daemon.wait()
         shutil.rmtree(data, ignore_errors=True)
         shutil.rmtree(repo, ignore_errors=True)
+        # Claude Code keeps each cwd's transcripts in a folder named for its real path.
+        config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+        prefix = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(data))
+        for folder in glob.glob(os.path.join(config, "projects", glob.escape(prefix) + "*")):
+            shutil.rmtree(folder, ignore_errors=True)
+    if over:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
