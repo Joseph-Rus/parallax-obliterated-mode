@@ -880,3 +880,10 @@ test("the appearance setting picks the ring, the inline row, or neither", async 
   expect(inline()).toBeNull();
   await act(async () => setBehaviorPrefs({ composerUsage: behaviorDefaults.composerUsage }));
 });
+
+test("a picked /skill and an @token are drawn as pills; an unknown /path is not", async () => {
+  const { box, type } = await withMenus(async () => undefined);
+  await type("/review @src/a.ts and /usr/bin and /review");
+  const pills = () => [...box.querySelectorAll(".composer-token")].map((p) => p.textContent);
+  expect(pills()).toEqual(["/review", "@src/a.ts", "/review"]);
+});

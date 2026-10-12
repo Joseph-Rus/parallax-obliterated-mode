@@ -24,6 +24,7 @@ import Paragraph from "@tiptap/extension-paragraph";
 import Text from "@tiptap/extension-text";
 import { Dropcursor, Gapcursor, UndoRedo } from "@tiptap/extensions";
 import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { EditorContent, markInputRule, useEditor, type Editor } from "@tiptap/react";
 import { defaultMarkdownSerializer, MarkdownSerializer } from "prosemirror-markdown";
 import {
@@ -860,6 +861,23 @@ export function Composer({
       if (!at) setClosedAt(undefined);
     },
     editorProps: {
+      // Known /skills and @tokens drawn as pills. The text itself, and so what is sent, is unchanged.
+      decorations: (state) => {
+        const skills = new Set((loadedCommands ?? []).map((c) => c.text));
+        const marks: Decoration[] = [];
+        state.doc.descendants((node, pos, parent) => {
+          if (!node.isText || parent?.type.name === "codeBlock") return;
+          for (const m of node.text!.matchAll(/(?<=^|\s)(\/\S+|@\S+)/g)) {
+            if (m[1]![0] === "@" || skills.has(m[1]!))
+              marks.push(
+                Decoration.inline(pos + m.index, pos + m.index + m[1]!.length, {
+                  class: "composer-token",
+                }),
+              );
+          }
+        });
+        return DecorationSet.create(state.doc, marks);
+      },
       // All of them, since these replace Tiptap's own (its role too) once props change.
       attributes: {
         id: "composer-input",
