@@ -1452,3 +1452,11 @@ body {
   background-color: var(--warning);
   color: #000;
 }
+
+/* A picked /skill or @file in the composer's text (Composer.tsx decorations). */
+.composer-token {
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
+  color: var(--accent);
+}
