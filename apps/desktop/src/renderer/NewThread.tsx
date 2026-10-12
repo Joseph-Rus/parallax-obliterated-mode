@@ -1,4 +1,4 @@
-import { Folder, House, LoaderCircle, Plus } from "lucide-react";
+import { Folder, House, LoaderCircle, MessagesSquare, Plus } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import type { AccountChoice, PromptImage, Repo, Role } from "../protocol/generated/protocol";
@@ -15,6 +15,7 @@ import { RunTargetMenu, type Workspace } from "./RunTargetMenu";
 import { attachThreads, ThreadLinksContext, type ThreadLinks } from "./threadContext";
 import {
   noRepo,
+  repoless,
   type OtherRepo,
   type ThreadGroup,
   type ThreadStart,
@@ -188,18 +189,15 @@ export function NewThread({
   const [workspace, setWorkspace] = useState<Workspace>(() => newThreadPrefs.get().workspace);
   // Only a repository has a checkout, and only a plxd that takes `checkout` would use it: an
   // older one would make a worktree anyway.
-  const checkoutUnavailable =
-    group.id === noRepo
-      ? "needs a repo"
-      : connection?.status === "connected" && !("checkout" in connection.capabilities)
-        ? "needs a newer plxd"
-        : undefined;
+  const checkoutUnavailable = repoless(group)
+    ? "needs a repo"
+    : connection?.status === "connected" && !("checkout" in connection.capabilities)
+      ? "needs a newer plxd"
+      : undefined;
   const checkout = workspace === "checkout" && !checkoutUnavailable;
   // Only a plxd with `repoRefs` lists refs or starts from one, and only a repository has them.
   const refsAvailable =
-    group.id !== noRepo &&
-    connection?.status === "connected" &&
-    "repoRefs" in connection.capabilities;
+    !repoless(group) && connection?.status === "connected" && "repoRefs" in connection.capabilities;
   // The picked ref, kept with its repository and workspace, so picking another drops it: a new
   // worktree's base never becomes a checkout's switch.
   const [pickedRef, setPickedRef] = useState<{ groupId: string; checkout: boolean; ref: string }>();
@@ -350,7 +348,11 @@ export function NewThread({
             <h1
               className={`${group.id === noRepo ? "mb-7" : "mb-2"} text-center text-[24px] font-medium tracking-tight`}
             >
-              {group.id === noRepo ? "What should we work on " : "What should we build in "}
+              {group.id === noRepo
+                ? "What should we work on "
+                : group.space
+                  ? "What should we talk about in "
+                  : "What should we build in "}
               <button
                 type="button"
                 popoverTarget={repoMenu}
@@ -404,7 +406,7 @@ export function NewThread({
                 ...groups.map((g) => ({
                   value: g.id,
                   label: g.name,
-                  icon: g.id === noRepo ? <House /> : <Folder />,
+                  icon: g.id === noRepo ? <House /> : g.space ? <MessagesSquare /> : <Folder />,
                 })),
                 ...elsewhere.map((o, i) => ({
                   value: elsewhereValue(o),
@@ -447,7 +449,7 @@ export function NewThread({
           imageCaps={imageCaps(connection)}
           menus={
             connection?.status === "connected" && "composerMenus" in connection.capabilities
-              ? { hostId, repo: group.id === noRepo ? undefined : group.id }
+              ? { hostId, repo: group.id === noRepo || group.space ? undefined : group.id }
               : undefined
           }
           // A new thread asks only through a plxd that sends its requests (PLX-196).
@@ -472,9 +474,7 @@ export function NewThread({
                   onWorkspaceChange={setWorkspace}
                   checkoutUnavailable={checkoutUnavailable}
                   missing={
-                    missing && group.id !== noRepo
-                      ? { repo: group.name, hostIds: missing }
-                      : undefined
+                    missing && !repoless(group) ? { repo: group.name, hostIds: missing } : undefined
                   }
                 />
                 {refsAvailable && (

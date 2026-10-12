@@ -67,7 +67,8 @@ use crate::{
     RepoFilesResult, RepoRefsParams, RepoRefsResult, RepoSaveScriptsParams, RepoScriptsParams,
     RepoScriptsResult, RepoUpdateParams, RepoUpdateResult, ScheduleDeleteResult, ScheduleIdParams,
     ScheduleListParams, ScheduleListResult, ScheduleSaveParams, ScheduledTask, SecretAnswerParams,
-    SecretAnswerResult, SecretRequestParams, SecretRequestResult, SubscribeShellParams,
+    SecretAnswerResult, SecretRequestParams, SecretRequestResult, SpaceCreateParams,
+    SpaceCreateResult, SpaceDeleteParams, SpaceDeleteResult, SubscribeShellParams,
     SubscribeShellResult, SubscribeThreadParams, SubscribeThreadResult, TaskDelegateParams,
     TaskStatusParams, TerminalExitParams, TerminalKey, TerminalListParams, TerminalListResult,
     TerminalOpenParams, TerminalOutputParams, TerminalResizeParams, TerminalResult,
@@ -320,6 +321,13 @@ method_table! {
         /// `repo/update`: sets a repo entry's icon (0033). Gated on the `threadAttention`
         /// capability.
         RepoUpdate = "repo/update": RepoUpdateParams => RepoUpdateResult;
+        /// `space/create`: makes a Space, a named group for chats with no repository, backed by a
+        /// repository plxd makes (0069). Idempotent on its client-generated id. Gated on the
+        /// `spaces` capability.
+        SpaceCreate = "space/create": SpaceCreateParams => SpaceCreateResult;
+        /// `space/delete`: deletes a Space and the chats in it (0069). Gated on the `spaces`
+        /// capability.
+        SpaceDelete = "space/delete": SpaceDeleteParams => SpaceDeleteResult;
         /// `thread/delete`: deletes a normal thread with its run, worktree, and stored events,
         /// stopping its CLI first if it runs.
         ThreadDelete = "thread/delete": ThreadDeleteParams => ThreadDeleteResult;
@@ -659,6 +667,8 @@ mod tests {
                 "thread/archive",
                 "thread/update",
                 "repo/update",
+                "space/create",
+                "space/delete",
                 "thread/delete",
                 "project/start",
                 "project/update",

@@ -2811,3 +2811,53 @@ test("a new Needs you item notifies with Open Project, from the OS while the win
   expect(childButton("Write the docs")!.textContent).toContain("asks which tone");
   act(() => toast()!.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click());
 });
+
+test("with spaces, New Space makes a Space, and its row in the Repos filter renames and deletes it", async () => {
+  capabilities = { spaces: {} };
+  const space: Repo = { ...repo("Reading", "/data/spaces/s1"), id: "s1", space: true };
+  let spaces = [space];
+  answers["thread/list"] = () => ({ result: { repos: spaces, threads: [], seq: 7 } });
+  answers["space/create"] = (p) => {
+    const { id, name } = p as { id: string; name: string };
+    const made = { ...repo(name, `/data/spaces/${id}`), id, space: true };
+    spaces = [...spaces, made];
+    return { result: { repo: made } };
+  };
+  answers["repo/update"] = (p) => {
+    const { repo: id, name } = p as { repo: string; name: string };
+    spaces = spaces.map((s) => (s.id === id ? { ...s, name } : s));
+    return { result: { repo: spaces.find((s) => s.id === id) } };
+  };
+  answers["space/delete"] = () => ({ result: {} });
+  await renderApp();
+  const filter = () =>
+    document.querySelector<HTMLElement>('#sidebar [role="menu"][aria-label="Repos"]')!;
+  const press = (label: string) => filter().querySelector<HTMLElement>(`[aria-label="${label}"]`);
+  const spaceDialog = (label: string) =>
+    document.querySelector<HTMLDialogElement>(`dialog[aria-label="${label}"]`)!;
+  const submit = async (d: HTMLDialogElement) => {
+    await act(async () =>
+      d
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    );
+    await settle();
+  };
+
+  await click([...filter().querySelectorAll("button")].find((b) => b.textContent === "New Space"));
+  typeInto(spaceDialog("New Space").querySelector("input")!, "  Research ");
+  await submit(spaceDialog("New Space"));
+  expect(calls("space/create")).toEqual([{ id: expect.any(String), name: "Research" }]);
+  expect(filter().textContent).toContain("Research");
+
+  await click(press("Rename Reading"));
+  typeInto(spaceDialog("Rename Reading").querySelector("input")!, "Notes");
+  await submit(spaceDialog("Rename Reading"));
+  expect(calls("repo/update")).toEqual([{ repo: "s1", name: "Notes" }]);
+  expect(filter().textContent).toContain("Notes");
+
+  await click(press("Delete Notes"));
+  await submit(spaceDialog("Delete Notes"));
+  expect(calls("space/delete")).toEqual([{ space: "s1" }]);
+  expect(filter().textContent).not.toContain("Notes");
+});

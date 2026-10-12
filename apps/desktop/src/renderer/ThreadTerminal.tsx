@@ -1,7 +1,7 @@
 import { Plus, Terminal, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { noRepo, type ThreadsState, type ThreadsView } from "./threads";
+import { isRepository, noRepo, type ThreadsState, type ThreadsView } from "./threads";
 import { IconButton } from "./ui";
 
 // xterm.js loads with the first terminal shown.
@@ -29,13 +29,13 @@ export function folderOf(
   open: { threadId: string } | { repoId: string },
 ): ThreadFolder | undefined {
   if ("repoId" in open) {
-    const repo = state.repos.find((r) => r.id === open.repoId && !r.scratch);
+    const repo = state.repos.find((r) => r.id === open.repoId && isRepository(r));
     if (repo) return { key: `${hostId}/new/${repo.id}`, hostId, path: repo.path };
     return open.repoId === noRepo ? { key: `${hostId}/home`, hostId, path: homePath } : undefined;
   }
   const { threadId } = open;
   const thread = state.threads.find((t) => t.id === threadId);
-  const repo = state.repos.find((r) => r.id === thread?.repo && !r.scratch);
+  const repo = state.repos.find((r) => r.id === thread?.repo && isRepository(r));
   const path = state.runs[threadId]?.worktreePath;
   if (path !== undefined) return { key: `${hostId}/${threadId}`, hostId, path, threadId };
   return repo && folderOf(hostId, state, { repoId: repo.id });

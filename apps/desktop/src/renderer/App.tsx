@@ -57,9 +57,11 @@ import {
   groupThreads,
   idleThreads,
   lacksRepo,
+  isRepository,
   lineageOf,
   noRepo,
   otherRepos,
+  repoless,
   rootOf,
   threadProjects,
   titleOf,
@@ -298,7 +300,7 @@ export function App() {
   // ponytail: a repo entry's path is canonical and a Project's is as created, so a Project made
   // through a symlink finds no Repo scope; match canonical paths if that shows up.
   const memoryRepo = project
-    ? threads.state.repos.find((r) => !r.scratch && r.path === project.repoPath)?.id
+    ? threads.state.repos.find((r) => isRepository(r) && r.path === project.repoPath)?.id
     : selection.kind === "thread" && group.id !== noRepo
       ? group.id
       : undefined;
@@ -882,9 +884,12 @@ export function App() {
                             prompt={threads.state.runs[threadId]?.prompt}
                             // The list's status goes stale once the run moves on, so only a start says so.
                             going={focused && selection.started}
-                            noRepo={
-                              (paneThread ? groupOf(threads.state, paneThread) : noRepo) === noRepo
-                            }
+                            noRepo={repoless({
+                              id: paneThread ? groupOf(threads.state, paneThread) : noRepo,
+                              space: threads.state.repos.some(
+                                (r) => r.id === paneThread?.repo && r.space,
+                              ),
+                            })}
                             pullRequests={
                               focused &&
                               prs.urls.length > 0 && <PullRequestChip prs={prs} onOpen={openPr} />
@@ -1004,7 +1009,7 @@ export function App() {
                     threads.state.repos.find((repo) => repo.id === group.id)?.path
                 }
                 actions={
-                  selection.kind !== "project" && group.id !== noRepo
+                  selection.kind !== "project" && !repoless(group)
                     ? {
                         hostId: host.id,
                         repoId: group.id,

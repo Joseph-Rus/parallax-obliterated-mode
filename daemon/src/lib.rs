@@ -88,6 +88,7 @@ pub mod server;
 #[cfg(unix)]
 pub mod service;
 mod setup_scripts;
+mod spaces;
 #[cfg(unix)]
 mod spawn;
 mod store;

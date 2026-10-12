@@ -144,6 +144,12 @@ export function threadsReducer(state: ThreadsState, action: ThreadsAction): Thre
         case "repo.added":
         case "repo.updated":
           return { ...state, repos: upsert(state.repos, e.repo) };
+        case "repo.removed":
+          return {
+            ...state,
+            repos: state.repos.filter((r) => r.id !== e.repo),
+            threads: state.threads.filter((x) => x.repo !== e.repo),
+          };
         case "thread.started":
         case "thread.updated": {
           const run = state.runs[e.thread.id];
@@ -226,6 +232,8 @@ export interface ThreadGroup {
   /** A repo entry's id, or `noRepo`. */
   id: string;
   name: string;
+  /** A Space (0069): chats with no repository of the user's. */
+  space?: boolean;
   /** Unarchived, newest first. */
   threads: Thread[];
 }
@@ -240,7 +248,9 @@ export function groupThreads({ repos, threads }: ThreadsState): {
   archived: Thread[];
 } {
   const groups: ThreadGroup[] = [
-    ...repos.filter((r) => !r.scratch).map((r) => ({ id: r.id, name: r.name, threads: [] })),
+    ...repos
+      .filter((r) => !r.scratch)
+      .map((r) => ({ id: r.id, name: r.name, space: r.space, threads: [] })),
     { id: noRepo, name: "No Repo", threads: [] },
   ];
   const newestFirst = [...threads].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -265,7 +275,7 @@ export function otherRepos(
   views: Readonly<Record<string, ThreadsView>>,
   openId: string,
 ): OtherRepo[] {
-  const named = (id: string) => views[id]?.state.repos.filter((r) => !r.scratch) ?? [];
+  const named = (id: string) => views[id]?.state.repos.filter(isRepository) ?? [];
   const seen = new Set(named(openId).map((r) => r.name));
   const found: OtherRepo[] = [];
   for (const host of hosts) {
@@ -288,7 +298,13 @@ export const lacksRepo = (view: ThreadsView | undefined, name: string) =>
   view.state !== emptyThreads &&
   !view.loading &&
   !view.error &&
-  !view.state.repos.some((r) => !r.scratch && r.name === name);
+  !view.state.repos.some((r) => isRepository(r) && r.name === name);
+
+/** Whether a group holds chats with no repository of the user's: No Repo, or a Space. */
+export const repoless = (g: { id: string; space?: boolean }) => g.id === noRepo || !!g.space;
+
+/** A repo entry that is a repository of the user's: not No Repo's scratch entry, nor a Space. */
+export const isRepository = (r: { scratch?: boolean; space?: boolean }) => !r.scratch && !r.space;
 
 /** A thread's group id: its repository's, or `noRepo`. */
 export const groupOf = (state: ThreadsState, thread: Thread) =>
@@ -463,6 +479,12 @@ export interface ThreadsView {
   update: (runId: string, change: ThreadChange) => Promise<string | undefined>;
   /** Sets a repo entry's icon. Resolves to an error message, or undefined. */
   updateRepo: (repo: string, icon: ProjectIconValue) => Promise<string | undefined>;
+  /** Makes a Space (0069), on a plxd with `spaces`. Resolves to an error message, or undefined. */
+  createSpace: (name: string) => Promise<string | undefined>;
+  /** Renames a Space. Resolves to an error message, or undefined. */
+  renameSpace: (space: string, name: string) => Promise<string | undefined>;
+  /** Deletes a Space and its chats. Resolves to an error message, or undefined. */
+  deleteSpace: (space: string) => Promise<string | undefined>;
 }
 
 /** What a fork runs on: absent keeps the thread's model and account. */
@@ -744,6 +766,31 @@ export function useThreads(
         dispatch({ type: "event", event: { kind: "repo.updated", repo: answer.result.repo } });
         return undefined;
       },
+
+      async createSpace(name: string) {
+        // A fresh id is safe to retry with: plxd returns the Space an id already made.
+        const answer = await window.parallax.request(hostId, "space/create", {
+          id: uuidv7(),
+          name,
+        });
+        if ("error" in answer) return describeError(answer.error);
+        dispatch({ type: "event", event: { kind: "repo.added", repo: answer.result.repo } });
+        return undefined;
+      },
+
+      async renameSpace(space: string, name: string) {
+        const answer = await window.parallax.request(hostId, "repo/update", { repo: space, name });
+        if ("error" in answer) return describeError(answer.error);
+        dispatch({ type: "event", event: { kind: "repo.updated", repo: answer.result.repo } });
+        return undefined;
+      },
+
+      async deleteSpace(space: string) {
+        const answer = await window.parallax.request(hostId, "space/delete", { space });
+        if ("error" in answer) return describeError(answer.error);
+        dispatch({ type: "event", event: { kind: "repo.removed", repo: space } });
+        return undefined;
+      },
     }),
     [hostId, approvals, naming],
   );
@@ -782,4 +829,7 @@ export const idleThreads: ThreadsView = {
   startCoordinator: async () => ({ code: -32000, message: notConnected }),
   update: async () => notConnected,
   updateRepo: async () => notConnected,
+  createSpace: async () => notConnected,
+  renameSpace: async () => notConnected,
+  deleteSpace: async () => notConnected,
 };

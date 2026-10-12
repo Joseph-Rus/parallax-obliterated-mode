@@ -45,6 +45,7 @@ export function NewThreadPicker({
       value: g.id,
       name: g.id === noRepo ? "No repo" : g.name,
       repo: repos.find((r) => r.id === g.id),
+      space: g.space,
       hostName,
       pick: () => onPick(g.id),
     })),
@@ -52,6 +53,7 @@ export function NewThreadPicker({
       value: `${o.host.id}/${o.repo.id}`,
       name: o.repo.name,
       repo: o.repo,
+      space: false,
       hostName: o.host.name,
       pick: () => onPickElsewhere(o.host.id, o.repo.id),
     })),
@@ -147,7 +149,7 @@ export function NewThreadPicker({
                 <RepoIcon repo={row.repo} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px]">{row.name}</span>
-                  {row.repo && row.value !== noRepo && (
+                  {row.repo && row.value !== noRepo && !row.space && (
                     <span className="block truncate text-[12.5px] text-muted-foreground">
                       {row.hostName} · {row.repo.path}
                     </span>

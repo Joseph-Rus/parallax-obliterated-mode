@@ -12,6 +12,7 @@ import {
 import type { ConnectionState } from "../preload/bridge";
 import type { Repo } from "../protocol/generated/protocol";
 import { describeError } from "./errors";
+import { isRepository } from "./threads";
 import { localId, type Host } from "./hosts";
 import { GitHubLogo } from "./logos";
 import { hostIcon } from "./RunTargetMenu";
@@ -63,7 +64,7 @@ function useListings(hosts: Host[], open: boolean): Readonly<Record<string, List
       set(hostId, () =>
         "error" in answer
           ? { status: "failed", message: describeError(answer.error) }
-          : { status: "listed", repos: answer.result.repos.filter((r) => !r.scratch) },
+          : { status: "listed", repos: answer.result.repos.filter(isRepository) },
       );
     };
     const hostIds = ids.split("\n");
