@@ -30,6 +30,7 @@ import {
   Fragment as ReactFragment,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -749,6 +750,12 @@ export function Composer({
   const menuOpen =
     !!menus && !!trigger && trigger.from !== closedAt && (entries.length > 0 || !!loading);
   const highlighted = Math.min(active, entries.length - 1);
+  // Opens below the box when a tall prompt leaves no room for it above (max-h-44 plus its margin).
+  const box = useRef<HTMLFormElement>(null);
+  const [menuBelow, setMenuBelow] = useState(false);
+  useLayoutEffect(() => {
+    if (menuOpen) setMenuBelow(box.current!.getBoundingClientRect().top < 192);
+  });
   useEffect(() => {
     document.getElementById(`${menuId}-${highlighted}`)?.scrollIntoView?.({ block: "nearest" });
   }, [menuId, highlighted, menuOpen]);
@@ -1000,6 +1007,7 @@ export function Composer({
   return (
     <div className="w-full">
       <form
+        ref={box}
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
@@ -1041,7 +1049,7 @@ export function Composer({
                   ? "Threads and files"
                   : "Files"
             }
-            className="absolute inset-x-0 bottom-full mb-2 max-h-72 overflow-y-auto rounded-lg border border-border bg-surface p-1 text-foreground shadow-composer"
+            className={`absolute inset-x-0 ${menuBelow ? "top-full mt-2" : "bottom-full mb-2"} max-h-44 overflow-y-auto rounded-lg border border-border bg-surface p-1 text-foreground shadow-composer`}
           >
             {entries.map((entry, i) => (
               <ReactFragment key={entry.key}>
