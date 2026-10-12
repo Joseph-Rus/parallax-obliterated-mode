@@ -56,8 +56,10 @@ import {
   groupOf,
   groupThreads,
   idleThreads,
+  lacksRepo,
   lineageOf,
   noRepo,
+  otherRepos,
   rootOf,
   threadProjects,
   titleOf,
@@ -201,6 +203,8 @@ export function App() {
     [hosts, views],
   );
   const { groups } = groupThreads(threads.state);
+  // The other computers' repositories, which New Thread and Mod+N's picker list too.
+  const elsewhere = useMemo(() => otherRepos(hosts, views, host.id), [hosts, views, host.id]);
   // Every thread and Project the open host has listed, so a selection is dropped only once what it
   // opened leaves the list: a just-started one reaches the list a render after it opens.
   const known = useRef(new Set<string>());
@@ -508,6 +512,10 @@ export function App() {
     setSelection({ kind: "new", groupId: there.find((g) => g.name === group.name)?.id });
   };
 
+  // Opens New Thread on another computer with one of its repositories.
+  const pickRepoOn = (hostId: string, groupId: string) =>
+    openOnHost(hostId, { kind: "new", groupId });
+
   const newThread = (groupId = selection.kind === "project" ? undefined : group.id) => {
     setSettings(null);
     setSelection({ kind: "new", groupId });
@@ -687,7 +695,9 @@ export function App() {
         groups={groups}
         repos={threads.state.repos}
         hostName={host.name}
+        elsewhere={elsewhere}
         onPick={newThread}
+        onPickElsewhere={pickRepoOn}
       />
       <Sidebar
         width={leftWidth}
@@ -916,6 +926,13 @@ export function App() {
                     groups={groups}
                     groupId={group.id}
                     onGroupChange={(groupId) => setSelection({ kind: "new", groupId })}
+                    elsewhere={elsewhere}
+                    onPickElsewhere={pickRepoOn}
+                    missing={
+                      new Set(
+                        hosts.filter((h) => lacksRepo(views[h.id], group.name)).map((h) => h.id),
+                      )
+                    }
                     local={host.id === localId}
                     addRepo={threads.addRepo}
                     start={threads.start}
