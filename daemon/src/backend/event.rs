@@ -203,6 +203,13 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary: Option<String>,
     },
+    /// The agent's background commands and subagents still running changed (PLX-725), from Claude
+    /// Code's `background_tasks_changed`, `task_started`, and `task_notification`. While any run,
+    /// they keep its idle session up, as T3 Code's pending background tasks do.
+    BackgroundTasks {
+        /// Every one still running, by Claude Code's `task_id`.
+        task_ids: Vec<String>,
+    },
     /// Something in the CLI's output that the backend skipped. It never ends a run.
     Warning {
         /// What was wrong.
