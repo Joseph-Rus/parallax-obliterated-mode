@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use parallax_protocol::jsonrpc::ErrorObject;
 use parallax_protocol::{
-    ThreadDeleteParams, ThreadDeleteResult, ThreadForkParams, ThreadStartParams, ThreadStartResult,
+    SpaceDeleteParams, SpaceDeleteResult, ThreadDeleteParams, ThreadDeleteResult, ThreadForkParams,
+    ThreadStartParams, ThreadStartResult,
 };
 
 use super::Context;
@@ -55,5 +56,17 @@ pub(super) async fn delete(
         .daemon
         .agents
         .detached(async move { threads::delete(&daemon, params.run_id, command_id).await })
+        .await
+}
+
+pub(super) async fn space_delete(
+    context: &Context,
+    params: SpaceDeleteParams,
+) -> Result<SpaceDeleteResult, ErrorObject> {
+    let daemon = Arc::clone(&context.daemon);
+    context
+        .daemon
+        .agents
+        .detached(async move { crate::spaces::delete(&daemon, params).await })
         .await
 }

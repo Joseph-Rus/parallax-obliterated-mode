@@ -90,6 +90,8 @@ const MUTATING_METHODS = new Set([
   "host/settings/set",
   "repo/add",
   "repo/update",
+  "space/create",
+  "space/delete",
   "context/write",
   "memory/write",
   "memory/delete",

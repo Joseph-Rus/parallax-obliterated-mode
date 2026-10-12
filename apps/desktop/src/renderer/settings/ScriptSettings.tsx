@@ -4,7 +4,7 @@ import type { RepoScript } from "../../protocol/generated/protocol";
 import { useConnection } from "../ConnectionStatus";
 import { describeError } from "../errors";
 import { localId, useHosts, type Host } from "../hosts";
-import type { ThreadsView } from "../threads";
+import { isRepository, type ThreadsView } from "../threads";
 import { field, HostPicker, PageTitle, primaryButton, quietButton, Section, Switch } from "./parts";
 
 /** A script's roles in a few words, as T3 Code's `projectScriptMenuLabel` names them. */
@@ -31,7 +31,7 @@ export function ScriptSettings({ listed }: { listed: { host: Host; view: Threads
   const connected = connection?.status === "connected";
   const supported = connected && "setupScripts" in connection.capabilities;
   const repos =
-    listed.find((l) => l.host.id === hostId)?.view.state.repos.filter((r) => !r.scratch) ?? [];
+    listed.find((l) => l.host.id === hostId)?.view.state.repos.filter(isRepository) ?? [];
   const [repoId, setRepoId] = useState<string>();
   const repo = repos.find((r) => r.id === repoId) ?? repos[0];
   const [saved, setSaved] = useState<RepoScript[]>();

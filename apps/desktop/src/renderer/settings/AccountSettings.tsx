@@ -25,7 +25,7 @@ import { models } from "../models";
 import { instanceName, kinds } from "../providers";
 import { activityOf, Avatar, dayKey, dayOf, rhythmOf, useProfile, type Activity } from "../profile";
 import { backendLogos } from "../Sidebar";
-import type { ThreadsView } from "../threads";
+import { isRepository, type ThreadsView } from "../threads";
 import { hourCycle } from "../prefs";
 import { compact } from "../Usage";
 import { primaryButton, quietButton, Section, settingRow } from "./parts";
@@ -65,10 +65,7 @@ export function AccountSettings({ listed }: { listed: { host: Host; view: Thread
     [listed],
   );
   const activity = useMemo(() => activityOf(runs, now), [runs, now]);
-  const repos = listed.reduce(
-    (n, { view }) => n + view.state.repos.filter((r) => !r.scratch).length,
-    0,
-  );
+  const repos = listed.reduce((n, { view }) => n + view.state.repos.filter(isRepository).length, 0);
 
   // Each host's usage since TOKEN_DAYS ago, by host id, as it answers.
   const [since] = useState(() => {

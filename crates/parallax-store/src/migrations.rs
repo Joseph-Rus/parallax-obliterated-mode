@@ -717,6 +717,12 @@ const MIGRATIONS: &[Migration] = &[
         INSERT INTO host_settings (key, value)
             SELECT 'wipe_freed_pages', 'true' FROM migrating_from WHERE version BETWEEN 40 AND 42;",
     },
+    // Spaces (0069, PLX-732): a repo entry the user made for chats with no repository, backed by
+    // a repository plxd made.
+    Migration {
+        version: 44,
+        sql: "ALTER TABLE repos ADD COLUMN space INTEGER NOT NULL DEFAULT 0;",
+    },
 ];
 
 /// Migrations that an existing store backs itself up before, with `VACUUM INTO`, which copies a

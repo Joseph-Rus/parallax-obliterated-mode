@@ -16,7 +16,7 @@ import { IconPicker } from "./IconPicker";
 import { iconImageBytes } from "./images";
 import { autonomyLevels } from "./ProjectPermission";
 import { ProjectIcon } from "./Sidebar";
-import type { ThreadsView } from "./threads";
+import { isRepository, type ThreadsView } from "./threads";
 import { IconButton, Segmented } from "./ui";
 import { uuidv7 } from "./uuidv7";
 import { WorkspaceMenu, type Workspace, type WorkspaceSource } from "./WorkspaceMenu";
@@ -54,7 +54,7 @@ export function NewProjectForm({
   onBack: () => void;
   onCreated: (hostId: string, project: Project) => void;
 }) {
-  const first = repos.find((r) => !r.scratch);
+  const first = repos.find(isRepository);
   // The open host's first repository until another is chosen, or if its host was removed.
   const workspace =
     chosen && hosts.some((h) => h.id === chosen.hostId) ? chosen : first && { hostId, repo: first };

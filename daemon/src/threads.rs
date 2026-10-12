@@ -72,14 +72,14 @@ const MAX_SEARCH_LIMIT: u32 = 100;
 /// The longest query `thread/search` takes, in bytes.
 const MAX_QUERY_BYTES: usize = 1024;
 
-async fn store<T: Send + 'static>(
+pub(crate) async fn store<T: Send + 'static>(
     daemon: &Daemon,
     job: impl FnOnce(&mut crate::store::Tx) -> Result<T, ErrorObject> + Send + 'static,
 ) -> Result<T, ErrorObject> {
     daemon.store.run(&CancellationToken::new(), job).await
 }
 
-fn store_error(error: &parallax_store::StoreError) -> ErrorObject {
+pub(crate) fn store_error(error: &parallax_store::StoreError) -> ErrorObject {
     agents::store_error(error)
 }
 
@@ -94,6 +94,7 @@ pub(crate) fn repo_entry(row: parallax_store::Repo) -> Result<Repo, ErrorObject>
         name: row.fields.name,
         path: row.fields.path,
         scratch: row.fields.scratch,
+        space: row.fields.space,
         icon: row.icon.map(crate::store::protocol_icon),
         created_at: row.created_at,
     })
@@ -304,6 +305,7 @@ pub(crate) async fn add_repo(
             name,
             path: canonical,
             scratch: false,
+            space: false,
         };
         let (repo, created) = add(db, id.into(), &fields)?;
         let repo = repo_entry(repo)?;
@@ -365,6 +367,7 @@ async fn scratch_entry(daemon: &Arc<Daemon>) -> Result<parallax_store::Repo, Err
             name: SCRATCH_NAME.to_owned(),
             path: root.to_string_lossy().into_owned(),
             scratch: true,
+            space: false,
         };
         let (row, created) = add(db, RepoId::generate().into(), &fields)?;
         if created {
@@ -1143,24 +1146,53 @@ pub(crate) fn prompted(db: &mut crate::store::Tx, run_id: Uuid) -> Result<(), Er
     Ok(())
 }
 
-/// `repo/update`: sets a repo entry's icon (0033), appending `repo.updated` when it changed.
+/// `repo/update`: sets a repo entry's icon (0033), or renames a Space (0069), appending
+/// `repo.updated` when something changed.
 pub(crate) async fn update_repo(
     daemon: &Arc<Daemon>,
     params: RepoUpdateParams,
 ) -> Result<RepoUpdateResult, ErrorObject> {
-    let RepoUpdateParams { repo, icon } = params;
-    crate::methods::project::check_icon(&icon)?;
-    let stored = crate::store::stored_icon(icon);
+    let RepoUpdateParams { repo, icon, name } = params;
+    if icon.is_none() && name.is_none() {
+        return Err(ErrorObject::invalid_params(
+            "repo/update needs an icon or a name",
+        ));
+    }
+    let stored = icon
+        .map(|icon| {
+            crate::methods::project::check_icon(&icon)?;
+            Ok::<_, ErrorObject>(crate::store::stored_icon(icon))
+        })
+        .transpose()?;
+    let name = name.as_deref().map(crate::spaces::check_name).transpose()?;
     store(daemon, move |db| {
-        let (row, changed) =
-            db.set_repo_icon(repo.into(), &stored)
-                .map_err(|error| match error {
-                    parallax_store::StoreError::NotFound { .. } => ErrorObject::parallax(
-                        ErrorKind::RepoNotFound,
-                        format!("no repo entry has id {repo}"),
-                    ),
-                    other => store_error(&other),
+        let not_found = |error: parallax_store::StoreError| match error {
+            parallax_store::StoreError::NotFound { .. } => ErrorObject::parallax(
+                ErrorKind::RepoNotFound,
+                format!("no repo entry has id {repo}"),
+            ),
+            other => store_error(&other),
+        };
+        let mut changed = false;
+        if let Some(name) = &name {
+            let current = db
+                .get_repo(repo.into())
+                .map_err(|e| store_error(&e))?
+                .ok_or_else(|| {
+                    not_found(parallax_store::StoreError::NotFound { id: repo.into() })
                 })?;
+            if !current.fields.space {
+                return Err(ErrorObject::invalid_params("only a Space can be renamed"));
+            }
+            changed |= db.rename_repo(repo.into(), name).map_err(not_found)?.1;
+        }
+        if let Some(icon) = &stored {
+            changed |= db.set_repo_icon(repo.into(), icon).map_err(not_found)?.1;
+        }
+        let row = db
+            .get_repo(repo.into())
+            .map_err(|e| store_error(&e))?
+            .ok_or_else(|| not_found(parallax_store::StoreError::NotFound { id: repo.into() }))?;
         let repo = repo_entry(row)?;
         if changed {
             db.stage(

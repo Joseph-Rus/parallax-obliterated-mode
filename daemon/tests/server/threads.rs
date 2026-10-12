@@ -10,16 +10,16 @@ use std::time::Duration;
 use parallax_protocol::jsonrpc::{ErrorObject, INVALID_PARAMS, Message, Notification, RequestId};
 use parallax_protocol::methods::{
     AgentAccept, AgentCancel, AgentEvents, AgentList, AgentSend, EventsEvent, EventsSubscribe,
-    HostHealth, NotificationMethod, RepoAdd, RepoRefs, RepoUpdate, RequestMethod, ThreadArchive,
-    ThreadDelete, ThreadList, ThreadStart, ThreadUpdate,
+    HostHealth, NotificationMethod, RepoAdd, RepoRefs, RepoUpdate, RequestMethod, SpaceCreate,
+    SpaceDelete, ThreadArchive, ThreadDelete, ThreadList, ThreadStart, ThreadUpdate,
 };
 use parallax_protocol::{
     AcceptId, AccountChoice, AgentAcceptParams, AgentCancelParams, AgentEffort, AgentEventsParams,
     AgentListParams, AgentPermission, AgentSendParams, AgentStatus, ErrorKind, EventsEventParams,
     EventsSubscribeParams, HostHealthParams, ImageMediaType, ParallaxEvent, ProjectIcon, ProjectId,
     PromptImage, Provider, Repo, RepoAddParams, RepoId, RepoRefsParams, RepoUpdateParams, RunId,
-    ThreadArchiveParams, ThreadDeleteParams, ThreadListParams, ThreadListResult, ThreadStartParams,
-    ThreadUpdateParams, TurnId,
+    SpaceCreateParams, SpaceDeleteParams, ThreadArchiveParams, ThreadDeleteParams,
+    ThreadListParams, ThreadListResult, ThreadStartParams, ThreadUpdateParams, TurnId,
 };
 use plxd::backend::fake::{FakeBackend, Script, Step};
 use plxd::backend::process::{CancelPolicy, Environment, Launcher};
@@ -1789,7 +1789,8 @@ async fn a_repo_icon_takes_an_image_and_a_glyph_clears_it() {
     let updated = client
         .call::<RepoUpdate>(RepoUpdateParams {
             repo: repo.id,
-            icon: with_image.clone(),
+            icon: Some(with_image.clone()),
+            name: None,
         })
         .await
         .unwrap()
@@ -1809,13 +1810,14 @@ async fn a_repo_icon_takes_an_image_and_a_glyph_clears_it() {
     let too_large = client
         .call::<RepoUpdate>(RepoUpdateParams {
             repo: repo.id,
-            icon: ProjectIcon {
+            icon: Some(ProjectIcon {
                 image: Some(PromptImage {
                     media_type: ImageMediaType::Png,
                     data: "A".repeat(64 * 1024 + 4),
                 }),
                 ..glyph.clone()
-            },
+            }),
+            name: None,
         })
         .await
         .unwrap_err();
@@ -1824,7 +1826,8 @@ async fn a_repo_icon_takes_an_image_and_a_glyph_clears_it() {
     let cleared = client
         .call::<RepoUpdate>(RepoUpdateParams {
             repo: repo.id,
-            icon: glyph.clone(),
+            icon: Some(glyph.clone()),
+            name: None,
         })
         .await
         .unwrap()
@@ -1907,7 +1910,8 @@ async fn threads_are_seen_snoozed_and_reordered_and_repos_take_icons() {
     let with_icon = client
         .call::<RepoUpdate>(RepoUpdateParams {
             repo: repo.id,
-            icon: icon.clone(),
+            icon: Some(icon.clone()),
+            name: None,
         })
         .await
         .unwrap()
@@ -1921,11 +1925,12 @@ async fn threads_are_seen_snoozed_and_reordered_and_repos_take_icons() {
     let bad = client
         .call::<RepoUpdate>(RepoUpdateParams {
             repo: repo.id,
-            icon: ProjectIcon {
+            icon: Some(ProjectIcon {
                 name: "Not An Icon".to_owned(),
                 color: None,
                 image: None,
-            },
+            }),
+            name: None,
         })
         .await
         .unwrap_err();
@@ -1933,7 +1938,8 @@ async fn threads_are_seen_snoozed_and_reordered_and_repos_take_icons() {
     let missing = client
         .call::<RepoUpdate>(RepoUpdateParams {
             repo: RepoId::generate(),
-            icon,
+            icon: Some(icon),
+            name: None,
         })
         .await
         .unwrap_err();
@@ -2050,4 +2056,76 @@ async fn a_retried_start_whose_parent_was_deleted_returns_the_thread() {
     let retried = client.call::<ThreadStart>(child.clone()).await.unwrap();
     assert_eq!(retried.thread.id, child.run_id);
     assert_eq!(retried.thread.parent, None);
+}
+
+/// A Space is a named repo entry with a repository plxd made: a chat started in it runs there, a
+/// rename keeps the chats, and deleting it removes the chats, its folder, and its entry.
+#[tokio::test]
+async fn a_space_holds_chats_and_deleting_it_removes_them() {
+    let host = Host::start(fake(editing()));
+    let mut client = host.client().await;
+    client.subscribe(0, None).await;
+
+    let id = RepoId::generate();
+    let create = SpaceCreateParams {
+        id,
+        name: " Research ".to_owned(),
+        icon: None,
+    };
+    let space = client
+        .call::<SpaceCreate>(create.clone())
+        .await
+        .unwrap()
+        .repo;
+    assert!(space.space);
+    assert_eq!(space.name, "Research");
+    assert_eq!(
+        PathBuf::from(&space.path),
+        host.data().join("spaces").join(id.to_string())
+    );
+    assert_eq!(
+        client.call::<SpaceCreate>(create).await.unwrap().repo,
+        space
+    );
+    let taken = client
+        .call::<SpaceCreate>(SpaceCreateParams {
+            id,
+            name: "Other".to_owned(),
+            icon: None,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(kind(&taken), ErrorKind::IdConflict);
+
+    let params = start_params(Some(id), "Summarize this paper");
+    let started = client.call::<ThreadStart>(params).await.unwrap();
+    assert_eq!(started.thread.repo, id);
+
+    let renamed = client
+        .call::<RepoUpdate>(RepoUpdateParams {
+            repo: id,
+            icon: None,
+            name: Some("Reading".to_owned()),
+        })
+        .await
+        .unwrap()
+        .repo;
+    assert_eq!(renamed.name, "Reading");
+    let listed = client.list().await;
+    assert_eq!(listed.threads.len(), 1);
+    assert!(listed.repos.iter().any(|repo| repo.id == id && repo.space));
+
+    client
+        .call::<SpaceDelete>(SpaceDeleteParams { space: id })
+        .await
+        .unwrap();
+    let listed = client.list().await;
+    assert!(listed.threads.is_empty());
+    assert!(listed.repos.iter().all(|repo| repo.id != id));
+    assert!(!host.data().join("spaces").join(id.to_string()).exists());
+    let gone = client
+        .call::<SpaceDelete>(SpaceDeleteParams { space: id })
+        .await
+        .unwrap_err();
+    assert_eq!(kind(&gone), ErrorKind::RepoNotFound);
 }

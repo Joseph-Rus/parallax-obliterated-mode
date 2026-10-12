@@ -94,6 +94,7 @@ const capabilities: Capabilities = Object.fromEntries(
     "sendModel",
     "sendOptions",
     "setupScripts",
+    "spaces",
     "threadAttention",
     "threadFork",
     "threadLineage",
@@ -815,9 +816,32 @@ const handlers: { [M in Method]?: Handler<M> } = {
   "repo/update": (p) => {
     const repo = db.repos.find((r) => r.id === p.repo);
     if (!repo) return fail("no such repo");
-    repo.icon = p.icon;
+    if (p.icon) repo.icon = p.icon;
+    if (p.name) repo.name = p.name;
     emit({ kind: "repo.updated", repo });
     return { repo };
+  },
+  "space/create": (p) => {
+    const found = db.repos.find((r) => r.id === p.id);
+    if (found) return { repo: found };
+    const repo = {
+      id: p.id,
+      name: p.name,
+      path: `/data/spaces/${p.id}`,
+      space: true,
+      ...(p.icon && { icon: p.icon }),
+      createdAt: now(),
+    };
+    db.repos.push(repo);
+    emit({ kind: "repo.added", repo });
+    return { repo };
+  },
+  "space/delete": (p) => {
+    if (!db.repos.some((r) => r.id === p.space && r.space)) return fail("no such space");
+    db.threads = db.threads.filter((t) => t.repo !== p.space);
+    db.repos = db.repos.filter((r) => r.id !== p.space);
+    emit({ kind: "repo.removed", repo: p.space });
+    return {};
   },
   "repo/refs": () => ({
     refs: [

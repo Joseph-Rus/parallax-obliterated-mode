@@ -250,6 +250,12 @@ pub enum ParallaxEvent {
         /// The entry as it stands.
         repo: Repo,
     },
+    /// `space/delete` removed a Space (0069), after its threads' `thread.deleted`. Host-level.
+    #[serde(rename = "repo.removed")]
+    RepoRemoved {
+        /// The removed entry's id.
+        repo: RepoId,
+    },
     /// `thread/start` started a normal thread (#110). Host-level; its run's `agent.*` events go
     /// to its repo entry's id.
     #[serde(rename = "thread.started")]

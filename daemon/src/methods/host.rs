@@ -124,6 +124,8 @@ pub(crate) fn initialize(
 /// under its coordinator, which an older plxd would silently ignore, starting a scratch thread.
 /// `projectFromThreads` (PLX-419, 0042): `project/fromThreads`, which makes a Project from
 /// threads on one repo entry, each with its own worktree.
+/// `spaces` (PLX-732, 0069): `space/create`, `space/delete`, `repo.removed`, `name` on
+/// `repo/update`, and `space` on `Repo`.
 /// `threadAttention` (PLX-270, 0033): `thread/update`, `repo/update`, `repo.updated`, and
 /// `seenAt`, `snoozedUntil`, and `lastPromptAt` on `Thread` and `icon` on `Repo`.
 /// `threadLineage` (PLX-369, 0041): `parent`, `forkedFrom`, `title`, and `settled` on `Thread`,
@@ -279,6 +281,7 @@ fn capabilities_advertised() -> Capabilities {
         ("sendModel".to_owned(), serde_json::Map::new()),
         ("sendOptions".to_owned(), serde_json::Map::new()),
         ("setupScripts".to_owned(), serde_json::Map::new()),
+        ("spaces".to_owned(), serde_json::Map::new()),
         ("terminals".to_owned(), serde_json::Map::new()),
         ("threadAttention".to_owned(), serde_json::Map::new()),
         (

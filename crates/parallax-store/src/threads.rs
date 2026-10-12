@@ -16,6 +16,8 @@ pub struct RepoFields {
     pub path: String,
     /// Whether this is plxd's scratch entry, for threads with no repo.
     pub scratch: bool,
+    /// Whether this is a Space (0069): a named group of chats, backed by a repository plxd made.
+    pub space: bool,
 }
 
 /// A repo entry row: a repository normal threads run in.
@@ -78,14 +80,22 @@ pub struct ThreadUpdate {
 }
 
 const REPO_COLUMNS: &str = "id, name, path, scratch, created_at, \
-    icon_name, icon_color, icon_image_type, icon_image_data";
+    icon_name, icon_color, icon_image_type, icon_image_data, space";
 const THREAD_COLUMNS: &str = "id, repo_id, archived, created_at, seen_at, snoozed_until, \
     COALESCE((SELECT MAX(created_at) FROM turns WHERE turns.run_id = threads.id), created_at) \
     AS last_prompt_at, (SELECT parent FROM runs WHERE runs.id = threads.id), forked_from_run, \
     forked_from_turn, title, settled";
 
 /// A repo entry's columns as TEXT, before the fallible conversion to [`Repo`].
-type RawRepo = (String, String, String, bool, String, Option<ProjectIcon>);
+type RawRepo = (
+    String,
+    String,
+    String,
+    bool,
+    String,
+    Option<ProjectIcon>,
+    bool,
+);
 
 fn repo_from_row(row: &Row<'_>) -> rusqlite::Result<RawRepo> {
     Ok((
@@ -95,17 +105,19 @@ fn repo_from_row(row: &Row<'_>) -> rusqlite::Result<RawRepo> {
         row.get(3)?,
         row.get(4)?,
         icon_from_row(row, 5)?,
+        row.get(9)?,
     ))
 }
 
 fn into_repo(raw: RawRepo) -> Result<Repo, StoreError> {
-    let (id, name, path, scratch, created_at, icon) = raw;
+    let (id, name, path, scratch, created_at, icon, space) = raw;
     Ok(Repo {
         id: Uuid::parse_str(&id)?,
         fields: RepoFields {
             name,
             path,
             scratch,
+            space,
         },
         icon,
         created_at: timestamp::parse(&created_at)?,
@@ -242,12 +254,14 @@ impl Store {
             return Err(StoreError::IdConflict { id });
         }
         tx.execute(
-            "INSERT INTO repos (id, name, path, scratch, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO repos (id, name, path, scratch, space, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 id.to_string(),
                 fields.name,
                 fields.path,
                 fields.scratch,
+                fields.space,
                 timestamp::now()
             ],
         )?;
@@ -516,6 +530,37 @@ impl Store {
         )?;
         let repo = fetch_repo(&self.conn, "id = ?1", &key)?.ok_or(StoreError::NotFound { id })?;
         Ok((repo, true))
+    }
+
+    /// Renames repo entry `id`. Returns the entry and whether the name changed.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::NotFound`] if no entry has `id`, or a database error.
+    pub fn rename_repo(&self, id: Uuid, name: &str) -> Result<(Repo, bool), StoreError> {
+        let key = id.to_string();
+        let before = fetch_repo(&self.conn, "id = ?1", &key)?.ok_or(StoreError::NotFound { id })?;
+        if before.fields.name == name {
+            return Ok((before, false));
+        }
+        self.conn.execute(
+            "UPDATE repos SET name = ?2 WHERE id = ?1",
+            params![key, name],
+        )?;
+        let repo = fetch_repo(&self.conn, "id = ?1", &key)?.ok_or(StoreError::NotFound { id })?;
+        Ok((repo, true))
+    }
+
+    /// Deletes repo entry `id`, once its threads are deleted. Returns whether it existed.
+    ///
+    /// # Errors
+    ///
+    /// A database error.
+    pub fn delete_repo(&self, id: Uuid) -> Result<bool, StoreError> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM repos WHERE id = ?1", params![id.to_string()])?
+            > 0)
     }
 
     /// Deletes thread `id` with its run and every row [`Store::delete_run`] deletes (#190,

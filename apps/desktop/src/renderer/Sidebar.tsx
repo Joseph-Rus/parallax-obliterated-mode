@@ -28,6 +28,7 @@ import {
   LoaderCircle,
   Palette,
   PanelLeftClose,
+  Pencil,
   Plus,
   Search,
   Server,
@@ -35,6 +36,7 @@ import {
   SquareDashed,
   SquarePen,
   SquareTerminal,
+  Trash2,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -919,6 +921,37 @@ function RepoFilterMenu({
   const picker = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<{ view: ThreadsView; repo: Repo }>();
+  // The Space dialog's subject: a new Space, or one to rename or delete (0069).
+  const [spaceDialog, setSpaceDialog] = useState<
+    { kind: "new" | "rename" | "delete"; view: ThreadsView; repo?: Repo } | undefined
+  >();
+  const [spaceName, setSpaceName] = useState("");
+  const [spaceError, setSpaceError] = useState<string>();
+  const spaceRef = useRef<HTMLDialogElement>(null);
+  const openSpaceDialog = (next: NonNullable<typeof spaceDialog>) => {
+    setSpaceName(next.repo?.name ?? "");
+    setSpaceError(undefined);
+    setSpaceDialog(next);
+    menu.current?.hidePopover();
+    // After this render, which mounts the dialog.
+    queueMicrotask(() => spaceRef.current?.showModal());
+  };
+  const saveSpace = async () => {
+    if (!spaceDialog) return;
+    const { kind, view, repo } = spaceDialog;
+    const name = spaceName.trim();
+    const error =
+      kind === "new"
+        ? await view.createSpace(name)
+        : kind === "rename"
+          ? await view.renameSpace(repo!.id, name)
+          : await view.deleteSpace(repo!.id);
+    setSpaceError(error);
+    if (error) spaceRef.current?.showModal();
+    else setSpaceDialog(undefined);
+  };
+  // ponytail: a new Space goes on the first host that has Spaces; add a host choice if it matters.
+  const spaceHost = hosts.find(({ view }) => "spaces" in view.capabilities)?.view;
   const q = query.trim().toLowerCase();
   const repos = hosts.flatMap(({ host, view }) =>
     view.state.repos
@@ -1017,27 +1050,99 @@ function RepoFilterMenu({
                 {many && <span className="shrink-0 text-faint-foreground">{host.name}</span>}
                 {check(filter === key)}
               </button>
-              {"threadAttention" in view.capabilities && (
-                <button
-                  type="button"
-                  aria-label={`Change ${repo.name}'s icon`}
-                  title="Change icon"
-                  onClick={(e) => {
-                    setEditing({ view, repo });
-                    picker.current?.showPopover({ source: e.currentTarget });
-                  }}
-                  className="absolute top-1/2 right-1 grid size-6 -translate-y-1/2 place-items-center rounded-md text-faint-foreground opacity-0 group-hover/repo:opacity-100 hover:bg-hover hover:text-foreground focus-visible:opacity-100 [&_svg]:size-3.5"
-                >
-                  <Settings />
-                </button>
-              )}
+              <div className="absolute top-1/2 right-1 flex -translate-y-1/2 gap-0.5 opacity-0 group-hover/repo:opacity-100 focus-within:opacity-100">
+                {repo.space && "spaces" in view.capabilities && (
+                  <>
+                    <button
+                      type="button"
+                      aria-label={`Rename ${repo.name}`}
+                      title="Rename"
+                      onClick={() => openSpaceDialog({ kind: "rename", view, repo })}
+                      className="grid size-6 place-items-center rounded-md text-faint-foreground hover:bg-hover hover:text-foreground [&_svg]:size-3.5"
+                    >
+                      <Pencil />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${repo.name}`}
+                      title="Delete"
+                      onClick={() => openSpaceDialog({ kind: "delete", view, repo })}
+                      className="grid size-6 place-items-center rounded-md text-faint-foreground hover:bg-hover hover:text-foreground [&_svg]:size-3.5"
+                    >
+                      <Trash2 />
+                    </button>
+                  </>
+                )}
+                {"threadAttention" in view.capabilities && (
+                  <button
+                    type="button"
+                    aria-label={`Change ${repo.name}'s icon`}
+                    title="Change icon"
+                    onClick={(e) => {
+                      setEditing({ view, repo });
+                      picker.current?.showPopover({ source: e.currentTarget });
+                    }}
+                    className="grid size-6 place-items-center rounded-md text-faint-foreground hover:bg-hover hover:text-foreground [&_svg]:size-3.5"
+                  >
+                    <Settings />
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}
         {q && repos.length === 0 && (
           <p className="px-2 py-1.5 text-[12.5px] text-faint-foreground">No repos match</p>
         )}
+        {spaceHost && !q && (
+          <button
+            type="button"
+            role="menuitem"
+            className={`${menuItem} mt-1 border-t border-border`}
+            onClick={() => openSpaceDialog({ kind: "new", view: spaceHost })}
+          >
+            <Plus aria-hidden />
+            New Space
+          </button>
+        )}
       </div>
+      {spaceDialog && (
+        <SettingDialog
+          ref={spaceRef}
+          label={
+            spaceDialog.kind === "new"
+              ? "New Space"
+              : spaceDialog.kind === "rename"
+                ? `Rename ${spaceDialog.repo?.name}`
+                : `Delete ${spaceDialog.repo?.name}`
+          }
+          action={
+            spaceDialog.kind === "new"
+              ? "Create"
+              : spaceDialog.kind === "rename"
+                ? "Rename"
+                : "Delete"
+          }
+          onSave={() => void saveSpace()}
+        >
+          {spaceDialog.kind === "delete" ? (
+            <p className="text-[13px] text-muted-foreground">
+              Delete {spaceDialog.repo?.name} and every chat in it? This can't be undone.
+            </p>
+          ) : (
+            <label className="block text-[13px]">
+              Name
+              <input
+                autoFocus
+                value={spaceName}
+                onChange={(e) => setSpaceName(e.target.value)}
+                className="mt-1 w-full rounded-md border border-border bg-transparent px-2 py-1.5 focus-visible:outline-none"
+              />
+            </label>
+          )}
+          {spaceError && <p className="mt-2 text-[12.5px] text-danger">{spaceError}</p>}
+        </SettingDialog>
+      )}
       {/* Each pick saves at once; the picker stays open for the next. */}
       <IconPicker
         ref={picker}

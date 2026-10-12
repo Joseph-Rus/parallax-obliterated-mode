@@ -262,6 +262,8 @@ async fn route(context: &Context, request: &Request) -> Result<Value, ErrorObjec
         ThreadSearch => |p| threads::search(daemon, p),
         RepoAdd => |p| threads::add_repo(daemon, p),
         RepoUpdate => |p| threads::update_repo(daemon, p),
+        SpaceCreate => |p| crate::spaces::create(daemon, p),
+        SpaceDelete => |p| thread::space_delete(context, p),
         RepoRefs => |p| threads::refs(daemon, p),
         RepoFiles => |p| composer::files(context, p),
         AgentStart => |p| agent::start(context, p),

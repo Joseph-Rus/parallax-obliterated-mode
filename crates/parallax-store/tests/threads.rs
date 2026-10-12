@@ -16,6 +16,7 @@ fn repo_fields(path: &str) -> RepoFields {
         name: path.rsplit('/').next().unwrap().to_owned(),
         path: path.to_owned(),
         scratch: false,
+        space: false,
     }
 }
 
@@ -142,6 +143,7 @@ fn the_scratch_entry_is_found_by_its_flag() {
                 name: "No Repo".to_owned(),
                 path: "/data/scratch".to_owned(),
                 scratch: true,
+                space: false,
             },
         )
         .unwrap();
@@ -730,4 +732,22 @@ fn deleting_a_parent_leaves_its_children_with_no_parent() {
     assert_eq!(orphan.fields.forked_from, None);
     assert_eq!(store.get_run(child).unwrap().unwrap().fields.parent, None);
     assert_eq!(store.get_thread(other).unwrap(), Some(untouched));
+}
+
+#[test]
+fn a_space_is_renamed_and_deleted() {
+    let (_dir, mut store) = open();
+    let id = Uuid::now_v7();
+    let fields = RepoFields {
+        space: true,
+        ..repo_fields("/data/spaces/one")
+    };
+    assert!(store.add_repo(id, &fields).unwrap().fields.space);
+    let (renamed, changed) = store.rename_repo(id, "Research").unwrap();
+    assert!(changed);
+    assert_eq!(renamed.fields.name, "Research");
+    assert!(!store.rename_repo(id, "Research").unwrap().1);
+    assert!(store.delete_repo(id).unwrap());
+    assert!(!store.delete_repo(id).unwrap());
+    assert_eq!(store.get_repo(id).unwrap(), None);
 }
