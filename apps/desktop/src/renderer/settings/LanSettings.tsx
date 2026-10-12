@@ -1,10 +1,15 @@
 import { Plus, Wifi } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { RemotePairResult, RemoteSessionsResult } from "../../protocol/generated/protocol";
+import type {
+  RelayHost,
+  RemotePairResult,
+  RemoteSessionsResult,
+} from "../../protocol/generated/protocol";
 import { statusLabel, useConnection } from "../ConnectionStatus";
 import { localId, useHosts, type Host } from "../hosts";
 import {
+  dangerButton,
   primaryButton,
   quietButton,
   Row,
@@ -25,11 +30,12 @@ const GRANTS =
 /**
  * Settings > Connections' Same network section (PLX-641, 0065). Its switch, the local plxd's
  * `remote`, has it listen for paired computers over HTTPS with its own pinned certificate, and Open
- * in a browser, its `remoteWeb`, also serves the app there for a browser to pair with (PLX-651). Pair a
- * device shows a short one-time code while this computer advertises itself by name over mDNS, and
- * the computers paired with this one can be revoked, even with the switch off. Below, the
- * computers this app paired with, each with its connection and Remove, and Add computer, which
- * finds the computers showing a code, or takes an address, then the code.
+ * in a browser, its `remoteWeb`, also serves the app there for a browser to pair with (PLX-651).
+ * Reach from anywhere, its `relay`, registers it with Parallax Relay and keeps it connected there,
+ * and lists the account's computers on the relay, each with Remove (PLX-652). Pair a device shows a short one-time code while this computer advertises itself by
+ * name over mDNS, and the computers paired with this one can be revoked, even with the switch off.
+ * Below, the computers this app paired with, each with its connection and Remove, and Add
+ * computer, which finds the computers showing a code, or takes an address, then the code.
  */
 export function LanSettings() {
   const local = useConnection(localId);
@@ -37,6 +43,11 @@ export function LanSettings() {
   const computers = useHosts().filter((h) => h.routes);
   const [on, setOn] = useState<boolean>();
   const [web, setWeb] = useState<boolean>();
+  const [relay, setRelay] = useState<boolean>();
+  // The account's computers on the relay, while Reach from anywhere is on.
+  const [relayHosts, setRelayHosts] = useState<RelayHost[]>();
+  // The relay host whose Remove is waiting for a second click.
+  const [confirmingRelay, setConfirmingRelay] = useState<string>();
   // The code on show, and how many computers were paired when it was made.
   const [code, setCode] = useState<RemotePairResult & { before: number }>();
   const [status, setStatus] = useState<RemoteSessionsResult>();
@@ -54,14 +65,22 @@ export function LanSettings() {
       if (!("result" in answer)) return;
       setOn(answer.result.remote);
       setWeb(answer.result.remoteWeb);
+      setRelay(answer.result.relay);
     });
     void readSessions();
   }, [connected]);
+  useEffect(() => {
+    if (!connected || !on || !relay) return setRelayHosts(undefined);
+    void window.parallax.relayHosts().then((hosts) => {
+      if (typeof hosts !== "string") setRelayHosts(hosts);
+    });
+  }, [connected, on, relay]);
   // While a code is up, a computer that pairs shows up here, and the code goes, as it does once
   // plxd ends the pairing: used, locked, or expired. A bind that failed shows up too.
   const showing =
     code && sessions.length <= code.before && status?.pairing !== false ? code : undefined;
-  const polling = !!showing || (on && !status?.listening);
+  const polling =
+    !!showing || (on && !status?.listening) || (on && relay && !status?.relay?.connected);
   useEffect(() => {
     if (!polling) return;
     const timer = setInterval(() => void readSessions(), 2000);
@@ -81,6 +100,23 @@ export function LanSettings() {
     if ("error" in answer) return setError(answer.error.message);
     setError(undefined);
     setWeb(answer.result.remoteWeb);
+  };
+  // On, it registers this computer under the signed-in account first: main sends the token to plxd.
+  const toggleRelay = async (next: boolean) => {
+    const failed = next ? await window.parallax.registerRelay() : undefined;
+    if (failed) return setError(failed);
+    const answer = await window.parallax.request(localId, "host/settings/set", { relay: next });
+    if ("error" in answer) return setError(answer.error.message);
+    setError(undefined);
+    setRelay(answer.result.relay);
+    void readSessions();
+  };
+  const removeRelayHost = async (hostId: string) => {
+    setConfirmingRelay(undefined);
+    const hosts = await window.parallax.removeRelayHost(hostId);
+    if (typeof hosts === "string") return setError(hosts);
+    setError(undefined);
+    setRelayHosts(hosts);
   };
   const pair = async () => {
     const answer = await window.parallax.request(localId, "remote/pair", {});
@@ -146,6 +182,75 @@ export function LanSettings() {
             />
           </Row>
         )}
+        {on && relay !== undefined && (
+          <Row
+            title="Reach from anywhere"
+            description={
+              <>
+                Your devices signed in to your Parallax account reach this computer through Parallax
+                Relay, and webhooks get a public address. The relay passes only encrypted traffic,
+                so it can't read your threads. Pair each device once, as on this network. An account
+                holds 10 computers on the relay: remove the ones you no longer use below.
+                {relay && (
+                  <span role="status" className="mt-1 block text-foreground">
+                    {status?.relay?.connected
+                      ? "Connected to the relay."
+                      : (status?.relay?.problem ?? "Connecting to the relay…")}
+                  </span>
+                )}
+              </>
+            }
+          >
+            <Switch
+              label="Reach from anywhere"
+              checked={relay}
+              onChange={(next) => void toggleRelay(next)}
+            />
+          </Row>
+        )}
+        {on &&
+          relay &&
+          relayHosts?.map((h) => (
+            <Row
+              key={h.hostId}
+              title={h.name || "Unnamed computer"}
+              description={
+                confirmingRelay === h.hostId
+                  ? "Remove this computer from the relay? It stays off the relay until its Reach from anywhere switch is turned back on."
+                  : `On the relay${h.thisComputer ? ", this computer" : ""}. ${h.online ? "Connected." : "Not connected."}`
+              }
+            >
+              {/* Cancel takes Remove's place and focus, so a double click can't remove. */}
+              {confirmingRelay === h.hostId ? (
+                <>
+                  <button
+                    type="button"
+                    className={dangerButton}
+                    onClick={() => void removeRelayHost(h.hostId)}
+                  >
+                    Remove
+                  </button>
+                  <button
+                    type="button"
+                    autoFocus
+                    className={quietButton}
+                    onClick={() => setConfirmingRelay(undefined)}
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className={quietButton}
+                  aria-label={`Remove ${h.name || "Unnamed computer"} from the relay`}
+                  onClick={() => setConfirmingRelay(h.hostId)}
+                >
+                  Remove
+                </button>
+              )}
+            </Row>
+          ))}
         {on && status?.listening && (
           <Row
             title="Pair a device"
