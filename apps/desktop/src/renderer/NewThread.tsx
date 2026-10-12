@@ -362,7 +362,7 @@ export function NewThread({
               ?
             </h1>
             {group.id !== noRepo && (
-              <div className="relative z-20 mb-9 text-center">
+              <div className="relative mb-9 text-center">
                 {/* Its shortcut, Mod+Shift+N unless rebound, shows under it on hover or focus. */}
                 <button
                   type="button"
@@ -378,7 +378,7 @@ export function NewThread({
                   {noRepoKeys && (
                     <kbd
                       aria-hidden
-                      className="pointer-events-none invisible absolute top-full left-1/2 mt-1 -translate-x-1/2 rounded-md border border-border bg-surface px-2 py-1 font-sans text-[12px] text-muted-foreground group-hover:visible group-focus-visible:visible"
+                      className="pointer-events-none invisible absolute top-full left-1/2 z-20 mt-1 -translate-x-1/2 rounded-md border border-border bg-surface px-2 py-1 font-sans text-[12px] text-muted-foreground group-hover:visible group-focus-visible:visible"
                     >
                       {noRepoKeys}
                     </kbd>
