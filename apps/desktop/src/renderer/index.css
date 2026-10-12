@@ -1455,7 +1455,11 @@ body {
 
 /* A picked /skill or @file in the composer's text (Composer.tsx decorations). */
 .composer-token {
-  border-radius: 6px;
+  /* The bubble reaches 0.15em into the spaces around the text, so neighbors never touch it. */
+  margin: 0 -0.15em;
+  border-radius: 0.6em;
+  padding: 0.18em 0.3em;
+  box-decoration-break: clone;
   background: color-mix(in oklab, var(--accent) 16%, transparent);
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
   color: var(--accent);
