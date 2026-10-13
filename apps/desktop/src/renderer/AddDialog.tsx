@@ -4,8 +4,8 @@ import {
   ArrowUp,
   Folder,
   FolderGit2,
-  FolderKanban,
   FolderOpen,
+  Layers,
   MessagesSquare,
   Search,
 } from "lucide-react";
@@ -195,7 +195,7 @@ const menu: {
     kind: "project",
     name: "New Project",
     detail: "A focused chat where agents coordinate work",
-    icon: <FolderKanban />,
+    icon: <Layers />,
   },
   {
     kind: "space",

@@ -93,7 +93,7 @@ test("it draws nothing until it opens, then focuses its search box with the defa
   toggle("open");
   expect(document.activeElement).toBe(searchBox());
   expect(options()).toHaveLength(projectIcons.length);
-  expect(selected()).toEqual(["Folder kanban"]);
+  expect(selected()).toEqual(["Layers"]);
   // The accent is the default, so it's checked when no color is set.
   expect(checkedColor()).toBe("Accent");
   expect(grid().className).toContain("text-accent");

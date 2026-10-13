@@ -168,11 +168,11 @@ export interface IconChoice {
 // never Lucide's whole set. A name is stored on the host, so a Lucide rename keeps the old name
 // here and imports the new glyph; the test checks the old name is still Lucide's alias for it.
 const icons: [name: string, Icon: LucideIcon, keywords: string][] = [
-  ["folder-kanban", FolderKanban, "project board default"],
+  ["layers", Layers, "stack project default"],
   ["folder", Folder, "directory files"],
   ["folder-git-2", FolderGit2, "repository repo"],
   ["briefcase", Briefcase, "work business job"],
-  ["layers", Layers, "stack"],
+  ["folder-kanban", FolderKanban, "project board"],
   ["layout-grid", LayoutGrid, "apps tiles"],
   ["layout-dashboard", LayoutDashboard, "dashboard panels"],
   ["kanban", Kanban, "board columns tasks"],
@@ -336,7 +336,7 @@ export const projectIcons: IconChoice[] = icons.map(([name, Icon, keywords]) => 
 const iconsByName = new Map(projectIcons.map((i) => [i.name, i]));
 
 /** A Project's icon until one is chosen. Picking it sends it by name, since none can't be sent. */
-export const defaultIcon: ProjectIconValue = { name: "folder-kanban" };
+export const defaultIcon: ProjectIconValue = { name: "layers" };
 
 /**
  * A color an icon can take, as Tailwind classes: the accent, which has no key, then the palette's
@@ -366,12 +366,12 @@ export const iconColors: IconColor[] = [
 const colorsByKey = new Map(iconColors.map((c) => [c.key, c]));
 
 /**
- * How a Project's icon draws: its glyph and its color's text class. No icon is `FolderKanban` in
+ * How a Project's icon draws: its glyph and its color's text class. No icon is `Layers` in
  * the accent, and a name or color this app doesn't know falls back to that on its own (0032).
  */
 export function iconLook(icon?: ProjectIconValue): { Icon: LucideIcon; color: string } {
   return {
-    Icon: iconsByName.get(icon?.name ?? "")?.Icon ?? FolderKanban,
+    Icon: iconsByName.get(icon?.name ?? "")?.Icon ?? Layers,
     color: (icon?.color && colorsByKey.get(icon.color)?.text) || "text-accent",
   };
 }
