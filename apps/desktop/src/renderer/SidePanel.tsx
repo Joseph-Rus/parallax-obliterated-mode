@@ -187,15 +187,16 @@ export function SidePanel({
     if (!open) setTabs([...tabs, s]);
     setActive(open ?? s);
   };
-  // Closing the shown tab shows the one after it, or before it; closing the last shows the list.
-  // Focus moves to the shown tab, or to + with none shown, so it stays in the panel, where the
-  // list's letters work.
+  // Closing the shown tab shows the one after it, or before it; closing the last collapses the
+  // panel. Otherwise focus moves to the shown tab, or to + with none shown, so it stays in the
+  // panel, where the list's letters work.
   const closeView = (s: Surface) => {
     const i = shown.indexOf(s);
     const rest = shown.toSpliced(i, 1);
     const next = s === current ? rest[Math.min(i, rest.length - 1)] : current;
     setTabs(tabs.filter((t) => t !== s));
     setActive(next);
+    if (!rest.length) return onClose();
     document.getElementById(next ? `side-panel-tab-${next.key}` : "side-panel-open-view")?.focus();
   };
   const [changesOpened, setChangesOpened] = useState(changes);
