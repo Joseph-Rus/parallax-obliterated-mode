@@ -44,8 +44,16 @@ impl WorktreeManager {
     ///
     /// # Errors
     ///
-    /// [`WorktreeError::GitFailed`], [`WorktreeError::Timeout`], or [`WorktreeError::Spawn`].
+    /// [`WorktreeError::NotAGitRepo`] for an invalid checkout, [`WorktreeError::Io`] preparing
+    /// the temporary index, or [`WorktreeError::GitFailed`], [`WorktreeError::Timeout`],
+    /// or [`WorktreeError::Spawn`].
     pub async fn status(&self, folder: RunFolder<'_>) -> Result<GitStatus, WorktreeError> {
+        if let RunFolder::Checkout(path) = folder {
+            crate::repo::check(path).map_err(|error| WorktreeError::NotAGitRepo {
+                path: path.to_owned(),
+                detail: error.to_string(),
+            })?;
+        }
         let porcelain = self
             .folder_git_ok(
                 folder,
@@ -113,9 +121,19 @@ impl WorktreeManager {
             self.folder_git_ok(folder, &["hash-object", "-t", "tree", "--stdin"])
                 .await?
         };
+        // Seed from HEAD rather than the user's index: a staged deletion may already
+        // have been recreated in the working tree.
+        let temp = tempfile::tempdir().map_err(|source| WorktreeError::Io {
+            path: std::env::temp_dir(),
+            source,
+        })?;
+        let index = temp.path().join("index");
+        self.git_with_index(folder, &index, &["read-tree".into(), base.trim().into()])
+            .await?;
         let diff = self
-            .folder_git_ok(
+            .git_with_index(
                 folder,
+                &index,
                 &[
                     "diff",
                     "--numstat",
@@ -123,16 +141,18 @@ impl WorktreeManager {
                     "--no-textconv",
                     base.trim(),
                     "--",
-                ],
+                ]
+                .map(str::to_owned),
             )
             .await?;
         let counts = super::parse_numstat(&diff);
         let mut insertions = counts.insertions;
         let mut deletions = counts.deletions;
         let untracked = self
-            .folder_git_ok(
+            .git_with_index(
                 folder,
-                &["ls-files", "--others", "--exclude-standard", "-z"],
+                &index,
+                &["ls-files", "--others", "--exclude-standard", "-z"].map(str::to_owned),
             )
             .await?;
         for name in untracked

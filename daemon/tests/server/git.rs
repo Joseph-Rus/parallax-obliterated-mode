@@ -535,3 +535,37 @@ async fn repository_git_status_reads_checkout_without_starting_a_thread() {
         .unwrap_err();
     assert_eq!(kind(&missing), ErrorKind::RepoNotFound);
 }
+
+#[tokio::test]
+async fn repository_git_status_refuses_nested_checkout_with_missing_git_directory() {
+    use parallax_protocol::{RepoGitStatusParams, methods::RepoGitStatus};
+    let tools = Tools::new();
+    let dir = temp_dir();
+    let outer = real_repo(dir.path());
+    git(&outer, &["branch", "-m", "outer-branch"]);
+    let inner = real_repo(&outer);
+    git(&inner, &["branch", "-m", "inner-branch"]);
+    let host = start(temp_dir(), editing(), &tools);
+    let mut client = host.client().await;
+    let entry = client
+        .call::<RepoAdd>(RepoAddParams {
+            id: RepoId::generate(),
+            path: inner.to_string_lossy().into_owned(),
+        })
+        .await
+        .unwrap()
+        .repo;
+    let answer = client
+        .call::<RepoGitStatus>(RepoGitStatusParams { repo: entry.id })
+        .await
+        .unwrap();
+    assert_eq!(answer.branch.as_deref(), Some("inner-branch"));
+    fs::remove_dir_all(inner.join(".git")).unwrap();
+    fs::write(outer.join("outer.txt"), "outer change\n").unwrap();
+    let error = client
+        .call::<RepoGitStatus>(RepoGitStatusParams { repo: entry.id })
+        .await
+        .unwrap_err();
+    assert_eq!(kind(&error), ErrorKind::WorktreeFailed);
+    assert!(error.message.contains("has no .git"), "{error:?}");
+}
