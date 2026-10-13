@@ -1795,6 +1795,10 @@ export const mockBridge: ParallaxBridge = {
     ]),
   selectTerminalApp: (path) =>
     delay((mockTerminal = path.includes("Ghostty") ? "Ghostty" : "Terminal")),
+  command: () =>
+    delay({ state: "missing" as const, path: "/usr/local/bin/parallax", onPath: true }),
+  installCommand: () => delay(null),
+  removeCommand: () => delay(null),
 
   onProfile: (listener) => {
     listener({
