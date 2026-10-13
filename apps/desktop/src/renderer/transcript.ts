@@ -104,6 +104,8 @@ type ItemBody =
   | ({ kind: "htmlRender"; key: string; runId: string } & HtmlRenderRef)
   /** A browser recording the agent stopped with preview_recording_stop (PLX-639). */
   | { kind: "recording"; key: string; runId: string; attachmentId: string }
+  /** Files the agent presented with present_files (PLX-755), from run `runId`'s folder. */
+  | { kind: "files"; key: string; files: DocRef[] }
   /** A setup or settle script (PLX-650), as its latest `thread.script` has it. */
   | ({ kind: "script"; key: string; runId: string } & ThreadScript);
 
@@ -118,6 +120,34 @@ export interface HtmlRenderRef {
   attachmentId: string;
   title: string;
   height: number;
+}
+
+export type DocKind = "docx" | "xlsx" | "pptx" | "pdf";
+
+/** A file present_files showed (PLX-755): its run, its path in the run's folder, its name, and type. */
+export interface DocRef {
+  runId: string;
+  path: string;
+  name: string;
+  kind: DocKind;
+}
+
+/** The files a present_files output names, or undefined for anything else. */
+export function presentedFiles(runId: string, output?: string): DocRef[] | undefined {
+  try {
+    const { presentedFiles } = JSON.parse(output ?? "") as { presentedFiles?: unknown };
+    if (!Array.isArray(presentedFiles)) return undefined;
+    const files = presentedFiles.flatMap((file: Partial<DocRef>) =>
+      typeof file.path === "string" &&
+      typeof file.name === "string" &&
+      (["docx", "xlsx", "pptx", "pdf"] as unknown[]).includes(file.kind)
+        ? [{ runId, path: file.path, name: file.name, kind: file.kind as DocKind }]
+        : [],
+    );
+    return files.length ? files : undefined;
+  } catch {
+    return undefined; // Not JSON, or cut short.
+  }
 }
 
 /** The recording a preview_recording_stop output names, by its attachment id. */
@@ -684,6 +714,13 @@ function applyOutput(
           : undefined;
       if (recorded)
         items.push({ kind: "recording", key: `${key}:video`, runId, attachmentId: recorded });
+      const files =
+        i >= 0 &&
+        item.status === "ok" &&
+        (items[i] as { name: string | null }).name === `${plxdTools}present_files`
+          ? presentedFiles(runId, item.output)
+          : undefined;
+      if (files) items.push({ kind: "files", key: `${key}:files`, files });
       break;
     }
     case "todoList":
