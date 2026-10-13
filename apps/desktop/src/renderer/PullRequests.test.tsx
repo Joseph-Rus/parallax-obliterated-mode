@@ -212,6 +212,19 @@ test("one whose checks run is read again every RUNNING_POLL_MS, until they end",
   expect(request).toHaveBeenCalledOnce();
 });
 
+test("focus reads again a pull request not read within RUNNING_POLL_MS", async () => {
+  vi.useFakeTimers({ now, toFake: ["Date", "setInterval", "clearInterval"] });
+  read = { [url(42)]: prOf(42, { checks: [], checksState: undefined }) };
+  await render([url(42)], () => null);
+  request.mockClear();
+  await act(async () => void window.dispatchEvent(new Event("focus")));
+  expect(request).not.toHaveBeenCalled();
+  vi.setSystemTime(now + RUNNING_POLL_MS);
+  await act(async () => void window.dispatchEvent(new Event("focus")));
+  await settle();
+  expect(request).toHaveBeenCalledOnce();
+});
+
 test("a check running longer than STUCK_MS waits for POLL_MS", async () => {
   vi.useFakeTimers({ now, toFake: ["Date", "setInterval", "clearInterval"] });
   const stuck = { name: "deploy", state: "pending" as const, startedAt: "2026-10-02T11:00:00Z" };

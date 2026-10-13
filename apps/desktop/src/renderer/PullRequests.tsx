@@ -152,18 +152,20 @@ export function usePullRequests(
     const timer = setInterval(() => readAgain(slow), POLL_MS);
     return () => clearInterval(timer);
   }, [slow, poll, readAgain]);
-  // Focus reads again only the ones not read within RUNNING_POLL_MS.
-  const fresh = (url: string) => {
-    const at = read[`${runId} ${url}`]?.at;
-    return !!at && Date.now() - Date.parse(at) < RUNNING_POLL_MS;
-  };
-  const all = live.filter((url) => !fresh(url)).join("\n");
+  // Focus reads again only the ones not read within RUNNING_POLL_MS, as of the focus.
+  const latest = useRef(read);
+  latest.current = read;
+  const all = live.join("\n");
   useEffect(() => {
     if (!poll) return;
-    const focus = () => readAgain(all);
+    const stale = (url: string) => {
+      const at = latest.current[`${runId} ${url}`]?.at;
+      return !at || Date.now() - Date.parse(at) >= RUNNING_POLL_MS;
+    };
+    const focus = () => readAgain(all.split("\n").filter(stale).join("\n"));
     window.addEventListener("focus", focus);
     return () => window.removeEventListener("focus", focus);
-  }, [all, poll, readAgain]);
+  }, [all, poll, readAgain, runId]);
   return {
     urls,
     get: (url) => read[`${runId} ${url}`],
@@ -479,6 +481,14 @@ function ChecksList({
     [count("passed"), "passed"],
     [count("skipped"), "skipped"],
   ].filter(([n]) => n);
+  // A check's URL, workflow, and name, counted, since statuses can share all three.
+  const seen = new Map<string, number>();
+  const keyOf = (c: PrCheck) => {
+    const key = `${c.url} ${c.workflow} ${c.name}`;
+    const n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    return `${key} ${n}`;
+  };
   const sorted = [...checks].sort(
     (a, b) => (checkOrder[a.state] ?? 3) - (checkOrder[b.state] ?? 3),
   );
@@ -488,15 +498,8 @@ function ChecksList({
         {counts.map(([n, what]) => `${n} ${what}`).join(" · ") || "No checks"}
       </p>
       <ul className="flex max-h-[60vh] flex-col overflow-y-auto">
-        {sorted.map((c, i) => (
-          <CheckRow
-            // A job's URL is its own; two checks can share a workflow and name.
-            key={c.url ?? `${c.workflow} ${c.name} ${i}`}
-            check={c}
-            now={now}
-            onOpen={onOpen}
-            onFix={() => onFix(c)}
-          />
+        {sorted.map((c) => (
+          <CheckRow key={keyOf(c)} check={c} now={now} onOpen={onOpen} onFix={() => onFix(c)} />
         ))}
       </ul>
     </>
