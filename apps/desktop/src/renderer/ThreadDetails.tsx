@@ -1,18 +1,20 @@
-import { ClipboardList, FolderGit2, FolderOpen, Monitor } from "lucide-react";
+import { ClipboardList, FolderGit2, FolderOpen } from "lucide-react";
 import { useLayoutEffect, useState, type ComponentProps } from "react";
 
 import { Actions } from "./Actions";
 import { GitMenu } from "./GitMenu";
 import { LineageSection } from "./Lineage";
 import { OpenMenu } from "./OpenMenu";
+import { hostIcon } from "./RunTargetMenu";
+import type { Host } from "./hosts";
 import { IconButton } from "./ui";
 
 /** Where whether Thread details is shown is kept, for every thread. */
 export const THREAD_DETAILS_KEY = "parallax.threadDetails";
 export const THREAD_DETAILS_ID = "thread-details";
 
-/** The docked card's width, `w-84`, with its right gap. */
-const DOCKED_WIDTH = 348;
+/** The docked card's width, `w-72`, with its right gap. */
+const DOCKED_WIDTH = 300;
 /** The least of its row the thread keeps beside the docked card; below it the card floats. */
 export const THREAD_MIN_SHARE = 0.6;
 
@@ -87,8 +89,7 @@ export function ThreadDetailsButton({ open, onToggle }: { open: boolean; onToggl
  */
 export function ThreadDetails({
   mode,
-  hostName,
-  hostId,
+  host,
   folder,
   worktree,
   actions,
@@ -96,8 +97,7 @@ export function ThreadDetails({
   lineage,
 }: {
   mode: ThreadDetailsMode;
-  hostName: string;
-  hostId: string;
+  host: Host;
   folder?: string;
   worktree?: boolean;
   actions?: ComponentProps<typeof Actions>;
@@ -112,32 +112,29 @@ export function ThreadDetails({
       data-mode={mode}
       // Docked, it takes room in the thread's row; floating, it hovers over the thread's right.
       // Either way it's an opaque card sized to its rows, scrolling at the row's height.
-      className={`flex w-84 flex-col py-2 pr-3 ${
+      className={`flex w-72 flex-col py-2 pr-3 ${
         mode === "floating"
           ? "pointer-events-none absolute inset-y-0 right-0 z-30 max-w-[calc(100%-1rem)]"
           : "shrink-0"
       }`}
     >
-      <div className="pointer-events-auto max-h-full overflow-y-auto rounded-xl border border-border bg-surface text-foreground shadow-composer">
+      <div className="pointer-events-auto max-h-full overflow-y-auto rounded-xl border border-border bg-surface text-foreground shadow-composer [&_svg]:size-[18px] [&_img]:size-[18px]">
         <section aria-label="Workspace" className="p-2">
-          <div className="flex items-start gap-2 px-2 py-2 text-[13px]">
-            <Monitor aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-medium">{hostName}</p>
-              <p
-                title={folder}
-                className="mt-1 flex items-center gap-1.5 text-[11.5px] text-faint-foreground"
-              >
-                {worktree ? (
-                  <FolderGit2 aria-hidden className="size-3.5 shrink-0" />
-                ) : (
-                  <FolderOpen aria-hidden className="size-3.5 shrink-0" />
-                )}
-                <span className="truncate">{folder ?? "No folder yet"}</span>
-              </p>
-            </div>
+          <div
+            title={folder ?? "No folder yet"}
+            className="flex items-center gap-2 px-2 py-2 text-[13px]"
+          >
+            <span aria-hidden className="shrink-0 text-muted-foreground">
+              {hostIcon(host)}
+            </span>
+            {worktree ? (
+              <FolderGit2 aria-hidden className="shrink-0 text-muted-foreground" />
+            ) : (
+              <FolderOpen aria-hidden className="shrink-0 text-muted-foreground" />
+            )}
+            <span className="truncate font-medium">{host.name}</span>
           </div>
-          <OpenMenu hostId={hostId} folder={folder} />
+          <OpenMenu hostId={host.id} folder={folder} />
           {actions && <Actions {...actions} />}
         </section>
         {git && (

@@ -112,7 +112,7 @@ impl WorktreeManager {
     }
 
     /// Runs `git args` in `folder` with `index` as its index, and returns its stdout.
-    async fn git_with_index(
+    pub(super) async fn git_with_index(
         &self,
         folder: RunFolder<'_>,
         index: &Path,

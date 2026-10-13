@@ -28,7 +28,7 @@ pub(crate) enum GitAction {
 
 /// A run's folder, owned: where its git calls run, the worktree's pinned git folder, and the
 /// user's checkout, which pushes and gives the commit identity.
-struct Folder {
+pub(super) struct Folder {
     path: PathBuf,
     git_dir: Option<PathBuf>,
     repo: PathBuf,
@@ -195,7 +195,7 @@ impl Actor {
         .map(PathBuf::from)
     }
 
-    async fn folder(&self) -> Result<Folder, ErrorObject> {
+    pub(super) async fn folder(&self) -> Result<Folder, ErrorObject> {
         if self.row.fields.checkout {
             let path = self.checkout_path().await?;
             return Ok(Folder {
@@ -212,6 +212,21 @@ impl Actor {
                 "run {}'s worktree has no recorded git folder, so plxd can't use it safely",
                 self.id
             )));
+        }
+        if let Err(error) = tokio::fs::metadata(&worktree.path).await {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                return Err(ErrorObject::parallax(
+                    ErrorKind::WorktreeMissing,
+                    format!(
+                        "The thread's worktree no longer exists: {} ({error})",
+                        worktree.path
+                    ),
+                ));
+            }
+            return Err(ErrorObject::parallax(
+                ErrorKind::WorktreeFailed,
+                error.to_string(),
+            ));
         }
         Ok(Folder {
             path: PathBuf::from(&worktree.path),

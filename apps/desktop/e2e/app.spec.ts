@@ -21,7 +21,7 @@ let page: Page;
 
 /**
  * Waits until Thread details shows as its row's width calls for (ThreadDetails.tsx): with room,
- * docked if kept so; without it (the thread would keep under 60% of the row beside the 348px
+ * docked if kept so; without it (the thread would keep under 60% of the row beside the 300px
  * card), collapsed or floating. Resizes reach it a frame later.
  */
 async function settled(panel: Locator) {
@@ -29,7 +29,7 @@ async function settled(panel: Locator) {
     .poll(() =>
       panel.evaluate((aside) => {
         const width = aside.parentElement!.getBoundingClientRect().width;
-        const narrow = width - 348 < width * 0.6;
+        const narrow = width - 300 < width * 0.6;
         const mode = aside.dataset["mode"];
         const kept = localStorage.getItem("parallax.threadDetails") === "open";
         const ok = narrow ? mode !== "docked" : mode === (kept ? "docked" : "hidden");

@@ -1,4 +1,8 @@
 // @vitest-environment happy-dom
+import cursorIcon from "./assets/cursor.svg";
+import ghosttyIcon from "./assets/ghostty.svg";
+import vscodeIcon from "./assets/vscode.svg";
+import alacrittyIcon from "./assets/alacritty.svg";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
@@ -55,7 +59,7 @@ const button = (text: string) =>
 test("editor and terminal selectors are separate, and selection preserves the other preference", async () => {
   await render();
   expect(document.querySelector('[aria-label="Open in Cursor"] img')?.getAttribute("src")).toBe(
-    "data:image/png;base64,Y3Vyc29y",
+    cursorIcon,
   );
   expect(
     [...menu("Open in").querySelectorAll("span.flex-1")].map((span) => span.textContent),
@@ -95,4 +99,30 @@ test("remote terminal launch and selection explain why they are disabled", async
   expect(
     document.querySelector<HTMLButtonElement>('[aria-label="Choose terminal"]')!.disabled,
   ).toBe(true);
+});
+
+test("supplied editor and terminal SVGs take priority while Finder and Terminal retain system icons", async () => {
+  window.parallax.openTargetIcons = async () => ({
+    files: "finder-system-icon",
+    terminal: "terminal-system-icon",
+    vscode: "old-raster",
+  });
+  window.parallax.terminalApps = async () => [
+    { path: "/Applications/Ghostty.app", name: "Ghostty" },
+    { path: "/Applications/Alacritty.app", name: "Alacritty" },
+    { path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" },
+  ];
+  await render();
+  expect(item("Open in", "VS Code").querySelector("img")?.getAttribute("src")).toBe(vscodeIcon);
+  expect(item("Open in", "Finder").querySelector("img")?.getAttribute("src")).toBe(
+    "finder-system-icon",
+  );
+  expect(item("Terminals", "Ghostty").querySelector("img")?.getAttribute("src")).toBe(ghosttyIcon);
+  expect(item("Terminals", "Alacritty").querySelector("img")?.getAttribute("src")).toBe(
+    alacrittyIcon,
+  );
+  await act(async () => item("Terminals", "Terminal").click());
+  expect(button("Open in Terminal").querySelector("img")?.getAttribute("src")).toBe(
+    "terminal-system-icon",
+  );
 });

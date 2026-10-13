@@ -1285,3 +1285,159 @@ async fn worktree_git_commands_ignore_a_rewritten_git_file() {
 
 mod checkpoint;
 mod review;
+
+#[tokio::test]
+async fn git_status_counts_net_edits_untracked_binary_and_unborn_files() {
+    use super::RunFolder;
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-b", "main"]);
+    let mgr = manager(&dir.path().join("data"));
+    std::fs::write(repo.join("staged.txt"), "one\ntwo\n").unwrap();
+    git(&repo, &["add", "."]);
+    std::fs::write(repo.join("staged.txt"), "one\n").unwrap();
+    std::fs::write(repo.join("new\tfile.txt"), "three\nfour").unwrap();
+    std::fs::write(repo.join("binary.bin"), b"\0\n\n").unwrap();
+    let status = mgr.status(RunFolder::Checkout(&repo)).await.unwrap();
+    assert_eq!((status.insertions, status.deletions), (3, 0));
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "Initial",
+        ],
+    );
+    std::fs::write(repo.join("staged.txt"), "replacement\nthree\n").unwrap();
+    git(&repo, &["add", "staged.txt"]);
+    std::fs::write(repo.join("staged.txt"), "replacement\n").unwrap();
+    let status = mgr.status(RunFolder::Checkout(&repo)).await.unwrap();
+    assert_eq!((status.insertions, status.deletions), (3, 2));
+    assert_eq!(
+        git_output(&repo, &["diff", "--cached", "--numstat"]),
+        "2\t2\tstaged.txt"
+    );
+}
+
+#[tokio::test]
+async fn git_status_counts_staged_deletion_recreated_files_against_head() {
+    use super::RunFolder;
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-b", "main"]);
+    std::fs::write(repo.join("file.txt"), "one\ntwo\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "Initial",
+        ],
+    );
+    git(&repo, &["rm", "file.txt"]);
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    let mgr = manager(&dir.path().join("data"));
+    for (contents, expected) in [("one\ntwo\n", (0, 0)), ("one\nchanged\n", (1, 1))] {
+        std::fs::write(repo.join("file.txt"), contents).unwrap();
+        let status = mgr.status(RunFolder::Checkout(&repo)).await.unwrap();
+        assert_eq!((status.insertions, status.deletions), expected);
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+        assert_eq!(
+            git_output(&repo, &["diff", "--cached", "--numstat"]),
+            "0\t2\tfile.txt"
+        );
+    }
+}
+
+#[tokio::test]
+async fn git_status_counts_staged_ignored_additions_without_changing_real_index() {
+    use super::RunFolder;
+    for mode in ["checkout", "worktree", "unborn"] {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-b", "main"]);
+        git(&repo, &["config", "user.name", "Test"]);
+        git(&repo, &["config", "user.email", "test@example.com"]);
+        std::fs::write(repo.join(".gitignore"), "ignored.txt\n").unwrap();
+        git(&repo, &["add", ".gitignore"]);
+        if mode != "unborn" {
+            git(&repo, &["commit", "-m", "Initial"]);
+        }
+        let mgr = manager(&dir.path().join("data"));
+        let created = if mode == "worktree" {
+            Some(
+                mgr.create_named(&repo, RunId::generate(), None, None)
+                    .await
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
+        let folder = match &created {
+            Some(created) => RunFolder::Worktree {
+                path: &created.path,
+                git_dir: &created.git_dir,
+            },
+            None => RunFolder::Checkout(&repo),
+        };
+        let root = created
+            .as_ref()
+            .map_or(repo.as_path(), |created| created.path.as_path());
+        let git_dir = created
+            .as_ref()
+            .map_or_else(|| repo.join(".git"), |created| created.git_dir.clone());
+        std::fs::write(root.join("ignored.txt"), "one\ntwo\nthree\n").unwrap();
+        std::fs::write(root.join("normal.txt"), "normal\n").unwrap();
+        git(root, &["add", "-f", "ignored.txt", "normal.txt"]);
+        // Count current contents, and deduplicate the nonignored staged addition.
+        std::fs::write(root.join("ignored.txt"), "one\ntwo\n").unwrap();
+        let index = std::fs::read(git_dir.join("index")).unwrap();
+        let staged = git_output(root, &["diff", "--cached", "--numstat"]);
+        let status = mgr.status(folder).await.unwrap();
+        assert_eq!(
+            (status.insertions, status.deletions),
+            (if mode == "unborn" { 4 } else { 3 }, 0),
+            "{mode}"
+        );
+        assert_eq!(
+            std::fs::read(git_dir.join("index")).unwrap(),
+            index,
+            "{mode}"
+        );
+        assert_eq!(
+            git_output(root, &["diff", "--cached", "--numstat"]),
+            staged,
+            "{mode}"
+        );
+        // A staged addition removed again contributes no working-file lines.
+        std::fs::remove_file(root.join("ignored.txt")).unwrap();
+        let status = mgr.status(folder).await.unwrap();
+        assert_eq!(
+            (status.insertions, status.deletions),
+            (if mode == "unborn" { 2 } else { 1 }, 0),
+            "{mode}"
+        );
+        assert_eq!(
+            std::fs::read(git_dir.join("index")).unwrap(),
+            index,
+            "{mode}"
+        );
+        assert_eq!(
+            git_output(root, &["diff", "--cached", "--numstat"]),
+            staged,
+            "{mode}"
+        );
+    }
+}

@@ -67,6 +67,7 @@ const capabilities: Capabilities = Object.fromEntries(
     "eventFilters",
     "files",
     "git",
+    "repoGitStatus",
     "githubSetup",
     "githubStatus",
     "inbox",
@@ -995,11 +996,22 @@ const handlers: { [M in Method]?: Handler<M> } = {
   },
   "agent/image": () => fail("The preview keeps no images.", "imageNotFound"),
   "agent/commands": () => ({ commands: db.commands }),
+  "repo/gitStatus": () => ({
+    branch: "develop",
+    changes: 2,
+    insertions: 715,
+    deletions: 4,
+    upstream: "origin/develop",
+    ahead: 0,
+    origin: true,
+  }),
   "agent/gitStatus": (p) => {
     const run = runOf(p.runId);
     return {
       branch: run?.branch ?? "develop",
       changes: run?.status === "running" ? 3 : 0,
+      insertions: run?.status === "running" ? 715 : 0,
+      deletions: 0,
       upstream: run?.diff ? null : "origin/develop",
       ahead: run?.diff ? 1 : 0,
       origin: true,
@@ -1008,6 +1020,8 @@ const handlers: { [M in Method]?: Handler<M> } = {
   "agent/commit": (p) => ({
     branch: runOf(p.runId)?.branch ?? null,
     changes: 0,
+    insertions: 0,
+    deletions: 0,
     upstream: null,
     ahead: 1,
     origin: true,
@@ -1015,6 +1029,8 @@ const handlers: { [M in Method]?: Handler<M> } = {
   "agent/push": (p) => ({
     branch: runOf(p.runId)?.branch ?? null,
     changes: 0,
+    insertions: 0,
+    deletions: 0,
     upstream: `origin/${runOf(p.runId)?.branch ?? "develop"}`,
     ahead: 0,
     origin: true,

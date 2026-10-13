@@ -44,8 +44,16 @@ impl WorktreeManager {
     ///
     /// # Errors
     ///
-    /// [`WorktreeError::GitFailed`], [`WorktreeError::Timeout`], or [`WorktreeError::Spawn`].
+    /// [`WorktreeError::NotAGitRepo`] for an invalid checkout, [`WorktreeError::Io`] preparing
+    /// the temporary index, or [`WorktreeError::GitFailed`], [`WorktreeError::Timeout`],
+    /// or [`WorktreeError::Spawn`].
     pub async fn status(&self, folder: RunFolder<'_>) -> Result<GitStatus, WorktreeError> {
+        if let RunFolder::Checkout(path) = folder {
+            crate::repo::check(path).map_err(|error| WorktreeError::NotAGitRepo {
+                path: path.to_owned(),
+                detail: error.to_string(),
+            })?;
+        }
         let porcelain = self
             .folder_git_ok(
                 folder,
@@ -62,6 +70,8 @@ impl WorktreeManager {
         let mut status = GitStatus {
             branch: None,
             changes: 0,
+            insertions: 0,
+            deletions: 0,
             upstream: None,
             ahead: 0,
             origin: self
@@ -94,7 +104,106 @@ impl WorktreeManager {
                 .await?;
             status.ahead = output.stdout.trim().parse().unwrap_or(0);
         }
+        (status.insertions, status.deletions) = self.uncommitted_lines(folder).await?;
         Ok(status)
+    }
+
+    /// Net working-file changes relative to HEAD, plus untracked files, without changing the index.
+    async fn uncommitted_lines(&self, folder: RunFolder<'_>) -> Result<(u64, u64), WorktreeError> {
+        // Diff HEAD against the working files, so staged/unstaged edits to the same line
+        // count once. An unborn checkout uses Git's empty tree in its object format.
+        let head = self
+            .folder_git(folder, &["rev-parse", "--verify", "HEAD"])
+            .await?;
+        let base = if head.success() {
+            head.stdout
+        } else {
+            self.folder_git_ok(folder, &["hash-object", "-t", "tree", "--stdin"])
+                .await?
+        };
+        // Seed from HEAD rather than the user's index: a staged deletion may already
+        // have been recreated in the working tree.
+        let temp = tempfile::tempdir().map_err(|source| WorktreeError::Io {
+            path: std::env::temp_dir(),
+            source,
+        })?;
+        let index = temp.path().join("index");
+        self.git_with_index(folder, &index, &["read-tree".into(), base.trim().into()])
+            .await?;
+        let diff = self
+            .git_with_index(
+                folder,
+                &index,
+                &[
+                    "diff",
+                    "--numstat",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    base.trim(),
+                    "--",
+                ]
+                .map(str::to_owned),
+            )
+            .await?;
+        let counts = super::parse_numstat(&diff);
+        let mut insertions = counts.insertions;
+        let mut deletions = counts.deletions;
+        let untracked = self
+            .git_with_index(
+                folder,
+                &index,
+                &["ls-files", "--others", "--exclude-standard", "-z"].map(str::to_owned),
+            )
+            .await?;
+        // Real-index additions remain tracked even if ignore rules hide them from the HEAD index.
+        let tracked = self
+            .folder_git_ok(folder, &["ls-files", "--cached", "-z"])
+            .await?;
+        let head_paths = self
+            .git_with_index(
+                folder,
+                &index,
+                &["ls-files", "--cached", "-z"].map(str::to_owned),
+            )
+            .await?;
+        let head_paths: std::collections::HashSet<_> = head_paths.split('\0').collect();
+        let new_paths: std::collections::HashSet<_> = untracked
+            .split('\0')
+            .chain(
+                tracked
+                    .split('\0')
+                    .filter(|name| !head_paths.contains(name)),
+            )
+            .filter(|name| {
+                !name.is_empty()
+                    && folder
+                        .path()
+                        .join(name)
+                        .symlink_metadata()
+                        .is_ok_and(|metadata| !metadata.is_dir())
+            })
+            .collect();
+        for name in new_paths {
+            let args = [
+                "diff",
+                "--no-index",
+                "--numstat",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--",
+                super::NULL_DEVICE,
+                name,
+            ];
+            let diff = self.folder_git(folder, &args).await?;
+            // `--no-index` exits 1 when files differ, including binary files.
+            if !diff.success() && diff.exit.info.code != Some(1) {
+                return Err(diff.failure(folder.path(), &args));
+            }
+            let counts = super::parse_numstat(&diff.stdout);
+            insertions += counts.insertions;
+            deletions += counts.deletions;
+        }
+        Ok((insertions, deletions))
     }
 
     /// The full hash of `folder`'s `HEAD` commit.

@@ -118,7 +118,9 @@ pub use events::{
     Compacted, EventsEventParams, EventsResyncParams, EventsSubscribeParams, EventsSubscribeResult,
     EventsUnsubscribeParams, EventsUnsubscribeResult, LogId, ParallaxEvent, SubscriptionId,
 };
-pub use git::{AgentCommitParams, AgentGitStatusParams, AgentPushParams, GitStatus};
+pub use git::{
+    AgentCommitParams, AgentGitStatusParams, AgentPushParams, GitStatus, RepoGitStatusParams,
+};
 pub use handshake::{
     Capabilities, ClientInfo, InitializeParams, InitializeProtocol, InitializeResult, ProtocolRange,
 };

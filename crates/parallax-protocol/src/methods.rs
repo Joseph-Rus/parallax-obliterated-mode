@@ -65,21 +65,22 @@ use crate::{
     QueueReorderParams, QueueResult, QueueSteerParams, RelayHostsParams, RelayHostsResult,
     RelayRegisterParams, RelayRemoveParams, RemotePairParams, RemotePairResult, RemoteRevokeParams,
     RemoteSessionsParams, RemoteSessionsResult, RepoAddParams, RepoAddResult, RepoFilesParams,
-    RepoFilesResult, RepoRefsParams, RepoRefsResult, RepoSaveScriptsParams, RepoScriptsParams,
-    RepoScriptsResult, RepoUpdateParams, RepoUpdateResult, ScheduleDeleteResult, ScheduleIdParams,
-    ScheduleListParams, ScheduleListResult, ScheduleSaveParams, ScheduledTask, SecretAnswerParams,
-    SecretAnswerResult, SecretRequestParams, SecretRequestResult, SpaceCreateParams,
-    SpaceCreateResult, SpaceDeleteParams, SpaceDeleteResult, SubscribeShellParams,
-    SubscribeShellResult, SubscribeThreadParams, SubscribeThreadResult, TaskDelegateParams,
-    TaskStatusParams, TerminalExitParams, TerminalKey, TerminalListParams, TerminalListResult,
-    TerminalOpenParams, TerminalOutputParams, TerminalResizeParams, TerminalResult,
-    TerminalWriteParams, ThreadArchiveParams, ThreadArchiveResult, ThreadDeleteParams,
-    ThreadDeleteResult, ThreadForkParams, ThreadHistoryParams, ThreadHistoryResult,
-    ThreadListParams, ThreadListResult, ThreadMergeBackParams, ThreadMergeBackResult,
-    ThreadRunsParams, ThreadRunsResult, ThreadSearchParams, ThreadSearchResult, ThreadStartParams,
-    ThreadStartResult, ThreadUpdateParams, ThreadUpdateResult, TurnDiffParams, TurnDiffResult,
-    UsageDailyParams, UsageDailyResult, UsageGetParams, UsageGetResult, UsageHistoryParams,
-    UsageHistoryResult, UsageLimitsParams, UsageLimitsResult,
+    RepoFilesResult, RepoGitStatusParams, RepoRefsParams, RepoRefsResult, RepoSaveScriptsParams,
+    RepoScriptsParams, RepoScriptsResult, RepoUpdateParams, RepoUpdateResult, ScheduleDeleteResult,
+    ScheduleIdParams, ScheduleListParams, ScheduleListResult, ScheduleSaveParams, ScheduledTask,
+    SecretAnswerParams, SecretAnswerResult, SecretRequestParams, SecretRequestResult,
+    SpaceCreateParams, SpaceCreateResult, SpaceDeleteParams, SpaceDeleteResult,
+    SubscribeShellParams, SubscribeShellResult, SubscribeThreadParams, SubscribeThreadResult,
+    TaskDelegateParams, TaskStatusParams, TerminalExitParams, TerminalKey, TerminalListParams,
+    TerminalListResult, TerminalOpenParams, TerminalOutputParams, TerminalResizeParams,
+    TerminalResult, TerminalWriteParams, ThreadArchiveParams, ThreadArchiveResult,
+    ThreadDeleteParams, ThreadDeleteResult, ThreadForkParams, ThreadHistoryParams,
+    ThreadHistoryResult, ThreadListParams, ThreadListResult, ThreadMergeBackParams,
+    ThreadMergeBackResult, ThreadRunsParams, ThreadRunsResult, ThreadSearchParams,
+    ThreadSearchResult, ThreadStartParams, ThreadStartResult, ThreadUpdateParams,
+    ThreadUpdateResult, TurnDiffParams, TurnDiffResult, UsageDailyParams, UsageDailyResult,
+    UsageGetParams, UsageGetResult, UsageHistoryParams, UsageHistoryResult, UsageLimitsParams,
+    UsageLimitsResult,
 };
 
 /// A method that is called with a request and answered with a response.
@@ -298,6 +299,8 @@ method_table! {
         /// `agent/gitStatus`: the git state of a run's folder (PLX-298). Gated on the `git`
         /// capability, like `agent/commit` and `agent/push`.
         AgentGitStatus = "agent/gitStatus": AgentGitStatusParams => GitStatus;
+        /// `repo/gitStatus`: read-only checkout status, gated on `repoGitStatus`.
+        RepoGitStatus = "repo/gitStatus": RepoGitStatusParams => GitStatus;
         /// `agent/commit`: stages everything in a finished run's folder and commits it.
         AgentCommit = "agent/commit": AgentCommitParams => GitStatus;
         /// `agent/push`: pushes a finished run's branch to `origin`, setting its upstream.
@@ -667,6 +670,7 @@ mod tests {
                 "agent/requestChanges",
                 "agent/openPr",
                 "agent/gitStatus",
+                "repo/gitStatus",
                 "agent/commit",
                 "agent/push",
                 "agent/approve",

@@ -53,6 +53,8 @@ pub enum ErrorKind {
     /// has uncommitted changes, or read the git state of the run's folder (PLX-298). The message
     /// says what to do.
     WorktreeFailed,
+    /// The recorded run worktree no longer exists. No alternative checkout is used.
+    WorktreeMissing,
     /// The run was accepted (#157): its worktree and branch are gone, so there is nothing left to
     /// review, and it takes no more messages.
     RunAccepted,

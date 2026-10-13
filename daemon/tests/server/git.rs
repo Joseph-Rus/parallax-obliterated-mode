@@ -65,6 +65,8 @@ async fn a_worktree_run_commits_the_user_s_edits_and_pushes_its_branch() {
         GitStatus {
             branch: Some(branch.clone()),
             changes: 0,
+            insertions: 0,
+            deletions: 0,
             upstream: None,
             ahead: 2,
             origin: true,
@@ -153,6 +155,8 @@ async fn a_checkout_thread_commits_pushes_and_opens_a_pull_request_on_its_branch
         GitStatus {
             branch: Some("main".to_owned()),
             changes: 1,
+            insertions: 1,
+            deletions: 1,
             upstream: None,
             ahead: 1,
             origin: true,
@@ -449,4 +453,119 @@ async fn a_thread_s_delete_is_refused_while_its_push_runs() {
         .await
         .unwrap();
     host.server.stop().await;
+}
+
+#[tokio::test]
+async fn a_missing_worktree_refuses_git_without_touching_the_checkout() {
+    let tools = Tools::new();
+    let dir = temp_dir();
+    let params = project_params(dir.path());
+    let repo = PathBuf::from(&params.repo_path);
+    let origin = add_origin(&repo, dir.path());
+    let host = start(dir, editing(), &tools);
+    let mut client = host.client().await;
+    let project = create(&mut client, params).await;
+    subscribe(&mut client, project.id, 0).await;
+    let start = start_params(project.id, "Rewrite the README");
+    let run_id = start.run_id;
+    let run = client.call::<AgentStart>(start).await.unwrap().run;
+    until(&mut client, updated_to(AgentStatus::Completed)).await;
+    fs::remove_dir_all(run.worktree_path.unwrap()).unwrap();
+    fs::write(repo.join("USER.txt"), "untouched\n").unwrap();
+    let before = git(&repo, &["status", "--porcelain"]);
+    let head = git(&repo, &["rev-parse", "HEAD"]);
+    let errors = [
+        client
+            .call::<AgentGitStatus>(AgentGitStatusParams { run_id })
+            .await
+            .unwrap_err(),
+        client
+            .call::<AgentCommit>(commit(run_id, "Must refuse"))
+            .await
+            .unwrap_err(),
+        client
+            .call::<AgentPush>(AgentPushParams { run_id })
+            .await
+            .unwrap_err(),
+        client
+            .call::<AgentOpenPr>(open(run_id, "Must refuse", None))
+            .await
+            .unwrap_err(),
+    ];
+    for error in errors {
+        assert_eq!(kind(&error), ErrorKind::WorktreeMissing, "{error:?}");
+    }
+    assert_eq!(git(&repo, &["status", "--porcelain"]), before);
+    assert_eq!(git(&repo, &["rev-parse", "HEAD"]), head);
+    assert!(git(&origin, &["for-each-ref", "--format=%(refname)"]).is_empty());
+}
+
+#[tokio::test]
+async fn repository_git_status_reads_checkout_without_starting_a_thread() {
+    use parallax_protocol::{RepoGitStatusParams, methods::RepoGitStatus};
+    let tools = Tools::new();
+    let dir = temp_dir();
+    let repo = real_repo(dir.path());
+    let host = start(temp_dir(), editing(), &tools);
+    let mut client = host.client().await;
+    let entry = client
+        .call::<RepoAdd>(RepoAddParams {
+            id: RepoId::generate(),
+            path: repo.to_string_lossy().into_owned(),
+        })
+        .await
+        .unwrap()
+        .repo;
+    fs::write(repo.join("new.txt"), "one\ntwo").unwrap();
+    let answer = client
+        .call::<RepoGitStatus>(RepoGitStatusParams { repo: entry.id })
+        .await
+        .unwrap();
+    assert_eq!(answer.branch.as_deref(), Some("main"));
+    assert_eq!(
+        (answer.changes, answer.insertions, answer.deletions),
+        (1, 2, 0)
+    );
+    assert_eq!(git(&repo, &["status", "--porcelain"]), "?? new.txt");
+    let missing = client
+        .call::<RepoGitStatus>(RepoGitStatusParams {
+            repo: RepoId::generate(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(kind(&missing), ErrorKind::RepoNotFound);
+}
+
+#[tokio::test]
+async fn repository_git_status_refuses_nested_checkout_with_missing_git_directory() {
+    use parallax_protocol::{RepoGitStatusParams, methods::RepoGitStatus};
+    let tools = Tools::new();
+    let dir = temp_dir();
+    let outer = real_repo(dir.path());
+    git(&outer, &["branch", "-m", "outer-branch"]);
+    let inner = real_repo(&outer);
+    git(&inner, &["branch", "-m", "inner-branch"]);
+    let host = start(temp_dir(), editing(), &tools);
+    let mut client = host.client().await;
+    let entry = client
+        .call::<RepoAdd>(RepoAddParams {
+            id: RepoId::generate(),
+            path: inner.to_string_lossy().into_owned(),
+        })
+        .await
+        .unwrap()
+        .repo;
+    let answer = client
+        .call::<RepoGitStatus>(RepoGitStatusParams { repo: entry.id })
+        .await
+        .unwrap();
+    assert_eq!(answer.branch.as_deref(), Some("inner-branch"));
+    fs::remove_dir_all(inner.join(".git")).unwrap();
+    fs::write(outer.join("outer.txt"), "outer change\n").unwrap();
+    let error = client
+        .call::<RepoGitStatus>(RepoGitStatusParams { repo: entry.id })
+        .await
+        .unwrap_err();
+    assert_eq!(kind(&error), ErrorKind::WorktreeFailed);
+    assert!(error.message.contains("has no .git"), "{error:?}");
 }

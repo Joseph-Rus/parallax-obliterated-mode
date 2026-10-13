@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import type { RpcError } from "../preload/bridge";
-import type { AgentRun, GitStatus } from "../protocol/generated/protocol";
+import type { AgentRun, GitStatus, RepoId } from "../protocol/generated/protocol";
 import { useConnection } from "./ConnectionStatus";
 import { describeError, githubProblem } from "./errors";
 import { titleOf } from "./threads";
@@ -64,11 +64,13 @@ export function gitActions(
  * is read again after each action and whenever the run's status or commit changes, as when a turn
  * ends. Each action's result is a notification (PLX-507), except a failed commit, which stays in
  * its dialog; a push or Create PR that fails for `gh` offers `onSetUpGithub` (PLX-423). Absent
- * until the host's plxd has the `git` capability.
+ * until the host's plxd has the `git` capability. A new repository thread reads its checkout
+ * behind `repoGitStatus` and offers no writes until the thread starts.
  */
 export function GitMenu({
   hostId,
   run,
+  repo,
   title,
   onPrOpened,
   onSetUpGithub,
@@ -76,6 +78,7 @@ export function GitMenu({
 }: {
   hostId: string;
   run?: AgentRun;
+  repo?: RepoId;
   /** The thread's title, for the commit message and pull request. Else, its run's. */
   title?: string;
   onPrOpened?: (url: string) => void;
@@ -87,27 +90,45 @@ export function GitMenu({
   const dialog = useRef<HTMLDialogElement>(null);
   const connection = useConnection(hostId);
   const capabilities = connection?.status === "connected" ? connection.capabilities : undefined;
-  const able = !!capabilities && "git" in capabilities;
+  const able =
+    !!capabilities && (run ? "git" in capabilities : !!repo && "repoGitStatus" in capabilities);
   const [status, setStatus] = useState<GitStatus>();
   // Why the status couldn't load, or the commit failed.
   const [error, setError] = useState<string>();
+  const [diagnostic, setDiagnostic] = useState<string>();
   const [busy, setBusy] = useState<GitAction>();
   const [message, setMessage] = useState("");
   const runId = run?.id;
 
   const load = useCallback(
     async (live: () => boolean = () => true) => {
-      if (!runId) return;
-      const answer = await window.parallax.request(hostId, "agent/gitStatus", { runId });
+      if (!runId && !repo) return;
+      const answer = runId
+        ? await window.parallax.request(hostId, "agent/gitStatus", { runId })
+        : await window.parallax.request(hostId, "repo/gitStatus", { repo: repo! });
       if (!live()) return;
-      if ("error" in answer) setError(describeError(answer.error));
-      else setStatus(answer.result);
+      if ("error" in answer) {
+        setStatus(undefined);
+        setDiagnostic(describeError(answer.error));
+        setError(
+          answer.error.data?.kind === "worktreeMissing"
+            ? "Worktree no longer exists"
+            : "Git status unavailable",
+        );
+      } else {
+        setStatus(answer.result);
+        setError(undefined);
+        setDiagnostic(undefined);
+      }
     },
-    [hostId, runId],
+    [hostId, runId, repo],
   );
   const runStatus = run?.status;
   const commit = run?.diff?.commit;
   useEffect(() => {
+    setStatus(undefined);
+    setError(undefined);
+    setDiagnostic(undefined);
     if (!able) return;
     let live = true;
     void load(() => live);
@@ -116,12 +137,23 @@ export function GitMenu({
     };
   }, [able, load, runStatus, commit]);
 
-  if (!able || !run) return null;
-  const { why, main, note } = gitActions(run, status, "openPr" in capabilities);
+  if (!able) return null;
+  const { why, main, note } = run
+    ? gitActions(run, status, "openPr" in capabilities!)
+    : {
+        why: {
+          commit: "Start the thread to commit",
+          push: "Start the thread to push",
+          pr: "Start the thread to open a PR",
+        },
+        main: "commit" as const,
+        note: undefined,
+      };
   const primary = actions.find((a) => a.action === main)!;
 
   // Runs `action`. Its result is a notification, but a failed commit says so in its dialog.
   const perform = async (action: GitAction) => {
+    if (!run || !status) return;
     setBusy(action);
     setError(undefined);
     let failed: RpcError | undefined;
@@ -180,16 +212,14 @@ export function GitMenu({
     menu.current?.hidePopover();
     if (action !== "commit") return void perform(action);
     setError(undefined);
+    if (!run || !status) return;
     setMessage(title ?? titleOf(run));
     dialog.current?.showModal();
   };
 
   return (
     <>
-      <div
-        className={`${menuItem} text-muted-foreground`}
-        title={status?.branch ?? "Detached HEAD"}
-      >
+      <div className={`${menuItem} text-muted-foreground`} title={status?.branch ?? diagnostic}>
         <GitBranch aria-hidden />
         <span className="min-w-0 flex-1 truncate">
           {status
@@ -250,16 +280,21 @@ export function GitMenu({
         <Files aria-hidden />
         <span className="flex-1">Changes</span>
         <span className="text-[12px] text-muted-foreground tabular-nums">
-          {status
-            ? `${status.changes} ${status.changes === 1 ? "file" : "files"}`
-            : error
-              ? "Unavailable"
-              : "Loading…"}
+          {status ? (
+            <>
+              <span className="text-emerald-500">+{status.insertions ?? 0}</span>{" "}
+              <span className="text-danger">−{status.deletions ?? 0}</span>
+            </>
+          ) : error ? (
+            "Unavailable"
+          ) : (
+            "Loading…"
+          )}
         </span>
       </button>
       {note && <p className="px-2 py-1 text-[12px] text-amber-500">{note}</p>}
       {error && !busy && (
-        <p role="alert" className="px-2 py-1 text-[12px] text-danger">
+        <p role="alert" title={diagnostic} className="px-2 py-1 text-[12px] text-danger">
           {error}
         </p>
       )}
