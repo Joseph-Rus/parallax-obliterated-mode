@@ -110,21 +110,15 @@ export function ThreadDetails({
       aria-label="Thread details"
       hidden={mode === "hidden"}
       data-mode={mode}
-      // Docked, it takes room in the thread's row; floating, it hovers over the thread's right on
-      // frosted glass. Either way it's a card sized to its rows, scrolling at the row's height.
+      // Docked, it takes room in the thread's row; floating, it hovers over the thread's right.
+      // Either way it's an opaque card sized to its rows, scrolling at the row's height.
       className={`flex w-84 flex-col py-2 pr-3 ${
         mode === "floating"
           ? "pointer-events-none absolute inset-y-0 right-0 z-30 max-w-[calc(100%-1rem)]"
           : "shrink-0"
       }`}
     >
-      <div
-        className={`pointer-events-auto max-h-full overflow-y-auto rounded-xl border border-border text-foreground shadow-composer ${
-          mode === "floating"
-            ? "bg-surface/55 backdrop-blur-3xl backdrop-saturate-150"
-            : "bg-surface"
-        }`}
-      >
+      <div className="pointer-events-auto max-h-full overflow-y-auto rounded-xl border border-border bg-surface text-foreground shadow-composer">
         <section aria-label="Workspace" className="p-2">
           <div className="flex items-start gap-2 px-2 py-2 text-[13px]">
             <Monitor aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
