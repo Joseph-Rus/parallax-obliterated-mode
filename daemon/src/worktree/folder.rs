@@ -155,11 +155,35 @@ impl WorktreeManager {
                 &["ls-files", "--others", "--exclude-standard", "-z"].map(str::to_owned),
             )
             .await?;
-        for name in untracked
-            .trim_end_matches('\n')
+        // Real-index additions remain tracked even if ignore rules hide them from the HEAD index.
+        let tracked = self
+            .folder_git_ok(folder, &["ls-files", "--cached", "-z"])
+            .await?;
+        let head_paths = self
+            .git_with_index(
+                folder,
+                &index,
+                &["ls-files", "--cached", "-z"].map(str::to_owned),
+            )
+            .await?;
+        let head_paths: std::collections::HashSet<_> = head_paths.split('\0').collect();
+        let new_paths: std::collections::HashSet<_> = untracked
             .split('\0')
-            .filter(|name| !name.is_empty())
-        {
+            .chain(
+                tracked
+                    .split('\0')
+                    .filter(|name| !head_paths.contains(name)),
+            )
+            .filter(|name| {
+                !name.is_empty()
+                    && folder
+                        .path()
+                        .join(name)
+                        .symlink_metadata()
+                        .is_ok_and(|metadata| !metadata.is_dir())
+            })
+            .collect();
+        for name in new_paths {
             let args = [
                 "diff",
                 "--no-index",

@@ -55,6 +55,8 @@ test("checkout counts before starting and concise errors after a worktree is rem
       { repoId, repo },
     );
     expect(answer).not.toHaveProperty("error");
+    if ("error" in answer) throw new Error(answer.error.message);
+    const registeredPath = answer.result.repo.path;
     await page.reload();
     await page.getByRole("button", { name: "Thread details", exact: true }).click();
     const details = page.getByRole("complementary", { name: "Thread details", exact: true });
@@ -62,10 +64,10 @@ test("checkout counts before starting and concise errors after a worktree is rem
     await expect(details.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
     await expect(details.locator('[aria-label="Workspace"] > div[title]')).toHaveAttribute(
       "title",
-      repo,
+      registeredPath,
     );
     expect(await details.locator('[aria-label="Workspace"] > div[title] svg').count()).toBe(2);
-    expect(await details.innerText()).not.toContain(repo);
+    expect(await details.innerText()).not.toContain(registeredPath);
     await details
       .locator(":scope > div")
       .screenshot({ path: path.join(fixture, "new-checkout.png") });
