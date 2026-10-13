@@ -966,6 +966,8 @@ export function TranscriptView({
       if (row.kind === "user" || row.kind === "pending")
         turn = row.kind === "user" ? row.turnId : undefined;
       else if (row.kind === "assistant") byTurn.set(turn, i);
+      // Work after it makes it commentary, which has no Fork or Copy, so no gap under it.
+      else if (row.kind === "work" && !row.done) byTurn.delete(turn);
     });
     return new Map([...byTurn].map(([id, i]) => [i, id]));
   }, [view]);
@@ -1088,7 +1090,7 @@ export function TranscriptView({
                 >
                   <div
                     data-copied={muted || undefined}
-                    className={`mx-auto max-w-3xl px-6 ${listKinds.has(row.kind) && listKinds.has(view[v.index - 1]?.kind ?? "") ? "pb-2" : "py-2"} ${muted ? "opacity-60" : ""}`}
+                    className={`mx-auto max-w-3xl px-6 ${listKinds.has(row.kind) ? "py-1" : "py-2"} ${muted ? "opacity-60" : ""}`}
                   >
                     <RowView
                       row={row}
@@ -1123,7 +1125,8 @@ export function TranscriptView({
   );
 }
 
-// Rows of the agent's work, which sit closer after one another, as one list (PLX-584).
+// Rows of the agent's work, which sit closer to one another and to the messages around them, as
+// T3 Code's work log does (PLX-584, PLX-770).
 const listKinds = new Set(["work", "plan", "todo", "musing", "compaction"]);
 
 /**
@@ -1251,13 +1254,13 @@ function ScriptRow({
   const failed = script.status === "failed";
   const icon =
     script.status === "running" ? (
-      <Loader {...loaders.working} size={14} />
+      <Loader {...loaders.working} />
     ) : script.status === "done" ? (
-      <Check aria-hidden className="size-3.5 shrink-0" />
+      <Check aria-hidden className="size-4 shrink-0" />
     ) : failed ? (
-      <X aria-hidden className="size-3.5 shrink-0 text-danger" />
+      <X aria-hidden className="size-4 shrink-0 text-danger" />
     ) : (
-      <Ban aria-hidden className="size-3.5 shrink-0" />
+      <Ban aria-hidden className="size-4 shrink-0" />
     );
   const detail =
     script.status === "running"
@@ -1362,7 +1365,7 @@ export const RowView = memo(function RowView({
       return <WorkingFor since={row.since} />;
     case "musing":
       return (
-        <div className="flex h-6 items-center gap-2 text-[13px]">
+        <div className="flex h-6 items-center gap-2 text-sm">
           <Musing />
         </div>
       );
@@ -1376,7 +1379,7 @@ export const RowView = memo(function RowView({
           <span className="h-px flex-1 bg-border" />
         </div>
       ) : (
-        <div className="flex h-6 items-center gap-2 text-[13px]">
+        <div className="flex h-6 items-center gap-2 text-sm">
           <Loader {...loaders.compacting} />
           <Shimmer>Compacting context</Shimmer>
         </div>
@@ -1467,7 +1470,7 @@ export const RowView = memo(function RowView({
           onToggle={onToggle}
           summary={
             <>
-              <icons.thinking aria-hidden className="size-3.5 shrink-0" />
+              <icons.thinking aria-hidden className="size-4 shrink-0" />
               <span className="truncate">{plainText(row.text) || "Thought"}</span>
             </>
           }
@@ -1730,14 +1733,14 @@ const inFlight = (work: Work) => {
 
 /** A compact step row's geometry, as T3 Code's work log draws one: an icon, a line, a chevron. */
 const stepRow =
-  "flex min-h-6 w-full max-w-full min-w-0 cursor-default items-center gap-2 rounded-md text-left text-[13px] hover:text-foreground";
+  "flex min-h-6 w-full max-w-full min-w-0 cursor-default items-center gap-2 rounded-md text-left text-sm hover:text-foreground";
 
-/** The chevron at a step row's end, turned down while it's open. */
+/** The chevron after a step row's label, turned down while it's open. */
 function Chevron({ open }: { open?: boolean }) {
   return (
     <ChevronRight
       aria-hidden
-      className={`ml-auto size-3.5 shrink-0 text-faint-foreground transition-transform group-open/disclosure:rotate-90 ${open ? "rotate-90" : ""}`}
+      className={`size-3.5 shrink-0 text-faint-foreground transition-transform group-open/disclosure:rotate-90 ${open ? "rotate-90" : ""}`}
     />
   );
 }
@@ -1782,7 +1785,7 @@ function Steps({
     >
       {now ? (
         <>
-          <Loader {...now.loader} size={14} />
+          <Loader {...now.loader} />
           {/* Keyed, so a new label fades in. */}
           <span key={now.label} className="working-in shrink-0 text-foreground">
             <Shimmer>{now.label}</Shimmer>
@@ -1792,7 +1795,7 @@ function Steps({
       ) : (
         <>
           <span aria-hidden className={`relative shrink-0 ${summary.failed ? "text-danger" : ""}`}>
-            <summary.Icon className="size-3.5" />
+            <summary.Icon className="size-4" />
             {summary.failed && (
               <X
                 strokeWidth={3}
@@ -2037,9 +2040,9 @@ function ToolCall({
           {/* Its kind: the loader while it runs, then the icon, with a mark unless it succeeded. */}
           <span aria-hidden className={`relative shrink-0 ${look.color}`}>
             {status === "running" ? (
-              <Loader {...loaders[kind]} size={14} />
+              <Loader {...loaders[kind]} />
             ) : (
-              <Icon className={`size-3.5 ${look.faded ? "opacity-50" : ""}`} />
+              <Icon className={`size-4 ${look.faded ? "opacity-50" : ""}`} />
             )}
             {look.mark && (
               <look.mark
@@ -2124,7 +2127,7 @@ function Disclosure({
         <Chevron />
       </summary>
       {/* Rendered once open, so a closed row doesn't hold its tool's output. */}
-      {open && <div className="mt-1.5 ml-5.5">{children}</div>}
+      {open && <div className="mt-1.5 ml-6">{children}</div>}
     </details>
   );
 }

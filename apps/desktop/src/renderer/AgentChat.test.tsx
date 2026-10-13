@@ -1816,6 +1816,23 @@ test("a thread's options change while it runs, and other providers are offered, 
   }
 });
 
+test("while a run goes, a message with work after it has no Copy bar, only the prompt and latest reply do", () => {
+  const user: Item = { kind: "user", key: "u", text: "go" };
+  const say = (key: string, text: string): Item => ({ kind: "assistant", key, text });
+  const ls: Item = { kind: "tool", key: "t", callId: "1", name: "Bash", input: {}, status: "ok" };
+  const copies = () =>
+    [...document.querySelectorAll('[aria-label="Copy message"]')].map(
+      (b) => b.closest("[data-index]")!.textContent,
+    );
+  render(<TranscriptView rows={[user, say("a", "First"), ls]} sent={new Map()} live />);
+  expect(copies()).toEqual(["go"]);
+  act(() => unmount());
+  render(
+    <TranscriptView rows={[user, say("a", "First"), ls, say("b", "Last")]} sent={new Map()} live />,
+  );
+  expect(copies()).toEqual(["go", expect.stringContaining("Last")]);
+});
+
 // The musing row: what stands for the agent's next step while nothing is in flight.
 const musingRow = () =>
   document
