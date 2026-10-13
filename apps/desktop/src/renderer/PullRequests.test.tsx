@@ -8,11 +8,14 @@ import samples from "../../../../crates/parallax-protocol/samples/v1/pull-reques
 import type { ParallaxBridge } from "../preload/bridge";
 import type { PrDiffResult, PullRequest } from "../protocol/generated/protocol";
 import {
+  githubText,
+  linkedPr,
   parseDiff,
   PullRequestChip,
   PullRequestList,
   POLL_MS,
   PullRequestView,
+  RUNNING_POLL_MS,
   usePullRequests,
 } from "./PullRequests";
 import { setBehaviorPrefs } from "./prefs";
@@ -153,20 +156,13 @@ test("the view shows the header, the checks' state, reviewers, labels, descripti
   expect(header).toContain("me/app#42");
   expect(header).toContain("Merge");
   expect(header).toContain("Change 42");
-  expect(header).toContain("me · updated 1h ago");
+  expect(header).toContain("me· updated 1h ago");
+  expect(header).toContain("synced just now");
   expect(header).toContain("main ← parallax/add-readme");
   expect(header).toContain("1 file+12−0");
   expect(document.body.textContent).toContain("1 of 2 running");
   expect(document.querySelector("dl")!.textContent).toBe("Reviewersreviewer, docs-teamLabelsdocs");
   expect(document.body.textContent).toContain("Explains how to build the app.");
-
-  // The checks' state opens every check.
-  const checks = document.querySelector('[aria-label="Checks"]')!;
-  expect(button("1 of 2 running")!.getAttribute("popovertarget")).toBe(checks.id);
-  expect([...checks.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
-    "buildsuccessDetails",
-    "testpending",
-  ]);
 
   const comments = [...document.querySelectorAll("section:last-of-type li")];
   expect(comments.map((c) => c.querySelector("p")!.textContent)).toEqual([
@@ -198,6 +194,88 @@ test("an open pull request is read again every POLL_MS, and a merged one isn't",
   await settle();
   expect(request.mock.calls.map(([, , params]) => params["url"])).toEqual([url(42)]);
   expect(document.body.textContent).toContain("1 of 2 running");
+});
+
+test("one whose checks run is read again every RUNNING_POLL_MS, until they end", async () => {
+  vi.useFakeTimers({ now, toFake: ["Date", "setInterval", "clearInterval"] });
+  // One failed check rolls the state up to failed while the other still runs.
+  read = { [url(42)]: prOf(42, { checksState: "failed" }) };
+  await render([url(42)], () => null);
+  request.mockClear();
+  read[url(42)] = prOf(42, { checks: [sample.checks[0]!], checksState: "passed" });
+  await act(async () => void vi.advanceTimersByTime(RUNNING_POLL_MS));
+  await settle();
+  expect(request).toHaveBeenCalledOnce();
+  // Passed, it waits for POLL_MS again.
+  await act(async () => void vi.advanceTimersByTime(RUNNING_POLL_MS));
+  await settle();
+  expect(request).toHaveBeenCalledOnce();
+});
+
+test("the checks' state opens every check, failed first, spinning a running one, with its details and page", async () => {
+  const failed = {
+    name: "lint",
+    state: "failed" as const,
+    conclusion: "timed_out",
+    url: "https://github.com/me/app/runs/9",
+  };
+  read = { [url(42)]: prOf(42, { checks: [...sample.checks, failed] }) };
+  const onCompose = vi.fn();
+  const open = vi.fn();
+  vi.stubGlobal("open", open);
+  await render([url(42)], (prs) => (
+    <PullRequestView url={url(42)} prs={prs} onCompose={onCompose} />
+  ));
+  const checks = document.querySelector('[aria-label="Checks"]')!;
+  expect(button("1 of 3 running")!.getAttribute("popovertarget")).toBe(checks.id);
+  expect(checks.querySelector("p")!.textContent).toBe("1 failed · 1 running · 1 passed");
+  const rows = [...checks.querySelectorAll("li")];
+  expect(rows.map((li) => li.textContent)).toEqual([
+    "lintTimed outDetails",
+    "CI / testRunning for 3m 0sDetails",
+    "CI / buildSuccess in 3m 30sDetails",
+  ]);
+  expect(rows[1]!.querySelector("svg")!.getAttribute("class")).toContain("animate-spin");
+  expect(rows[2]!.querySelector("svg")!.getAttribute("class")).not.toContain("animate-spin");
+
+  await click(rows[2]!.querySelector('[aria-label="Open build on GitHub"]'));
+  expect(open).toHaveBeenCalledWith("https://github.com/me/app/actions/runs/1/job/2", "_blank");
+  await click(rows[0]!.querySelector("button"));
+  expect(rows[0]!.textContent).toContain("StatusTimed out");
+  await click(button("Fix in this thread"));
+  expect(onCompose.mock.calls[0]![0]).toContain('The "lint" check failed');
+});
+
+test("a screenshot opens large, with its name and place, and arrows to the others", async () => {
+  read = {
+    [url(42)]: prOf(42, {
+      body: '<img width="300" alt="Before" src="https://github.com/user-attachments/assets/a1"> ![image](https://raw.githubusercontent.com/me/app/1/after.png)',
+    }),
+  };
+  HTMLDialogElement.prototype.showModal = vi.fn();
+  HTMLDialogElement.prototype.close = function () {
+    this.dispatchEvent(new Event("close"));
+  };
+  await render([url(42)], (prs) => <PullRequestView url={url(42)} prs={prs} onCompose={vi.fn()} />);
+  await click(document.querySelector("img[data-shot]"));
+  const box = () => document.querySelector("dialog[aria-label]");
+  expect(box()!.textContent).toBe("Before1 / 2");
+  await act(async () =>
+    box()!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })),
+  );
+  // Without useful alt text, the file's name.
+  expect(box()!.textContent).toBe("after.png2 / 2");
+  const zoom = box()!.querySelector(".cursor-zoom-in")!;
+  await click(zoom);
+  expect(zoom.className).toContain("cursor-zoom-out");
+  await click(box()!.querySelector('[aria-label="Close"]'));
+  expect(box()).toBeNull();
+});
+
+test("githubText makes HTML images Markdown, and linkedPr finds a linked one from any of its tabs", () => {
+  expect(githubText('<img alt="A [b]" src="https://x/y.png" />')).toBe("![A b](https://x/y.png)");
+  expect(linkedPr(`${url(42)}/files#diff`, [url(4), url(42)])).toBe(url(42));
+  expect(linkedPr(url(7), [url(42)])).toBeUndefined();
 });
 
 test("a poll skips a pull request whose last read hasn't answered", async () => {

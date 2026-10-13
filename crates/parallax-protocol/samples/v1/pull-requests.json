@@ -87,11 +87,16 @@
           "name": "build",
           "state": "passed",
           "conclusion": "success",
-          "url": "https://github.com/me/app/actions/runs/1/job/2"
+          "url": "https://github.com/me/app/actions/runs/1/job/2",
+          "workflow": "CI",
+          "startedAt": "2026-10-02T12:05:00Z",
+          "completedAt": "2026-10-02T12:08:30Z"
         },
         {
           "name": "test",
-          "state": "pending"
+          "state": "pending",
+          "workflow": "CI",
+          "startedAt": "2026-10-02T13:07:00Z"
         }
       ],
       "checksState": "pending",

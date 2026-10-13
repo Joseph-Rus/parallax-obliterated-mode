@@ -160,6 +160,18 @@ pub struct PrCheck {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub url: Option<String>,
+    /// The GitHub Actions workflow it is a job of. Absent for another CI's status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub workflow: Option<String>,
+    /// When it started. Absent when GitHub doesn't say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub started_at: Option<Timestamp>,
+    /// When it finished. Absent while it runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub completed_at: Option<Timestamp>,
 }
 
 /// A comment on a pull request, or a review's text.
