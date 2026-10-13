@@ -2827,17 +2827,11 @@ test("with spaces, the add palette offers New Space, which creates one and close
   expect(dialog().open).toBe(false);
 });
 
-test("with spaces, New Space makes a Space, and its row in the Repos filter renames and deletes it", async () => {
+test("with spaces, a Space's row in the Repos filter renames and deletes it, and the filter makes none", async () => {
   capabilities = { spaces: {} };
   const space: Repo = { ...repo("Reading", "/data/spaces/s1"), id: "s1", space: true };
   let spaces = [space];
   answers["thread/list"] = () => ({ result: { repos: spaces, threads: [], seq: 7 } });
-  answers["space/create"] = (p) => {
-    const { id, name } = p as { id: string; name: string };
-    const made = { ...repo(name, `/data/spaces/${id}`), id, space: true };
-    spaces = [...spaces, made];
-    return { result: { repo: made } };
-  };
   answers["repo/update"] = (p) => {
     const { repo: id, name } = p as { repo: string; name: string };
     spaces = spaces.map((s) => (s.id === id ? { ...s, name } : s));
@@ -2859,11 +2853,7 @@ test("with spaces, New Space makes a Space, and its row in the Repos filter rena
     await settle();
   };
 
-  await click([...filter().querySelectorAll("button")].find((b) => b.textContent === "New Space"));
-  typeInto(spaceDialog("New Space").querySelector("input")!, "  Research ");
-  await submit(spaceDialog("New Space"));
-  expect(calls("space/create")).toEqual([{ id: expect.any(String), name: "Research" }]);
-  expect(filter().textContent).toContain("Research");
+  expect(filter().textContent).not.toContain("New Space");
 
   await click(press("Rename Reading"));
   typeInto(spaceDialog("Rename Reading").querySelector("input")!, "Notes");
@@ -2871,8 +2861,16 @@ test("with spaces, New Space makes a Space, and its row in the Repos filter rena
   expect(calls("repo/update")).toEqual([{ repo: "s1", name: "Notes" }]);
   expect(filter().textContent).toContain("Notes");
 
+  // Filtered to the Space, deleting it shows every repo again.
+  const trigger = () => document.querySelector('#sidebar [aria-label^="Repos:"]')!;
+  await click(
+    [...filter().querySelectorAll('[role="menuitemradio"]')].find((b) => b.textContent === "Notes"),
+  );
+  expect(trigger().getAttribute("aria-label")).toBe("Repos: Notes");
   await click(press("Delete Notes"));
   await submit(spaceDialog("Delete Notes"));
   expect(calls("space/delete")).toEqual([{ space: "s1" }]);
   expect(filter().textContent).not.toContain("Notes");
+  expect(trigger().getAttribute("aria-label")).toBe("Repos: All repos");
+  expect(trigger().getAttribute("aria-pressed")).toBe("false");
 });

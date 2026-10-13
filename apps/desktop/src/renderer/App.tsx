@@ -735,7 +735,7 @@ export function App() {
               setPrsOpen(true);
             }}
             onDelete={deleteThread}
-            onNewThread={() => newThread()}
+            onNewThread={() => picker.current?.showModal()}
             split={split}
             onOpenBeside={openBeside}
             onClosePane={closePane}

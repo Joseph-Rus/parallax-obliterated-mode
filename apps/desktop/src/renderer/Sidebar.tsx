@@ -206,6 +206,7 @@ interface ThreadListProps {
   onOpenPullRequests: () => void;
   /** Deletes a thread. Resolves to an error message, or undefined. */
   onDelete: (hostId: string, thread: Thread) => Promise<string | undefined>;
+  /** New thread, which opens Mod+N's picker of the repository it goes in. */
   onNewThread: () => void;
   /** The two threads open side by side (PLX-587), shown together above the list. */
   split?: Split;
@@ -350,9 +351,19 @@ export function ThreadList({
   const [deleteError, setDeleteError] = useState<string>();
   const [actionError, setActionError] = useState<string>();
   const [query, setQuery] = useState("");
-  const [filter, setFilterState] = useState<RepoFilter>(
+  const [chosen, setFilterState] = useState<RepoFilter>(
     () => (readStored(filterKey) as RepoFilter | null) ?? "all",
   );
+  // A repo or Space that's gone, deleted or not loaded yet, shows every repo, keeping the choice
+  // for its return.
+  const filter: RepoFilter =
+    chosen === "all" ||
+    chosen === "none" ||
+    hosts.some(({ host: h, view }) =>
+      view.state.repos.some((r) => !r.scratch && `${h.id}/${r.id}` === chosen),
+    )
+      ? chosen
+      : "all";
   const setFilter = (next: RepoFilter) => {
     setFilterState(next);
     saveStored(filterKey, next);
@@ -904,8 +915,10 @@ function Drawer<T>({
 }
 
 /**
- * The Repos filter (0033): a searchable menu of All repos, No repo, then each host's Spaces and repositories under their own headings,
- * each with its icon. Where the repo's plxd keeps icons, its gear opens the icon picker.
+ * The Repos filter (0033): a searchable menu of All repos, No repo, then each host's Spaces and
+ * repositories under their own headings, each with its icon. Where the repo's plxd keeps icons, its
+ * gear opens the icon picker, and a Space's row renames or deletes it. Spaces are made only from
+ * the add palette (AddDialog.tsx).
  */
 function RepoFilterMenu({
   hosts,
@@ -924,15 +937,15 @@ function RepoFilterMenu({
   const picker = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<{ view: ThreadsView; repo: Repo }>();
-  // The Space dialog's subject: a new Space, or one to rename or delete (0069).
+  // The Space dialog's subject: a Space to rename or delete (0069).
   const [spaceDialog, setSpaceDialog] = useState<
-    { kind: "new" | "rename" | "delete"; view: ThreadsView; repo?: Repo } | undefined
+    { kind: "rename" | "delete"; view: ThreadsView; repo: Repo } | undefined
   >();
   const [spaceName, setSpaceName] = useState("");
   const [spaceError, setSpaceError] = useState<string>();
   const spaceRef = useRef<HTMLDialogElement>(null);
   const openSpaceDialog = (next: NonNullable<typeof spaceDialog>) => {
-    setSpaceName(next.repo?.name ?? "");
+    setSpaceName(next.repo.name);
     setSpaceError(undefined);
     setSpaceDialog(next);
     menu.current?.hidePopover();
@@ -944,24 +957,17 @@ function RepoFilterMenu({
     const { kind, view, repo } = spaceDialog;
     const name = spaceName.trim();
     const error =
-      kind === "new"
-        ? await view.createSpace(name)
-        : kind === "rename"
-          ? await view.renameSpace(repo!.id, name)
-          : await view.deleteSpace(repo!.id);
+      kind === "rename" ? await view.renameSpace(repo.id, name) : await view.deleteSpace(repo.id);
     setSpaceError(error);
     if (error) spaceRef.current?.showModal();
     else setSpaceDialog(undefined);
   };
-  // ponytail: a new Space goes on the first host that has Spaces; add a host choice if it matters.
-  const spaceHost = hosts.find(({ view }) => "spaces" in view.capabilities)?.view;
   const q = query.trim().toLowerCase();
-  const repos = hosts.flatMap(({ host, view }) =>
-    view.state.repos
-      .filter((r) => !r.scratch && (!q || r.name.toLowerCase().includes(q)))
-      .map((repo) => ({ host, view, repo })),
+  const all = hosts.flatMap(({ host, view }) =>
+    view.state.repos.filter((r) => !r.scratch).map((repo) => ({ host, view, repo })),
   );
-  const current = repos.find((r) => filter === `${r.host.id}/${r.repo.id}`);
+  const current = all.find((r) => filter === `${r.host.id}/${r.repo.id}`);
+  const repos = all.filter((r) => !q || r.repo.name.toLowerCase().includes(q));
   const spaces = repos.filter((r) => r.repo.space);
   const plain = repos.filter((r) => !r.repo.space);
   const choose = (next: RepoFilter) => {
@@ -1120,40 +1126,17 @@ function RepoFilterMenu({
         {q && repos.length === 0 && (
           <p className="px-2 py-1.5 text-[12.5px] text-faint-foreground">No repos match</p>
         )}
-        {spaceHost && !q && (
-          <button
-            type="button"
-            role="menuitem"
-            className={`${menuItem} mt-1.5 text-muted-foreground hover:text-foreground`}
-            onClick={() => openSpaceDialog({ kind: "new", view: spaceHost })}
-          >
-            <Plus aria-hidden />
-            New Space
-          </button>
-        )}
       </div>
       {spaceDialog && (
         <SettingDialog
           ref={spaceRef}
-          label={
-            spaceDialog.kind === "new"
-              ? "New Space"
-              : spaceDialog.kind === "rename"
-                ? `Rename ${spaceDialog.repo?.name}`
-                : `Delete ${spaceDialog.repo?.name}`
-          }
-          action={
-            spaceDialog.kind === "new"
-              ? "Create"
-              : spaceDialog.kind === "rename"
-                ? "Rename"
-                : "Delete"
-          }
+          label={`${spaceDialog.kind === "rename" ? "Rename" : "Delete"} ${spaceDialog.repo.name}`}
+          action={spaceDialog.kind === "rename" ? "Rename" : "Delete"}
           onSave={() => void saveSpace()}
         >
           {spaceDialog.kind === "delete" ? (
             <p className="text-[13px] text-muted-foreground">
-              Delete {spaceDialog.repo?.name} and every chat in it? This can't be undone.
+              Delete {spaceDialog.repo.name} and every chat in it? This can't be undone.
             </p>
           ) : (
             <label className="block text-[13px]">
