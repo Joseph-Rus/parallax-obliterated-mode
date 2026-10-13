@@ -550,7 +550,9 @@ function HostUsageLoader({
   }, [host.id, connected, since, refresh, track]);
   const current = answer?.since === since ? answer.value : undefined;
   const result = connected && current && "days" in current ? current : undefined;
-  const waiting = connected && !current;
+  // Still on its way: connecting, or failed but retrying by itself. It waits with the skeleton.
+  const coming = !connected && (connection?.status !== "failed" || connection.retrying);
+  const waiting = coming || (connected && !current);
   useEffect(
     () =>
       onLoad(
@@ -564,16 +566,11 @@ function HostUsageLoader({
     [host.id, since, result, waiting, onLoad],
   );
 
-  // One host's wait is the page's skeleton; with several, each says so.
-  const status =
-    hostStatus(connection) ??
-    (!current
-      ? named
-        ? "Loading…"
-        : undefined
-      : "days" in current
-        ? undefined
-        : usageError(current));
+  // A host's wait is the page's skeleton. One that is down, or failed, says so in a line.
+  const status = coming
+    ? undefined
+    : (hostStatus(connection) ??
+      (!current ? undefined : "days" in current ? undefined : usageError(current)));
   const notes = status ? [status] : (result?.problems.map((p) => p.message) ?? []);
   return notes.map((note) => (
     <p key={note} className="mb-6 text-[13px] text-muted-foreground">
