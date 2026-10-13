@@ -1,4 +1,5 @@
 import {
+  Activity as ActivityIcon,
   Bot,
   CalendarDays,
   Check,
@@ -8,27 +9,33 @@ import {
   GitPullRequest,
   Link,
   Moon,
+  Network,
+  ShieldCheck,
   Sunrise,
   Sun,
   Sunset,
   Trophy,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
-import type { Profile } from "../../preload/bridge";
-import type { UsageHour } from "../../protocol/generated/protocol";
-import { useConnection } from "../ConnectionStatus";
-import { useHosts, type Host } from "../hosts";
-import { ParallaxMark } from "../logos";
-import { models } from "../models";
-import { instanceName, kinds } from "../providers";
-import { activityOf, Avatar, dayKey, dayOf, rhythmOf, useProfile, type Activity } from "../profile";
-import { backendLogos } from "../Sidebar";
-import { isRepository, type ThreadsView } from "../threads";
-import { hourCycle } from "../prefs";
-import { compact } from "../Usage";
-import { primaryButton, quietButton, Section, settingRow } from "./parts";
+import type { DeviceHost, Profile } from "../preload/bridge";
+import type { UsageHour } from "../protocol/generated/protocol";
+import { useConnection } from "./ConnectionStatus";
+import { osName } from "./ConnectWizard";
+import { DeviceIcon } from "./DeviceIcon";
+import { localId, useConnect, useHosts, type Host } from "./hosts";
+import { ClerkLogo, ParallaxMark } from "./logos";
+import { models } from "./models";
+import { instanceName, kinds } from "./providers";
+import { activityOf, Avatar, dayKey, dayOf, rhythmOf, type Activity } from "./profile";
+import { backendLogos } from "./Sidebar";
+import { isRepository, type ThreadsView } from "./threads";
+import { hourCycle } from "./prefs";
+import { compact } from "./Usage";
+import { quietButton, Section, settingRow } from "./settings/parts";
+import { IconButton } from "./ui";
 
 /** How far back the Tokens chart looks, in days. */
 const TOKEN_DAYS = 90;
@@ -49,15 +56,70 @@ const card = "rounded-2xl border border-border bg-surface";
 const heading = "text-[12.5px] font-medium text-muted-foreground";
 const outlineButton =
   "flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-[12.5px] text-muted-foreground hover:bg-hover hover:text-foreground [&_svg]:size-3.5";
+const dangerOutline =
+  "rounded-md border border-border bg-surface px-2.5 py-1 text-[12.5px] text-danger hover:bg-hover";
+
+/** "Secured by Clerk", with Clerk's mark, as Clerk's own account pages sign off. */
+export function SecuredByClerk() {
+  return (
+    <span className="flex items-center gap-1 text-[12px] text-faint-foreground">
+      Secured by
+      <span className="flex items-center gap-0.5 font-semibold text-muted-foreground">
+        <ClerkLogo className="size-3.5" />
+        Clerk
+      </span>
+    </span>
+  );
+}
+
+const tabs = [
+  {
+    id: "profile",
+    name: "Profile",
+    Icon: CircleUser,
+    about: "Your Parallax account, and what your agents add up to.",
+  },
+  {
+    id: "activity",
+    name: "Activity",
+    Icon: ActivityIcon,
+    about: "When and how much your agents ran, across every host.",
+  },
+  {
+    id: "security",
+    name: "Security",
+    Icon: ShieldCheck,
+    about: "How you sign in, and where. Each opens Clerk's account page in your browser.",
+  },
+  {
+    id: "connect",
+    name: "Parallax Connect",
+    Icon: Network,
+    about: "The computers you added with Parallax Connect. Turn them on or off in Settings.",
+  },
+] as const;
 
 /**
- * Settings > Account, which the sidebar's Profile button opens: the Parallax account (0067) and
- * what every host's agents add up to, then the account's settings. Signed out, the card offers
- * Sign in and Create an account, which open Clerk's sign-in page in the browser. Share copies the
- * card as a picture.
+ * The Account dialog, a native modal <dialog> open while it's mounted, which the profile menu's
+ * Manage account opens (0067). Profile is the account's card, with what every host's agents add
+ * up to, and its settings. Activity is when and how much those agents ran. Security is how the
+ * account signs in, on Clerk's pages. Parallax Connect lists the devices added with it (0056).
+ * Share copies the card as a picture.
  */
-export function AccountSettings({ listed }: { listed: { host: Host; view: ThreadsView }[] }) {
-  const profile = useProfile();
+export function AccountDialog({
+  profile,
+  listed,
+  onClose,
+}: {
+  profile: Profile;
+  listed: { host: Host; view: ThreadsView }[];
+  onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const [tab, setTab] = useState<(typeof tabs)[number]["id"]>("profile");
+  const current = tabs.find((t) => t.id === tab)!;
+  useEffect(() => dialog.current?.showModal(), []);
   const hosts = useHosts();
   const [now] = useState(Date.now);
   const runs = useMemo(
@@ -80,30 +142,88 @@ export function AccountSettings({ listed }: { listed: { host: Host; view: Thread
     [],
   );
 
-  if (profile === undefined) return null;
   return (
-    <div className="@container">
-      <h1 className="mb-6 text-xl font-semibold">Account</h1>
+    <dialog
+      ref={dialog}
+      aria-labelledby={titleId}
+      onClose={onClose}
+      className="relative m-auto h-[85vh] w-[60rem] max-w-[92vw] overflow-hidden rounded-xl border border-border bg-background text-foreground shadow-composer backdrop:bg-black/50"
+    >
       {hosts.map((h) => (
         <HostUsage key={h.id} host={h} since={since} onLoad={onUsage} />
       ))}
-      <ProfileCard profile={profile} activity={activity} repos={repos} hosts={hosts.length} />
-      {activity.agents > 0 && (
-        <div className="mb-8 grid gap-3 @2xl:grid-cols-2">
-          <Hours hours={activity.hours} />
-          <Models activity={activity} />
+      <div className="flex h-full">
+        <nav className="flex w-52 shrink-0 flex-col gap-px border-r border-border bg-sidebar px-2 pt-4 pb-3">
+          <h2 id={titleId} className="mb-3 px-2 text-xl font-semibold">
+            Account
+          </h2>
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              aria-current={t.id === tab ? "page" : undefined}
+              onClick={() => setTab(t.id)}
+              className={`flex w-full items-center gap-2 rounded-md px-2 py-[5px] text-left text-[13px] hover:bg-hover ${t.id === tab ? "bg-selected text-foreground" : "text-foreground/80"}`}
+            >
+              <t.Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+              {t.name}
+            </button>
+          ))}
+          <div className="mt-auto flex flex-col gap-2 px-2">
+            <span className="flex items-center gap-1.5 font-brand text-[13px] font-semibold text-muted-foreground">
+              <ParallaxMark className="size-4" />
+              Parallax
+            </span>
+            <SecuredByClerk />
+          </div>
+        </nav>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="border-b border-border px-8 pt-5 pb-4">
+            <h3 className="text-[15px] font-semibold">{current.name}</h3>
+            <p className="mt-0.5 text-[12.5px] text-muted-foreground">{current.about}</p>
+          </header>
+          <div className="@container min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-10">
+            {tab === "profile" ? (
+              <>
+                <ProfileCard
+                  profile={profile}
+                  activity={activity}
+                  repos={repos}
+                  hosts={hosts.length}
+                />
+                <AccountRows profile={profile} />
+              </>
+            ) : tab === "security" ? (
+              <SecurityRows />
+            ) : tab === "connect" ? (
+              <ConnectRows />
+            ) : (
+              <>
+                {activity.agents > 0 && (
+                  <div className="mb-8 grid gap-3 @2xl:grid-cols-2">
+                    <Hours hours={activity.hours} />
+                    <Models activity={activity} />
+                  </div>
+                )}
+                <Heatmap activity={activity} now={now} />
+                <Tokens hosts={hosts} usage={usage} now={now} />
+              </>
+            )}
+          </div>
         </div>
-      )}
-      <Heatmap activity={activity} now={now} />
-      <Tokens hosts={hosts} usage={usage} now={now} />
-      {profile && <AccountRows profile={profile} />}
-    </div>
+      </div>
+      <span className="absolute top-3 right-3">
+        <IconButton label="Close" onClick={() => dialog.current?.close()}>
+          <X aria-hidden />
+        </IconButton>
+      </span>
+    </dialog>
   );
 }
 
 /**
- * The card at the top: a banner in the logo's colors, the account, or Sign in while signed out,
- * and the stats as tiles. Share copies it as a picture, with the brand mark where its buttons are.
+ * The card at the top: a banner in the logo's colors, the account, and the stats as tiles.
+ * Share copies it as a picture, with the brand mark where the button is.
  */
 function ProfileCard({
   profile,
@@ -111,7 +231,7 @@ function ProfileCard({
   repos,
   hosts,
 }: {
-  profile: Profile | null;
+  profile: Profile;
   activity: Activity;
   repos: number;
   hosts: number;
@@ -145,16 +265,6 @@ function ProfileCard({
     setTimeout(() => setSharing(undefined), 2000);
   };
 
-  // Sign in's answer. Only the latest sign-in's shows: a replaced one answers "cancelled" late.
-  const [note, setNote] = useState<string>();
-  const latest = useRef(0);
-  const signIn = async (create: boolean) => {
-    const n = ++latest.current;
-    setNote("Finish signing in in your browser.");
-    const answer = await window.parallax.signIn(create);
-    if (n === latest.current) setNote(answer);
-  };
-
   const chips: { Icon: LucideIcon; text: string }[] = [];
   if (activity.since)
     chips.push({ Icon: CalendarDays, text: `Building since ${monthYear.format(activity.since)}` });
@@ -170,13 +280,7 @@ function ProfileCard({
       <div className="px-6 pb-6">
         <div className="relative -mt-12 flex items-end justify-between gap-4">
           <span className="rounded-full bg-surface p-1">
-            {profile ? (
-              <Avatar profile={profile} size={88} />
-            ) : (
-              <span className="grid size-22 place-items-center rounded-full bg-selected text-muted-foreground [&_svg]:size-10">
-                <CircleUser />
-              </span>
-            )}
+            <Avatar profile={profile} size={88} />
           </span>
           {sharing === "capturing" ? (
             <span className="flex items-center gap-1.5 pb-1 font-brand text-[15px] font-semibold">
@@ -184,39 +288,18 @@ function ProfileCard({
               Parallax
             </span>
           ) : (
-            <div className="flex shrink-0 items-center gap-2 pb-1">
-              <button type="button" onClick={() => void share()} className={outlineButton}>
-                {sharing === "copied" ? <Check /> : <Link />}
-                {sharing === "copied" ? "Copied" : sharing === "failed" ? "Couldn't copy" : "Share"}
-              </button>
-              {profile === null && (
-                <>
-                  <button type="button" onClick={() => void signIn(true)} className={outlineButton}>
-                    Create an account
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void signIn(false)}
-                    className={primaryButton}
-                  >
-                    Sign in
-                  </button>
-                </>
-              )}
-            </div>
+            <button type="button" onClick={() => void share()} className={`mb-1 ${outlineButton}`}>
+              {sharing === "copied" ? <Check /> : <Link />}
+              {sharing === "copied" ? "Copied" : sharing === "failed" ? "Couldn't copy" : "Share"}
+            </button>
           )}
         </div>
 
         <h2 className="mt-3 truncate font-brand text-2xl font-semibold tracking-tight">
-          {profile ? profile.name || profile.email : "Sign in to Parallax"}
+          {profile.name || profile.email}
         </h2>
-        {profile?.name && (
+        {profile.name && (
           <p className="truncate text-[13px] text-muted-foreground">{profile.email}</p>
-        )}
-        {profile === null && (
-          <p role="status" className="text-[13px] text-muted-foreground">
-            {note ?? "Sign in with GitHub, Google, Apple, or email in your browser."}
-          </p>
         )}
         {chips.length > 0 && (
           <ul className="mt-3 flex flex-wrap gap-1.5">
@@ -651,6 +734,143 @@ function AccountRows({ profile }: { profile: Profile }) {
           Sign out
         </button>
       </div>
+    </Section>
+  );
+}
+
+/** A row's title and what it says, on the left of a settings row. */
+function RowText({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <span className="block text-[13px] font-medium">{title}</span>
+      <span className="block text-[12.5px] text-muted-foreground">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * The Security tab: password, passkeys, devices, and Delete account. An OAuth token can't read
+ * or change them (0067), so each opens Clerk's Security page in the browser. Active devices shows
+ * this one, as the app knows it: Clerk lists browser sessions, not the app's sign-ins.
+ */
+function SecurityRows() {
+  const local = useHosts().find((h) => h.id === localId)!;
+  const localIcon = useConnect()?.icon ?? "laptop";
+  const [version, setVersion] = useState<string>();
+  useEffect(() => void window.parallax.version().then(setVersion), []);
+  const electron = /Electron\/([\d.]+)/.exec(navigator.userAgent)?.[1];
+  const security = () => void window.parallax.editProfile("security");
+  return (
+    <>
+      <Section title="Sign-in">
+        <div className={settingRow}>
+          <RowText title="Password">Set or change the password you sign in with by email.</RowText>
+          <button type="button" onClick={security} className={outlineButton}>
+            Set password
+          </button>
+        </div>
+        <div className={settingRow}>
+          <RowText title="Passkeys">
+            Sign in with Touch ID, Windows Hello, or a security key.
+          </RowText>
+          <button type="button" onClick={security} className={outlineButton}>
+            Add a passkey
+          </button>
+        </div>
+        <div className="flex gap-4 border-border px-4 py-3 not-last:border-b">
+          <span className="w-40 shrink-0 text-[13px] font-medium">Active devices</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex gap-3">
+              <DeviceIcon
+                icon={localIcon}
+                className="mt-0.5 size-5 shrink-0 text-muted-foreground"
+              />
+              <div className="min-w-0 text-[12.5px] leading-6 text-muted-foreground">
+                <span className="flex items-center gap-2 text-[13px] text-foreground">
+                  {deviceKinds[window.parallax.platform] ?? "Computer"}
+                  <span className="rounded-md border border-border bg-selected px-1.5 text-[11.5px] leading-5 text-muted-foreground">
+                    This device
+                  </span>
+                </span>
+                <span className="block truncate">{local.name}</span>
+                {version && <span className="block">Parallax {version}</span>}
+                {electron && <span className="block">Electron {electron}</span>}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={security}
+              className="mt-2 text-[12.5px] text-accent hover:underline"
+            >
+              Your other devices, on Clerk
+            </button>
+          </div>
+        </div>
+      </Section>
+      <Section title="Danger zone">
+        <div className={settingRow}>
+          <RowText title="Delete account">
+            Deletes your Parallax account and signs out every device.
+          </RowText>
+          <button type="button" onClick={security} className={dangerOutline}>
+            Delete account
+          </button>
+        </div>
+      </Section>
+    </>
+  );
+}
+
+/** What kind of computer this is, by Node's platform, as Active devices names it. */
+const deviceKinds: Record<string, string> = {
+  darwin: "Macintosh",
+  win32: "Windows PC",
+  linux: "Linux PC",
+};
+
+/**
+ * The Parallax Connect tab: each device added with it (0056), with its icon, address, and whether
+ * this app uses it. Remove takes it off this app's list until it's added again; nothing on the
+ * device changes.
+ */
+function ConnectRows() {
+  const connect = useConnect();
+  const [devices, setDevices] = useState<DeviceHost[]>([]);
+  useEffect(() => window.parallax.onDevices(setDevices), []);
+  if (!connect?.on)
+    return (
+      <p className="text-[13px] text-muted-foreground">
+        Parallax Connect is off. Turn it on in Settings › Connections to add your other computers.
+      </p>
+    );
+  if (!devices.length)
+    return (
+      <p className="text-[13px] text-muted-foreground">
+        No computers yet. Add one from Settings › Connections.
+      </p>
+    );
+  return (
+    <Section title="Computers">
+      {devices.map((d) => (
+        <div key={d.id} className={settingRow}>
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground [&_svg]:size-4.5">
+              <DeviceIcon icon={d.icon} />
+            </span>
+            <RowText title={d.name}>
+              {d.hostName} · {osName(d.os)} · {d.ip}
+              {!d.enabled && " · Off here"}
+            </RowText>
+          </div>
+          <button
+            type="button"
+            onClick={() => void window.parallax.removeDevice(d.id)}
+            className={dangerOutline}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
     </Section>
   );
 }

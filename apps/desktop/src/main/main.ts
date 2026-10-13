@@ -207,7 +207,7 @@ ipcMain.handle("parallax:cloneRepo", (_event, slug: unknown, dest: unknown) =>
   typeof dest === "string" ? cloneRepo(String(slug), dest) : { error: "No folder to clone into" },
 );
 
-// Settings > Account's Share: a picture of part of the asking window, onto the clipboard.
+// The Account dialog's Share: a picture of part of the asking window, onto the clipboard.
 ipcMain.handle("parallax:copyPicture", async (event, rect: unknown) => {
   const { x, y, width, height } = (rect ?? {}) as Record<string, unknown>;
   const sides = [x, y, width, height];
