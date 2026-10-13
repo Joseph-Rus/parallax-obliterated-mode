@@ -62,6 +62,8 @@ impl WorktreeManager {
         let mut status = GitStatus {
             branch: None,
             changes: 0,
+            insertions: 0,
+            deletions: 0,
             upstream: None,
             ahead: 0,
             origin: self
@@ -94,7 +96,70 @@ impl WorktreeManager {
                 .await?;
             status.ahead = output.stdout.trim().parse().unwrap_or(0);
         }
+        (status.insertions, status.deletions) = self.uncommitted_lines(folder).await?;
         Ok(status)
+    }
+
+    /// Net working-file changes relative to HEAD, plus untracked files, without changing the index.
+    async fn uncommitted_lines(&self, folder: RunFolder<'_>) -> Result<(u64, u64), WorktreeError> {
+        // Diff HEAD against the working files, so staged/unstaged edits to the same line
+        // count once. An unborn checkout uses Git's empty tree in its object format.
+        let head = self
+            .folder_git(folder, &["rev-parse", "--verify", "HEAD"])
+            .await?;
+        let base = if head.success() {
+            head.stdout
+        } else {
+            self.folder_git_ok(folder, &["hash-object", "-t", "tree", "--stdin"])
+                .await?
+        };
+        let diff = self
+            .folder_git_ok(
+                folder,
+                &[
+                    "diff",
+                    "--numstat",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    base.trim(),
+                    "--",
+                ],
+            )
+            .await?;
+        let counts = super::parse_numstat(&diff);
+        let mut insertions = counts.insertions;
+        let mut deletions = counts.deletions;
+        let untracked = self
+            .folder_git_ok(
+                folder,
+                &["ls-files", "--others", "--exclude-standard", "-z"],
+            )
+            .await?;
+        for name in untracked
+            .trim_end_matches('\n')
+            .split('\0')
+            .filter(|name| !name.is_empty())
+        {
+            let args = [
+                "diff",
+                "--no-index",
+                "--numstat",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--",
+                super::NULL_DEVICE,
+                name,
+            ];
+            let diff = self.folder_git(folder, &args).await?;
+            // `--no-index` exits 1 when files differ, including binary files.
+            if !diff.success() && diff.exit.info.code != Some(1) {
+                return Err(diff.failure(folder.path(), &args));
+            }
+            let counts = super::parse_numstat(&diff.stdout);
+            insertions += counts.insertions;
+            deletions += counts.deletions;
+        }
+        Ok((insertions, deletions))
     }
 
     /// The full hash of `folder`'s `HEAD` commit.

@@ -83,8 +83,8 @@ const resize = (to: number) =>
 
 test("the thread keeps at least 60% of its row beside a docked card", () => {
   expect(tooNarrowToDock(1200)).toBe(false);
-  expect(tooNarrowToDock(870)).toBe(false);
-  expect(tooNarrowToDock(860)).toBe(true);
+  expect(tooNarrowToDock(750)).toBe(false);
+  expect(tooNarrowToDock(740)).toBe(true);
   expect(tooNarrowToDock(0)).toBe(false);
 });
 
@@ -149,4 +149,13 @@ test("a row that unmounts and returns narrower is measured again", async () => {
   width = 700;
   await rerender(true);
   expect(panel().hidden).toBe(true);
+});
+
+test("workspace header keeps both icons and host on one row with the path only in its tooltip", async () => {
+  await render();
+  const header = panel().querySelector('[aria-label="Workspace"] > div')!;
+  expect(header.textContent).toBe("macbook");
+  expect(header.getAttribute("title")).toBe("/repo");
+  expect(header.querySelectorAll("svg")).toHaveLength(2);
+  expect(panel().textContent).not.toContain("/repo");
 });

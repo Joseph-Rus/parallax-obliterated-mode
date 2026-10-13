@@ -27,6 +27,8 @@ const finished: AgentRun = {
 const clean: GitStatus = {
   branch: "parallax/readme",
   changes: 0,
+  insertions: 0,
+  deletions: 0,
   upstream: "origin/parallax/readme",
   ahead: 0,
   origin: true,
@@ -288,4 +290,81 @@ test("a detached HEAD shows its note", async () => {
   );
   expect(item("Push").disabled).toBe(true);
   expect(item("Create PR").disabled).toBe(true);
+});
+
+test("new repository status requires its own capability and never enables writes", async () => {
+  const request = fakeBridge(
+    { repoGitStatus: {} },
+    {
+      "repo/gitStatus": () => ({ result: { ...clean, insertions: 715, deletions: 4 } }),
+    },
+  );
+  root = createRoot(document.body.appendChild(document.createElement("div")));
+  await act(async () => root!.render(<GitMenu hostId="local" repo="repo-1" />));
+  await settle();
+  expect(request).toHaveBeenCalledWith("local", "repo/gitStatus", { repo: "repo-1" });
+  expect(document.body.textContent).toContain("+715 −4");
+  for (const action of ["Commit", "Push", "Create PR"]) expect(item(action).disabled).toBe(true);
+});
+
+test("a failed refresh clears stale status and gives a concise missing-worktree diagnostic", async () => {
+  let missing = false;
+  fakeBridge(
+    { git: {} },
+    {
+      "agent/gitStatus": () =>
+        missing
+          ? {
+              error: {
+                code: -32000,
+                message: "Missing /full/recorded/path",
+                data: { kind: "worktreeMissing" },
+              },
+            }
+          : { result: { ...clean, changes: 1, insertions: 12, deletions: 3 } },
+    },
+  );
+  await render(finished);
+  expect(document.body.textContent).toContain("+12 −3");
+  missing = true;
+  await render({ ...finished, diff: { ...finished.diff!, commit: "changed" } });
+  expect(document.body.textContent).not.toContain("+12");
+  expect(document.body.textContent).not.toContain("/full/recorded/path");
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe("Worktree no longer exists");
+  expect(document.querySelector('[role="alert"]')?.getAttribute("title")).toBe(
+    "Missing /full/recorded/path",
+  );
+  for (const action of ["Commit", "Push", "Create PR"]) expect(item(action).disabled).toBe(true);
+});
+
+test("the git capability alone cannot read a new repository's checkout", async () => {
+  const request = fakeBridge({ git: {} });
+  root = createRoot(document.body.appendChild(document.createElement("div")));
+  await act(async () => root!.render(<GitMenu hostId="local" repo="repo-1" />));
+  await settle();
+  expect(request).not.toHaveBeenCalled();
+  expect(document.body.textContent).toBe("");
+});
+
+test("switching repositories clears status and ignores the previous request", async () => {
+  fakeBridge({ repoGitStatus: {} });
+  let previous: (answer: unknown) => void = () => {};
+  window.parallax.request = vi.fn((_host, _method, params) =>
+    params?.repo === "repo-1"
+      ? new Promise((resolve) => {
+          previous = resolve;
+        })
+      : Promise.resolve({ result: { ...clean, branch: "second", insertions: 2 }, logId: "log-1" }),
+  ) as ParallaxBridge["request"];
+  root = createRoot(document.body.appendChild(document.createElement("div")));
+  await act(async () => root!.render(<GitMenu hostId="local" repo="repo-1" />));
+  await settle();
+  await act(async () => root!.render(<GitMenu hostId="local" repo="repo-2" />));
+  await settle();
+  await act(async () =>
+    previous({ result: { ...clean, branch: "first", insertions: 100 }, logId: "log-1" }),
+  );
+  expect(document.body.textContent).toContain("second");
+  expect(document.body.textContent).toContain("+2 −0");
+  expect(document.body.textContent).not.toContain("first");
 });

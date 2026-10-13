@@ -265,6 +265,10 @@ export type ParallaxRequests = {
 	 */
 	"agent/gitStatus": { params: AgentGitStatusParams, result: GitStatus },
 	/**
+	 * `repo/gitStatus`: read-only checkout status, gated on `repoGitStatus`.
+	 */
+	"repo/gitStatus": { params: RepoGitStatusParams, result: GitStatus },
+	/**
 	 * `agent/commit`: stages everything in a finished run's folder and commits it.
 	 */
 	"agent/commit": { params: AgentCommitParams, result: GitStatus },
@@ -760,6 +764,7 @@ export const REQUEST_METHODS = [
 	"agent/requestChanges",
 	"agent/openPr",
 	"agent/gitStatus",
+	"repo/gitStatus",
 	"agent/commit",
 	"agent/push",
 	"agent/approve",
@@ -4590,6 +4595,14 @@ export type GitStatus = {
 	 */
 	changes: number,
 	/**
+	 * Uncommitted lines added relative to HEAD, including untracked text files.
+	 */
+	insertions?: number,
+	/**
+	 * Uncommitted lines removed relative to HEAD. Binary files contribute zero lines.
+	 */
+	deletions?: number,
+	/**
 	 * The branch's upstream, such as `origin/main`, or null when it has none.
 	 */
 	upstream: string | null,
@@ -4601,6 +4614,16 @@ export type GitStatus = {
 	 * Whether the repository has an `origin` remote to push to.
 	 */
 	origin: boolean,
+};
+
+/**
+ * Read-only Git status of a repository checkout, behind `repoGitStatus`.
+ */
+export type RepoGitStatusParams = {
+	/**
+	 * The repository entry.
+	 */
+	repo: RepoId,
 };
 
 /**
@@ -8225,7 +8248,7 @@ export type ErrorData = {
  * A newer plxd may send kinds that are not listed here. Treat those as unknown errors, so a
  * `switch` over this type must not end in an exhaustiveness assertion.
  */
-export type ErrorKind = "notInitialized" | "incompatibleProtocol" | "resyncRequired" | "projectNotFound" | "accountNotFound" | "keychainUnavailable" | "idConflict" | "contextNotFound" | "contextTooLarge" | "notARepository" | "runNotFound" | "runNotResumable" | "workerUnavailable" | "worktreeFailed" | "runAccepted" | "mergeRefused" | "mergeConflict" | "repoNotFound" | "threadNotFound" | "noDefaultAccount" | "unsupportedOption" | "prRefused" | "pushFailed" | "ghUnavailable" | "prFailed" | "imageTooLarge" | "imageNotFound" | "approvalNotFound" | "gitRefused" | "commitFailed" | "githubSetupFailed" | "queuedMessageNotFound" | "landRefused" | "hostUpdateFailed" | "revertRefused";
+export type ErrorKind = "notInitialized" | "incompatibleProtocol" | "resyncRequired" | "projectNotFound" | "accountNotFound" | "keychainUnavailable" | "idConflict" | "contextNotFound" | "contextTooLarge" | "notARepository" | "runNotFound" | "runNotResumable" | "workerUnavailable" | "worktreeFailed" | "worktreeMissing" | "runAccepted" | "mergeRefused" | "mergeConflict" | "repoNotFound" | "threadNotFound" | "noDefaultAccount" | "unsupportedOption" | "prRefused" | "pushFailed" | "ghUnavailable" | "prFailed" | "imageTooLarge" | "imageNotFound" | "approvalNotFound" | "gitRefused" | "commitFailed" | "githubSetupFailed" | "queuedMessageNotFound" | "landRefused" | "hostUpdateFailed" | "revertRefused";
 
 /**
  * The `detail` of `incompatibleProtocol`. Its shape never changes, so every client can read it

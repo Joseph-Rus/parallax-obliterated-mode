@@ -2,7 +2,10 @@ import { Check, ChevronDown, FolderOpen, SquareTerminal } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import type { OpenTarget, TerminalApp } from "../preload/bridge";
-import { CursorLogo, VSCodeLogo } from "./logos";
+import cursorIcon from "./assets/cursor.svg";
+import vscodeIcon from "./assets/vscode.svg";
+import ghosttyIcon from "./assets/ghostty.svg";
+import alacrittyIcon from "./assets/alacritty.svg";
 import { useShortcutLabel } from "./keybindings";
 import { appShortcut, Menu, menuItem } from "./ui";
 
@@ -11,16 +14,17 @@ export const OPEN_TARGET_KEY = "parallax.openTarget";
 /** The window event Settings fires after choosing a terminal app, so Open lists it. */
 export const TERMINAL_CHOSEN = "parallax:terminalChosen";
 
-// Each target's mark, shown where main has no app icon for it (anywhere but macOS).
+// Supplied editor artwork, with fallback marks for native file managers and terminals.
 const marks: Record<OpenTarget, ReactNode> = {
-  cursor: <CursorLogo />,
-  vscode: <VSCodeLogo />,
+  cursor: <img src={cursorIcon} alt="" className="size-4 shrink-0" />,
+  vscode: <img src={vscodeIcon} alt="" className="size-4 shrink-0" />,
   files: <FolderOpen />,
   terminal: <SquareTerminal />,
 };
 
-/** A target's app icon from main (`openTargetIcons`), else its mark. */
+/** Supplied editor artwork, or a native app icon from main with a fallback mark. */
 export const targetIcon = (target: OpenTarget, appIcons: Partial<Record<OpenTarget, string>>) => {
+  if (target === "cursor" || target === "vscode") return marks[target];
   const src = appIcons[target];
   return src ? <img src={src} alt="" className="size-4 shrink-0" /> : marks[target];
 };
@@ -60,7 +64,16 @@ export function OpenMenu({ hostId, folder }: { hostId: string; folder?: string }
     void window.parallax.openTargetIcons().then(setAppIcons);
     void window.parallax.terminalApps().then(setTerminals);
   }, [terminalChosen]);
-  const icon = (target: OpenTarget) => targetIcon(target, appIcons);
+  const terminalIcon = (name: string | null) => {
+    const src = name === "Ghostty" ? ghosttyIcon : name === "Alacritty" ? alacrittyIcon : undefined;
+    return src ? (
+      <img src={src} alt="" className="size-4 shrink-0" />
+    ) : (
+      targetIcon("terminal", name === terminal ? appIcons : {})
+    );
+  };
+  const icon = (target: OpenTarget) =>
+    target === "terminal" ? terminalIcon(terminal) : targetIcon(target, appIcons);
   useEffect(() => {
     let live = true;
     void window.parallax.openTargets(hostId).then((found) => {
@@ -194,7 +207,7 @@ export function OpenMenu({ hostId, folder }: { hostId: string; folder?: string }
             onClick={() => void chooseTerminal(app)}
             className={menuItem}
           >
-            <SquareTerminal aria-hidden />
+            {terminalIcon(app.name)}
             <span className="flex-1">{app.name}</span>
             {app.name === terminal && <Check aria-hidden className="text-muted-foreground" />}
           </button>

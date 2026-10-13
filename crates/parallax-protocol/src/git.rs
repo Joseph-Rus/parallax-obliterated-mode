@@ -6,7 +6,15 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::RunId;
+use crate::{RepoId, RunId};
+
+/// Read-only Git status of a repository checkout, behind `repoGitStatus`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoGitStatusParams {
+    /// The repository entry.
+    pub repo: RepoId,
+}
 
 /// Params of `agent/gitStatus`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -43,10 +51,21 @@ pub struct GitStatus {
     pub branch: Option<String>,
     /// How many paths have uncommitted changes, untracked ones included.
     pub changes: u32,
+    /// Uncommitted lines added relative to HEAD, including untracked text files.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub insertions: u64,
+    /// Uncommitted lines removed relative to HEAD. Binary files contribute zero lines.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub deletions: u64,
     /// The branch's upstream, such as `origin/main`, or null when it has none.
     pub upstream: Option<String>,
     /// Commits not on the upstream, or with no upstream, not on any of `origin`'s branches.
     pub ahead: u32,
     /// Whether the repository has an `origin` remote to push to.
     pub origin: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's predicate takes a reference.
+fn is_zero(count: &u64) -> bool {
+    *count == 0
 }

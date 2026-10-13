@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
-import type { InboxItem, PreviewTab, Repo, Thread } from "../protocol/generated/protocol";
+import type { InboxItem, PreviewTab, Repo, RepoId, Thread } from "../protocol/generated/protocol";
 import { type RepoAction } from "./Actions";
 import { AgentChat } from "./AgentChat";
 import { ChangesPanel } from "./ChangesPanel";
@@ -1036,11 +1036,16 @@ export function App() {
                       : undefined
                   }
                   git={
-                    selection.kind === "thread"
+                    selection.kind === "thread" ||
+                    (selection.kind === "new" && !repoless(group) && !group.space)
                       ? {
                           hostId: host.id,
                           run: threadRun,
-                          title: threads.state.titles[selection.threadId],
+                          repo: selection.kind === "new" ? (group.id as RepoId) : undefined,
+                          title:
+                            selection.kind === "thread"
+                              ? threads.state.titles[selection.threadId]
+                              : undefined,
                           onPrOpened: linksPrs ? openPr : undefined,
                           onSetUpGithub: setUpGithub,
                           onChanges: () => {

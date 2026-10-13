@@ -245,6 +245,7 @@ fn capabilities_advertised() -> Capabilities {
         ("fileEdit".to_owned(), serde_json::Map::new()),
         ("files".to_owned(), serde_json::Map::new()),
         ("git".to_owned(), serde_json::Map::new()),
+        ("repoGitStatus".to_owned(), serde_json::Map::new()),
         (
             "iconImages".to_owned(),
             serde_json::Map::from_iter([("maxBytes".to_owned(), images::MAX_ICON_BYTES.into())]),

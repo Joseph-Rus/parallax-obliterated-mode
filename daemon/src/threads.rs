@@ -1308,3 +1308,19 @@ mod tests {
         assert_eq!(check_path(&long).unwrap_err().code, INVALID_PARAMS);
     }
 }
+
+/// Read the registered repository checkout without creating or changing a thread.
+pub(crate) async fn git_status(
+    daemon: &Arc<Daemon>,
+    params: parallax_protocol::RepoGitStatusParams,
+) -> Result<parallax_protocol::GitStatus, ErrorObject> {
+    let entry = start_entry(daemon, Some(params.repo)).await?;
+    daemon
+        .agents
+        .worktrees()
+        .status(crate::worktree::RunFolder::Checkout(Path::new(
+            &entry.fields.path,
+        )))
+        .await
+        .map_err(|error| ErrorObject::parallax(ErrorKind::WorktreeFailed, error.to_string()))
+}

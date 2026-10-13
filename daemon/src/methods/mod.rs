@@ -269,6 +269,7 @@ async fn route(context: &Context, request: &Request) -> Result<Value, ErrorObjec
         SpaceCreate => |p| crate::spaces::create(daemon, p),
         SpaceDelete => |p| thread::space_delete(context, p),
         RepoRefs => |p| threads::refs(daemon, p),
+        RepoGitStatus => |p| threads::git_status(daemon, p),
         RepoFiles => |p| composer::files(context, p),
         AgentStart => |p| agent::start(context, p),
         AgentSend => |p| agent::send(context, p),

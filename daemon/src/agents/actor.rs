@@ -1550,6 +1550,7 @@ impl Actor {
             )));
         }
         self.effect_busy(ErrorKind::PrRefused)?;
+        self.folder().await?;
         // A Current checkout thread pushes the branch its checkout has out (PLX-298).
         let (repo, branch) = if self.row.fields.checkout {
             let repo = self.checkout_path().await?;

@@ -114,5 +114,45 @@
         "kind": "commitFailed"
       }
     }
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "repo/gitStatus",
+    "params": {
+      "repo": "01a0d360-1a2b-7c3d-8e4f-5a6b7c8d9e01"
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 4,
+    "result": {
+      "branch": "main",
+      "changes": 2,
+      "insertions": 7,
+      "deletions": 3,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "origin": true
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 5,
+    "method": "agent/gitStatus",
+    "params": {
+      "runId": "01a0d360-1a2b-7c3d-8e4f-5a6b7c8d9e01"
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 5,
+    "error": {
+      "code": -32000,
+      "message": "The thread's worktree no longer exists: /isolated/removed-worktree",
+      "data": {
+        "kind": "worktreeMissing"
+      }
+    }
   }
 ]

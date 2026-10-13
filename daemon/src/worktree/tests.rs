@@ -1285,3 +1285,41 @@ async fn worktree_git_commands_ignore_a_rewritten_git_file() {
 
 mod checkpoint;
 mod review;
+
+#[tokio::test]
+async fn git_status_counts_net_edits_untracked_binary_and_unborn_files() {
+    use super::RunFolder;
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-b", "main"]);
+    let mgr = manager(&dir.path().join("data"));
+    std::fs::write(repo.join("staged.txt"), "one\ntwo\n").unwrap();
+    git(&repo, &["add", "."]);
+    std::fs::write(repo.join("staged.txt"), "one\n").unwrap();
+    std::fs::write(repo.join("new\tfile.txt"), "three\nfour").unwrap();
+    std::fs::write(repo.join("binary.bin"), b"\0\n\n").unwrap();
+    let status = mgr.status(RunFolder::Checkout(&repo)).await.unwrap();
+    assert_eq!((status.insertions, status.deletions), (3, 0));
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "Initial",
+        ],
+    );
+    std::fs::write(repo.join("staged.txt"), "replacement\nthree\n").unwrap();
+    git(&repo, &["add", "staged.txt"]);
+    std::fs::write(repo.join("staged.txt"), "replacement\n").unwrap();
+    let status = mgr.status(RunFolder::Checkout(&repo)).await.unwrap();
+    assert_eq!((status.insertions, status.deletions), (3, 2));
+    assert_eq!(
+        git_output(&repo, &["diff", "--cached", "--numstat"]),
+        "2\t2\tstaged.txt"
+    );
+}

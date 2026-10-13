@@ -1,0 +1,98 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { expect, test } from "@playwright/test";
+
+import type { ParallaxBridge } from "../src/preload/bridge";
+import { uuidv7 } from "../src/renderer/uuidv7";
+import { close, launch } from "./launch";
+
+declare const window: {
+  parallax: ParallaxBridge;
+};
+
+test("checkout counts before starting and concise errors after a worktree is removed", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "plx722-")));
+  const repo = path.join(fixture, "fixture-repo");
+  mkdirSync(repo);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo });
+  git("init", "-b", "main");
+  writeFileSync(path.join(repo, "README.md"), "original\n");
+  git("add", ".");
+  git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Initial");
+  writeFileSync(path.join(repo, "README.md"), "replacement\nsecond\n");
+  writeFileSync(path.join(repo, "notes.txt"), "one\ntwo");
+  // Discovery cannot reach the user's provider CLIs or sign-in state.
+  const bin = path.join(fixture, "bin");
+  mkdirSync(bin);
+  for (const cli of ["claude", "codex", "cursor", "cursor-agent", "agent", "gh"])
+    writeFileSync(path.join(bin, cli), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const launched = await launch("fork.json", bin);
+  const { page } = launched;
+  try {
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.parallax.connectionState("local").then((s) => s.status)),
+      )
+      .toBe("connected");
+    const repoId = uuidv7();
+    const answer = await page.evaluate(
+      async ({ repoId, repo }) => {
+        const added = await window.parallax.request("local", "repo/add", {
+          id: repoId,
+          path: repo,
+        });
+        await window.parallax.request("local", "accounts/defaults/set", {
+          role: "worker",
+          account: { kind: "subscription", backend: "fake" },
+        });
+        localStorage.setItem("parallax.theme", "dark");
+        localStorage.setItem("parallax.openTarget", "vscode");
+        return added;
+      },
+      { repoId, repo },
+    );
+    expect(answer).not.toHaveProperty("error");
+    await page.reload();
+    await page.getByRole("button", { name: "Thread details", exact: true }).click();
+    const details = page.getByRole("complementary", { name: "Thread details", exact: true });
+    await expect(details).toContainText("+4 −1");
+    await expect(details.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
+    await expect(details.locator('[aria-label="Workspace"] > div[title]')).toHaveAttribute(
+      "title",
+      repo,
+    );
+    expect(await details.locator('[aria-label="Workspace"] > div[title] svg').count()).toBe(2);
+    expect(await details.innerText()).not.toContain(repo);
+    await details
+      .locator(":scope > div")
+      .screenshot({ path: path.join(fixture, "new-checkout.png") });
+    git("checkout", "--", "README.md");
+    rmSync(path.join(repo, "notes.txt"));
+    await page.getByRole("textbox", { name: "Message" }).fill("Check the isolated checkout");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByRole("log", { name: "Transcript" })).toContainText(
+      "The fake agent answered.",
+    );
+    const run = await page.evaluate(async () => {
+      const answer = await window.parallax.request("local", "agent/list", {});
+      if ("error" in answer) throw new Error(answer.error.message);
+      return answer.result.runs[0]!;
+    });
+    expect(run.worktreePath).toBeTruthy();
+    rmSync(run.worktreePath!, { recursive: true });
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Back to app", exact: true }).click();
+    await expect(details.getByRole("alert")).toHaveText("Worktree no longer exists");
+    expect(await details.getByRole("alert").getAttribute("title")).toContain(run.worktreePath);
+    expect(await details.innerText()).not.toContain(run.worktreePath!);
+    await details
+      .locator(":scope > div")
+      .screenshot({ path: path.join(fixture, "missing-worktree.png") });
+    console.log(`PLX-722 screenshots: ${fixture}`);
+  } finally {
+    await close(launched);
+  }
+});
