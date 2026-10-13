@@ -905,13 +905,17 @@ export function Composer({
       },
       handleKeyDown: (view, event): boolean => {
         const plain = !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey;
-        // Backspace at the end of a pill, or inside one, takes the whole pill.
-        const { selection } = view.state;
+        // Backspace at the end of a pill, or inside one, takes the whole pill: a /skill, or an
+        // @file that names one of the thread's files, so an @ still being typed edits as text.
+        const { selection, doc } = view.state;
         if (event.key === "Backspace" && plain && selection.empty) {
           const at = selection.from;
           const pill = pills(view.state)
             .find(at, at)
-            .find((d) => d.from < at);
+            .find((d) => {
+              const token = doc.textBetween(d.from, d.to);
+              return d.from < at && (token[0] === "/" || !!loadedPaths?.includes(token.slice(1)));
+            });
           if (pill) {
             view.dispatch(view.state.tr.delete(pill.from, pill.to));
             return true;

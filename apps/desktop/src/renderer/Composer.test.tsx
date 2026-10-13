@@ -890,13 +890,19 @@ test("a picked /skill and an @token are drawn as pills; an unknown /path is not"
 
 test("Backspace at the end of a pill deletes the whole pill", async () => {
   const { box, type, press } = await withMenus(async () => undefined);
-  await type("fix @src/a.ts /review");
+  // The `@` lists the thread's files, which is how a picked path is known.
+  await type("fix @");
+  await type("src/lib.rs /review");
   await press("Backspace");
-  expect(box.textContent).toBe("fix @src/a.ts ");
+  expect(box.textContent).toBe("fix @src/lib.rs ");
   // After the space it's an ordinary Backspace, and the pill goes on the next.
   await press("Backspace");
-  expect(box.textContent).toBe("fix @src/a.ts ");
-  box.editor!.commands.setTextSelection(14);
+  expect(box.textContent).toBe("fix @src/lib.rs ");
+  box.editor!.commands.setTextSelection(16);
   await press("Backspace");
   expect(box.textContent).toBe("fix  ");
+  // An @ that names no file yet is still being typed, so Backspace leaves it to the editor.
+  await type("@src/lib.r");
+  await press("Backspace");
+  expect(box.textContent).toBe("fix @src/lib.r ");
 });
