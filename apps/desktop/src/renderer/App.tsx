@@ -1017,8 +1017,7 @@ export function App() {
                 <ThreadDetails
                   key={panelKey}
                   mode={group.space ? "hidden" : details.mode}
-                  hostName={host.name}
-                  hostId={host.id}
+                  host={host}
                   folder={folder?.path === "~" ? undefined : folder?.path}
                   worktree={
                     !!threadRun?.worktreePath &&

@@ -1,10 +1,12 @@
-import { ClipboardList, FolderGit2, FolderOpen, Monitor } from "lucide-react";
+import { ClipboardList, FolderGit2, FolderOpen } from "lucide-react";
 import { useLayoutEffect, useState, type ComponentProps } from "react";
 
 import { Actions } from "./Actions";
 import { GitMenu } from "./GitMenu";
 import { LineageSection } from "./Lineage";
 import { OpenMenu } from "./OpenMenu";
+import { hostIcon } from "./RunTargetMenu";
+import type { Host } from "./hosts";
 import { IconButton } from "./ui";
 
 /** Where whether Thread details is shown is kept, for every thread. */
@@ -87,8 +89,7 @@ export function ThreadDetailsButton({ open, onToggle }: { open: boolean; onToggl
  */
 export function ThreadDetails({
   mode,
-  hostName,
-  hostId,
+  host,
   folder,
   worktree,
   actions,
@@ -96,8 +97,7 @@ export function ThreadDetails({
   lineage,
 }: {
   mode: ThreadDetailsMode;
-  hostName: string;
-  hostId: string;
+  host: Host;
   folder?: string;
   worktree?: boolean;
   actions?: ComponentProps<typeof Actions>;
@@ -124,15 +124,17 @@ export function ThreadDetails({
             title={folder ?? "No folder yet"}
             className="flex items-center gap-2 px-2 py-2 text-[13px]"
           >
-            <Monitor aria-hidden className="shrink-0 text-muted-foreground" />
+            <span aria-hidden className="shrink-0 text-muted-foreground">
+              {hostIcon(host)}
+            </span>
             {worktree ? (
               <FolderGit2 aria-hidden className="shrink-0 text-muted-foreground" />
             ) : (
               <FolderOpen aria-hidden className="shrink-0 text-muted-foreground" />
             )}
-            <span className="truncate font-medium">{hostName}</span>
+            <span className="truncate font-medium">{host.name}</span>
           </div>
-          <OpenMenu hostId={hostId} folder={folder} />
+          <OpenMenu hostId={host.id} folder={folder} />
           {actions && <Actions {...actions} />}
         </section>
         {git && (

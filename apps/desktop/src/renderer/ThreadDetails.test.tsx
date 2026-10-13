@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
+import type { Host } from "./hosts";
 import type { ParallaxBridge } from "../preload/bridge";
 import {
   THREAD_DETAILS_KEY,
@@ -52,7 +53,9 @@ beforeEach(() => {
 
 function Harness({ row = true }: { row?: boolean }) {
   const { mode, toggle, ref } = useThreadDetails();
-  const details = <ThreadDetails mode={mode} hostName="macbook" hostId="local" folder="/repo" />;
+  const details = (
+    <ThreadDetails mode={mode} host={{ id: "local", name: "macbook" }} folder="/repo" />
+  );
   return (
     <>
       <ThreadDetailsButton open={mode !== "hidden"} onToggle={toggle} />
@@ -158,4 +161,24 @@ test("workspace header keeps both icons and host on one row with the path only i
   expect(header.getAttribute("title")).toBe("/repo");
   expect(header.querySelectorAll("svg")).toHaveLength(2);
   expect(panel().textContent).not.toContain("/repo");
+});
+
+test("workspace uses the Connect device icon, updates it, and falls back by host transport", async () => {
+  const root = createRoot(document.body.appendChild(document.createElement("div")));
+  unmount = () => root.unmount();
+  const show = (host: Host) =>
+    act(async () => root.render(<ThreadDetails mode="docked" host={host} folder="/repo" />));
+  const icon = () => panel().querySelector('[aria-label="Workspace"] > div > span svg')!;
+  await show({ id: "device", name: "Mac mini", icon: "mini", routes: ["wss://fixture"] });
+  expect(icon().querySelector("rect")?.getAttribute("height")).toBe("10");
+  expect(icon().querySelector("path")?.getAttribute("d")).toBe("M6 13h.01");
+  expect(icon().closest("span")?.getAttribute("aria-hidden")).toBe("true");
+  await show({ id: "device", name: "Mac mini", icon: "desktop" });
+  expect(icon().classList.contains("lucide-monitor")).toBe(true);
+  await show({ id: "local", name: "macbook" });
+  expect(icon().classList.contains("lucide-laptop")).toBe(true);
+  await show({ id: "ssh", name: "Remote", destination: "fixture" });
+  expect(icon().classList.contains("lucide-server")).toBe(true);
+  await show({ id: "lan", name: "Remote", routes: ["wss://fixture"] });
+  expect(icon().classList.contains("lucide-server")).toBe(true);
 });

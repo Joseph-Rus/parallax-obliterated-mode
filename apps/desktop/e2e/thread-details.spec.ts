@@ -58,6 +58,11 @@ test("checkout counts before starting and concise errors after a worktree is rem
     if ("error" in answer) throw new Error(answer.error.message);
     const registeredPath = answer.result.repo.path;
     await page.reload();
+    await page.getByRole("button", { name: "New thread", exact: true }).click();
+    await page
+      .getByRole("dialog", { name: "New thread in" })
+      .getByRole("option", { name: /^fixture-repo/ })
+      .click();
     await page.getByRole("button", { name: "Thread details", exact: true }).click();
     const details = page.getByRole("complementary", { name: "Thread details", exact: true });
     await expect(details).toContainText("+4 −1");
@@ -67,6 +72,17 @@ test("checkout counts before starting and concise errors after a worktree is rem
       registeredPath,
     );
     expect(await details.locator('[aria-label="Workspace"] > div[title] svg').count()).toBe(2);
+    // Supply the normal Connect metadata event without enabling a real account or discovery.
+    await launched.app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]!.webContents.send("parallax:connect", {
+        on: true,
+        icon: "mini",
+        channel: "nightly",
+      });
+    });
+    const deviceIcon = details.locator('[aria-label="Workspace"] > div[title] > span svg');
+    await expect(deviceIcon.locator("path")).toHaveAttribute("d", "M6 13h.01");
+    await expect(deviceIcon.locator("rect")).toHaveAttribute("height", "10");
     expect(await details.innerText()).not.toContain(registeredPath);
     await details
       .locator(":scope > div")
