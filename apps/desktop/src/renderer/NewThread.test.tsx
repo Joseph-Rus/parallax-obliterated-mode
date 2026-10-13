@@ -784,7 +784,7 @@ test("Local checkout can't be picked without a repo, or from a plxd that would m
     ].find((b) => b.textContent?.startsWith("Local checkout"))!;
   await renderApp();
   expect(checkoutOption().disabled).toBe(true);
-  expect(checkoutOption().title).toContain("needs a newer plxd");
+  expect(document.body.textContent).toContain("Local checkout needs a newer plxd.");
   act(() => unmount());
 
   capabilities = { checkout: {} };
@@ -793,7 +793,7 @@ test("Local checkout can't be picked without a repo, or from a plxd that would m
   await act(async () => checkoutOption().click());
   await choose("Repository", "No Repo");
   expect(checkoutOption().disabled).toBe(true);
-  expect(checkoutOption().title).toContain("needs a repo");
+  expect(document.body.textContent).toContain("Local checkout needs a repo.");
   expect(control("Runs on: This Mac, New worktree")).not.toBeNull();
 });
 

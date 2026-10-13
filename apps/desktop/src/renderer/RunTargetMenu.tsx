@@ -1,17 +1,27 @@
 import { ChevronDown, Folder, FolderGit2, Laptop, Server } from "lucide-react";
 
-import { useId, type ReactNode } from "react";
+import { useId } from "react";
 
 import { DeviceIcon } from "./DeviceIcon";
 import { localId, type Host } from "./hosts";
-import { Menu, menuButton } from "./ui";
+import { Menu, menuButton, type PickerOption } from "./ui";
 
 /** Where a new thread works: a worktree of its own, or the repository's own checkout. */
 export type Workspace = "worktree" | "checkout";
 
-export const workspaces: { value: Workspace; label: string; icon: ReactNode }[] = [
-  { value: "worktree", label: "New worktree", icon: <FolderGit2 /> },
-  { value: "checkout", label: "Local checkout", icon: <Folder /> },
+export const workspaces: (PickerOption & { value: Workspace })[] = [
+  {
+    value: "worktree",
+    label: "New worktree",
+    icon: <FolderGit2 />,
+    description: "A fresh branch and folder, so your checkout stays as it is.",
+  },
+  {
+    value: "checkout",
+    label: "Local checkout",
+    icon: <Folder />,
+    description: "Right in the repository, on the branch you have out.",
+  },
 ];
 
 /**
@@ -121,7 +131,7 @@ export function RunTargetMenu({
             );
           })}
           {hosts.length === 1 && (
-            <p className="py-1 pr-2.5 pb-1.5 pl-[50px] text-[11.5px] text-faint-foreground">
+            <p className="pt-1 pr-2.5 pb-1.5 pl-[50px] text-[11.5px] text-faint-foreground">
               Computers you add under Hosts show up here.
             </p>
           )}
@@ -129,7 +139,7 @@ export function RunTargetMenu({
         <div
           role="group"
           aria-label="Workspace"
-          className="border-t border-border bg-black/20 p-1.5"
+          className="border-t border-border bg-background/50 p-1.5"
         >
           <div className="flex gap-0.5 rounded-[10px] border border-border bg-hover p-[3px]">
             {workspaces.map((w) => {
@@ -142,7 +152,7 @@ export function RunTargetMenu({
                   role="menuitemradio"
                   aria-checked={selected}
                   disabled={!!unavailable}
-                  title={unavailable}
+                  title={unavailable ?? w.description}
                   onClick={() => onWorkspaceChange(w.value)}
                   className={`flex flex-1 items-center justify-center gap-1.5 rounded-[7px] px-1.5 py-1 text-[12.5px] [&_svg]:size-3.5 ${selected ? "bg-selected text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"} disabled:text-faint-foreground/60 disabled:hover:text-faint-foreground/60`}
                 >
@@ -152,6 +162,11 @@ export function RunTargetMenu({
               );
             })}
           </div>
+          {checkoutUnavailable && (
+            <p className="px-1.5 pt-1.5 pb-0.5 text-[11.5px] text-faint-foreground">
+              Local checkout {checkoutUnavailable}.
+            </p>
+          )}
         </div>
       </Menu>
     </>
