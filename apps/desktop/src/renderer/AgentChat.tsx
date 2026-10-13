@@ -2790,22 +2790,17 @@ function DiffLines({ text }: { text: string }) {
 }
 
 /**
- * Where a run works in the composer's tab: `{host} · Local checkout` or `{host} · Worktree`, as
- * New Thread's `RunTargetMenu` reads. A Project's composer shows it too.
+ * Where a run works in the composer's tab, as icons: the host's, then the checkout's or worktree's.
+ * The hover title and accessible name read `{host} · Local checkout` or `{host} · Worktree`, as
+ * New Thread's `RunTargetMenu` does. A Project's composer shows it too.
  */
 export function CheckoutLabel({ host, checkout }: { host?: Host; checkout: boolean }) {
+  const place = checkout ? "Local checkout" : "Worktree";
+  const label = host ? `${host.name} · ${place}` : place;
   return (
-    <span className={`${tabItem} shrink-0`}>
-      {host ? hostIcon(host) : checkout ? <Folder aria-hidden /> : <FolderGit2 aria-hidden />}
-      {host && (
-        <>
-          {host.name}
-          <span aria-hidden className="text-faint-foreground">
-            ·
-          </span>
-        </>
-      )}
-      {checkout ? "Local checkout" : "Worktree"}
+    <span role="img" aria-label={label} title={label} className={`${tabItem} shrink-0`}>
+      {host && hostIcon(host)}
+      {checkout ? <Folder aria-hidden /> : <FolderGit2 aria-hidden />}
     </span>
   );
 }
