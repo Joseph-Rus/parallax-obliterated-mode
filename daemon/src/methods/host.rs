@@ -1,16 +1,18 @@
-//! `initialize`, `host/health`, `host/version`, and `host/settings/*`. `host/update` is in
-//! `crate::self_update`.
+//! `initialize`, `host/health`, `host/version`, `host/folders`, and `host/settings/*`.
+//! `host/update` is in `crate::self_update`.
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use parallax_protocol::framing::MAX_FRAME_BYTES;
 use parallax_protocol::jsonrpc::{ErrorObject, Request};
 use parallax_protocol::{
-    Capabilities, ClientInfo, DEVICE_ICONS, HostHealthParams, HostHealthResult, HostQueues,
-    HostSettings, HostSettingsGetParams, HostSettingsSetParams, HostVersionParams,
-    HostVersionResult, IncompatibleProtocolDetail, InitializeParams, InitializeProtocol,
-    InitializeResult, MAX_DEVICE_NAME_CHARS, ProtocolRange, StoreState,
+    Capabilities, ClientInfo, DEVICE_ICONS, HostFolder, HostFoldersParams, HostFoldersResult,
+    HostHealthParams, HostHealthResult, HostQueues, HostSettings, HostSettingsGetParams,
+    HostSettingsSetParams, HostVersionParams, HostVersionResult, IncompatibleProtocolDetail,
+    InitializeParams, InitializeProtocol, InitializeResult, MAX_DEVICE_NAME_CHARS, ProtocolRange,
+    StoreState,
 };
 use tracing::info;
 
@@ -252,6 +254,7 @@ fn capabilities_advertised() -> Capabilities {
         ),
         ("githubSetup".to_owned(), serde_json::Map::new()),
         ("githubStatus".to_owned(), serde_json::Map::new()),
+        ("hostFolders".to_owned(), serde_json::Map::new()),
         ("hostUpdate".to_owned(), serde_json::Map::new()),
         ("inbox".to_owned(), serde_json::Map::new()),
         ("integrationBranch".to_owned(), serde_json::Map::new()),
@@ -302,6 +305,53 @@ fn capabilities_advertised() -> Capabilities {
         ("threads".to_owned(), serde_json::Map::new()),
         ("worktreeCleanup".to_owned(), serde_json::Map::new()),
     ]))
+}
+
+/// `host/folders`: the folders in a folder on this host, read on the blocking pool.
+pub(crate) async fn folders(
+    _: &Context,
+    params: HostFoldersParams,
+) -> Result<HostFoldersResult, ErrorObject> {
+    let home = std::env::home_dir().filter(|home| home.is_absolute());
+    super::context::run_blocking(move || list_folders(&params.path, home.as_deref())).await
+}
+
+/// The folders in `input`, which may start with `~` for `home`, sorted by name ignoring case. A
+/// symbolic link counts when it points at a folder.
+fn list_folders(input: &str, home: Option<&Path>) -> Result<HostFoldersResult, ErrorObject> {
+    let tilde = input
+        .strip_prefix("~/")
+        .or_else(|| input.strip_prefix("~\\"))
+        .or((input == "~").then_some(""));
+    let dir: PathBuf = match (tilde, home) {
+        (Some(rest), Some(home)) => home.join(rest),
+        (Some(_), None) => return Err(ErrorObject::invalid_params("the home folder is unknown")),
+        (None, _) if Path::new(input).is_absolute() => PathBuf::from(input),
+        (None, _) => {
+            return Err(ErrorObject::invalid_params(format!(
+                "{input} is not an absolute path"
+            )));
+        }
+    };
+    let cant =
+        |error: std::io::Error| ErrorObject::invalid_params(format!("Can't open {input}: {error}"));
+    let mut folders: Vec<HostFolder> = fs::read_dir(&dir)
+        .map_err(cant)?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            // `metadata` follows a symbolic link, so a linked folder counts too.
+            let path = entry.path();
+            fs::metadata(&path).ok()?.is_dir().then(|| HostFolder {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: path.to_string_lossy().into_owned(),
+            })
+        })
+        .collect();
+    folders.sort_by_cached_key(|f| f.name.to_lowercase());
+    Ok(HostFoldersResult {
+        path: dir.to_string_lossy().into_owned(),
+        folders,
+    })
 }
 
 pub(crate) fn health(context: &Context, _: HostHealthParams) -> HostHealthResult {
@@ -486,7 +536,7 @@ fn plist_string<'a>(plist: &'a str, key: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_device_icon, clean_device_name, plist_string};
+    use super::{check_device_icon, clean_device_name, list_folders, plist_string};
 
     #[test]
     fn device_names_are_cleaned_and_icons_checked() {
@@ -502,6 +552,40 @@ mod tests {
         assert_eq!(check_device_icon("mini").unwrap().as_deref(), Some("mini"));
         assert_eq!(check_device_icon("").unwrap(), None);
         assert_eq!(check_device_icon("phone").unwrap_err().code, -32602);
+    }
+
+    #[test]
+    fn lists_folders_and_linked_folders_by_name() {
+        let home = tempfile::tempdir().unwrap();
+        let src = home.path().join("src");
+        for name in ["beta", "Alpha", ".hidden"] {
+            std::fs::create_dir_all(src.join(name)).unwrap();
+        }
+        std::fs::write(src.join("notes.txt"), "").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(src.join("beta"), src.join("gamma")).unwrap();
+
+        let listed = list_folders("~/src", Some(home.path())).unwrap();
+        assert_eq!(listed.path, src.to_string_lossy());
+        let names: Vec<_> = listed.folders.iter().map(|f| f.name.as_str()).collect();
+        #[cfg(unix)]
+        assert_eq!(names, [".hidden", "Alpha", "beta", "gamma"]);
+        #[cfg(not(unix))]
+        assert_eq!(names, [".hidden", "Alpha", "beta"]);
+        assert_eq!(listed.folders[1].path, src.join("Alpha").to_string_lossy());
+
+        assert_eq!(
+            list_folders("~/missing", Some(home.path()))
+                .unwrap_err()
+                .code,
+            -32602
+        );
+        assert_eq!(
+            list_folders("relative", Some(home.path()))
+                .unwrap_err()
+                .code,
+            -32602
+        );
     }
 
     #[test]

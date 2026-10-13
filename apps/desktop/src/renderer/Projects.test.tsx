@@ -436,6 +436,50 @@ test("Local folder browses from ~/, filters as you type, opens with Enter, goes 
   expect(dialog().open).toBe(false);
 });
 
+test("with more than one computer, Local folder asks which, then browses and adds on that one", async () => {
+  const nas: SshHost = { id: "h-nas", name: "NAS", destination: "nas" };
+  sshHosts = [mini, nas];
+  states[nas.id] = { status: "connecting" };
+  capabilities = { hostFolders: {} };
+  answers["host/folders"] = async (p) => ({ result: await listTree(p["path"] as string) });
+  answers["repo/add"] = (p) => ({
+    result: { repo: { ...repo("photon"), id: p["id"], path: p["path"] } },
+  });
+  await renderApp();
+  await openPalette();
+  expect(paletteOption("Local folder")!.textContent).toBe(
+    "Local folderAdd a repository that's already on one of your computers",
+  );
+  await click(paletteOption("Local folder"));
+  expect(paletteOptions().map((o) => o.textContent)).toEqual([
+    "This MacThis computer",
+    "Mac miniSSH · mini",
+    "NASOffline",
+  ]);
+  // An offline computer can't be browsed.
+  await click(paletteOption("NAS"));
+  expect(field().getAttribute("aria-label")).toBe("Computer");
+
+  await click(paletteOption("Mac mini"));
+  expect(field().value).toBe("~/");
+  expect(calls("host/folders")).toEqual([{ path: "~/" }]);
+  expect(hostsOf("host/folders")).toEqual([mini.id]);
+  expect(dialog().textContent).toContain("Folders on Mac mini");
+  expect(paletteOptions().map((o) => o.textContent)).toEqual(["Desktop", "Developer", "Documents"]);
+  // Finder only opens this computer's folders.
+  expect(action("Choose in Finder")).toBeUndefined();
+
+  typeInto(field(), "~/Developer/photon/");
+  await settle();
+  pressKey("Enter", { metaKey: true });
+  await settle();
+  expect(calls("repo/add")).toEqual([
+    { id: expect.any(String), path: "/Users/me/Developer/photon" },
+  ]);
+  expect(hostsOf("repo/add")).toEqual([mini.id]);
+  expect(dialog().open).toBe(false);
+});
+
 test("New repository creates it in ~/.parallax/projects and registers it, and a failed repo/add retries only the registering", async () => {
   createRepo.mockResolvedValue({ path: "/Users/me/.parallax/projects/photon" });
   let fail = true;

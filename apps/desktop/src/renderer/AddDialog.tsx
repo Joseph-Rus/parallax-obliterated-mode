@@ -32,6 +32,7 @@ import { localId, type Host } from "./hosts";
 import { IconPicker } from "./IconPicker";
 import { GitHubLogo } from "./logos";
 import { NewProjectForm } from "./NewProjectForm";
+import { connection, hostIcon } from "./RunTargetMenu";
 import { ProjectIcon } from "./Sidebar";
 import type { ThreadsView } from "./threads";
 import { uuidv7 } from "./uuidv7";
@@ -41,7 +42,8 @@ import type { Workspace, WorkspaceSource } from "./WorkspaceMenu";
 const kbd = "rounded-md bg-selected px-1.5 py-0.5 font-sans text-[11.5px] text-foreground";
 
 type Step =
-  | { kind: "menu" | WorkspaceSource | "project" | "space" }
+  | { kind: "menu" | "create" | "clone" | "computer" | "project" | "space" }
+  | { kind: "browse"; hostId?: string }
   | { kind: "cloneTo"; slug: string };
 
 /** Opens the palette, at its menu or straight at Create Project. */
@@ -51,13 +53,15 @@ export type AddDialogHandle = { open: (start?: "project") => void };
  * The sidebar's add palette, a native modal <dialog> laid out like a command palette. Its menu
  * offers New repository, Local folder, Clone from GitHub, New Project, and, where the host has
  * Spaces, New Space, and each opens a step
- * of its own in the same dialog; Back returns to the step before. The first three make a
- * repository on this computer and register it with its plxd (`repo/add`), then close, or, when
- * Create Project's Workspace menu asked for it, return there with it chosen.
+ * of its own in the same dialog; Back returns to the step before. With more than one computer,
+ * Local folder first asks which (PLX-769). The first three make or find a repository and
+ * register it with its computer's plxd (`repo/add`), then close, or, when Create Project's
+ * Workspace menu asked for it, return there with it chosen.
  */
 export function AddDialog({
   ref,
   hosts,
+  unbrowsable,
   hostId,
   repos,
   create,
@@ -67,6 +71,8 @@ export function AddDialog({
 }: {
   ref: Ref<AddDialogHandle>;
   hosts: Host[];
+  /** Why Local folder can't browse a computer, by id: offline, or a plxd without `hostFolders`. */
+  unbrowsable: ReadonlyMap<string, string>;
   /** The open host, whose first repository is Create Project's default. */
   hostId: string;
   /** The open host's repo entries. */
@@ -103,10 +109,10 @@ export function AddDialog({
   const push = (next: Step) => setStack((all) => [...all, next]);
   const back = () =>
     stack.length > 1 ? setStack((all) => all.slice(0, -1)) : dialog.current?.close();
-  const added = (repo: Repo) => {
+  const added = (hostId: string, repo: Repo) => {
     const project = stack.findIndex((s) => s.kind === "project");
     if (project < 0) return dialog.current?.close();
-    setWorkspace({ hostId: localId, repo });
+    setWorkspace({ hostId, repo });
     setStack((all) => all.slice(0, project + 1));
   };
   const steps = { onBack: back, onAdded: added };
@@ -126,8 +132,11 @@ export function AddDialog({
         <MenuStep
           key={session}
           spaces={!!createSpace}
+          computers={hosts.length > 1}
           onBack={back}
-          onPick={(kind) => push({ kind })}
+          onPick={(kind) =>
+            push(kind === "browse" && hosts.length > 1 ? { kind: "computer" } : { kind })
+          }
         />
       )}
       {step.kind === "space" && createSpace && (
@@ -139,11 +148,26 @@ export function AddDialog({
         />
       )}
       {step.kind === "create" && <CreateStep {...steps} />}
-      {step.kind === "browse" && <FolderStep {...steps} />}
+      {step.kind === "computer" && (
+        <ComputerStep
+          hosts={hosts}
+          unbrowsable={unbrowsable}
+          onBack={back}
+          onPick={(id) => push({ kind: "browse", hostId: id })}
+        />
+      )}
+      {step.kind === "browse" && (
+        <FolderStep
+          {...steps}
+          hostId={step.hostId ?? localId}
+          // Named once there's more than one computer it could be.
+          hostName={hosts.length > 1 ? hosts.find((h) => h.id === step.hostId)?.name : undefined}
+        />
+      )}
       {step.kind === "clone" && (
         <CloneStep onBack={back} onNext={(slug) => push({ kind: "cloneTo", slug })} />
       )}
-      {step.kind === "cloneTo" && <FolderStep {...steps} slug={step.slug} />}
+      {step.kind === "cloneTo" && <FolderStep {...steps} hostId={localId} slug={step.slug} />}
       {/* Kept while its Workspace's step is open, so what's typed in it stays. */}
       {stack.some((s) => s.kind === "project") && (
         <div hidden={step.kind !== "project"}>
@@ -165,7 +189,7 @@ export function AddDialog({
   );
 }
 
-type StepProps = { onBack: () => void; onAdded: (repo: Repo) => void };
+type StepProps = { onBack: () => void; onAdded: (hostId: string, repo: Repo) => void };
 
 const menu: {
   kind: WorkspaceSource | "project" | "space";
@@ -208,19 +232,28 @@ const menu: {
 /** The palette's first step: what to add, searchable. */
 function MenuStep({
   spaces,
+  computers,
   onBack,
   onPick,
 }: {
   spaces: boolean;
+  /** Whether there's more than one computer, so Local folder can be on any of them. */
+  computers: boolean;
   onBack: () => void;
   onPick: (kind: WorkspaceSource | "project" | "space") => void;
 }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const q = query.trim().toLowerCase();
-  const shown = menu.filter(
-    (m) => (spaces || m.kind !== "space") && `${m.name} ${m.detail}`.toLowerCase().includes(q),
-  );
+  const shown = menu
+    .map((m) =>
+      computers && m.kind === "browse"
+        ? { ...m, detail: "Add a repository that's already on one of your computers" }
+        : m,
+    )
+    .filter(
+      (m) => (spaces || m.kind !== "space") && `${m.name} ${m.detail}`.toLowerCase().includes(q),
+    );
   const list = useList(shown.length, active, setActive);
   return (
     <>
@@ -255,6 +288,71 @@ function MenuStep({
           onPick={(o) => onPick(o.id as WorkspaceSource | "project" | "space")}
         />
         {shown.length === 0 && <Note>Nothing matches</Note>}
+      </Body>
+      <Footer keys={[navigate, ["Enter", "Pick"], close]} />
+    </>
+  );
+}
+
+/**
+ * Local folder's first step with more than one computer: which one the repository is on. A
+ * computer in `unbrowsable` is listed but can't be picked, and says why.
+ */
+function ComputerStep({
+  hosts,
+  unbrowsable,
+  onBack,
+  onPick,
+}: {
+  hosts: Host[];
+  unbrowsable: ReadonlyMap<string, string>;
+  onBack: () => void;
+  onPick: (hostId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const q = query.trim().toLowerCase();
+  const shown = hosts.filter((h) => h.name.toLowerCase().includes(q));
+  const list = useList(shown.length, active, setActive);
+  const pick = (h: Host | undefined) => h && !unbrowsable.has(h.id) && onPick(h.id);
+  return (
+    <>
+      <Header onBack={onBack}>
+        <Search aria-hidden className="size-4 shrink-0 text-faint-foreground" />
+        <input
+          ref={autofocus}
+          {...list.input}
+          aria-label="Computer"
+          placeholder="Which computer?"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setActive(0);
+          }}
+          onKeyDown={(e) => {
+            list.onKeyDown(e);
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            pick(shown[list.active]);
+          }}
+          className={field}
+        />
+      </Header>
+      <Body>
+        <Heading>Computers</Heading>
+        <Options
+          list={list}
+          label="Computers"
+          options={shown.map((h) => ({
+            id: h.id,
+            name: h.name,
+            detail: unbrowsable.get(h.id) ?? connection(h),
+            icon: hostIcon(h),
+            disabled: unbrowsable.has(h.id),
+          }))}
+          onPick={(o) => pick(hosts.find((h) => h.id === o.id))}
+        />
+        {shown.length === 0 && <Note>No computers match</Note>}
       </Body>
       <Footer keys={[navigate, ["Enter", "Pick"], close]} />
     </>
@@ -338,7 +436,7 @@ function SpaceStep({
 /** New repository: a name, then `~/.parallax/projects/<name>` with git init. */
 function CreateStep({ onBack, onAdded }: StepProps) {
   const [name, setName] = useState("");
-  const add = useAdd(onAdded);
+  const add = useAdd(localId, onAdded);
   const trimmed = name.trim();
   const valid = isFolderName(trimmed);
   const submit = () =>
@@ -427,12 +525,19 @@ function CloneStep({ onBack, onNext }: { onBack: () => void; onNext: (slug: stri
 }
 
 /**
- * Local folder, or with `slug`, where Clone from GitHub clones it. The field is a path from `~/`;
+ * Local folder on `hostId`, or with `slug`, where Clone from GitHub clones it on this computer.
+ * Another computer's folders come from its plxd (`host/folders`). The field is a path from `~/`;
  * the list is its folder's folders, filtered by what's typed after its last `/` (but not when
  * cloning, where that's the clone's own name). Enter opens the highlighted folder, Backspace at a
  * folder's end goes up, and Mod+Enter adds the folder, or clones into the path.
  */
-function FolderStep({ onBack, onAdded, slug }: StepProps & { slug?: string }) {
+function FolderStep({
+  onBack,
+  onAdded,
+  hostId,
+  hostName,
+  slug,
+}: StepProps & { hostId: string; hostName?: string; slug?: string }) {
   const repoName = slug?.split("/")[1];
   const [text, setText] = useState(repoName ? `~/${repoName}` : "~/");
   const cut = Math.max(text.lastIndexOf("/"), text.lastIndexOf("\\")) + 1;
@@ -441,13 +546,16 @@ function FolderStep({ onBack, onAdded, slug }: StepProps & { slug?: string }) {
   const [listing, setListing] = useState<{ dir: string; result: FolderListing }>();
   useEffect(() => {
     let stale = false;
-    void window.parallax.listFolders(dir || "~/").then((result) => {
-      if (!stale) setListing({ dir, result });
-    });
+    const path = dir || "~/";
+    void (hostId === localId ? window.parallax.listFolders(path) : foldersOn(hostId, path)).then(
+      (result) => {
+        if (!stale) setListing({ dir, result });
+      },
+    );
     return () => {
       stale = true;
     };
-  }, [dir]);
+  }, [hostId, dir]);
   const current = listing?.dir === dir ? listing.result : undefined;
   const filter = slug ? "" : leaf.toLowerCase();
   const folders = (current && "folders" in current ? current.folders : []).filter(
@@ -457,7 +565,7 @@ function FolderStep({ onBack, onAdded, slug }: StepProps & { slug?: string }) {
   const [active, setActive] = useState(0);
   const list = useList(folders.length, active, setActive);
   const highlighted = folders[list.active];
-  const add = useAdd(onAdded);
+  const add = useAdd(hostId, onAdded);
   const go = (next: string) => {
     setText(next);
     setActive(0);
@@ -524,7 +632,9 @@ function FolderStep({ onBack, onAdded, slug }: StepProps & { slug?: string }) {
             <GithubRepo slug={slug} />
           </>
         )}
-        <Heading>{slug ? "Select where to clone" : "Folders"}</Heading>
+        <Heading>
+          {slug ? "Select where to clone" : hostName ? `Folders on ${hostName}` : "Folders"}
+        </Heading>
         <Options
           list={list}
           label="Folders"
@@ -538,19 +648,31 @@ function FolderStep({ onBack, onAdded, slug }: StepProps & { slug?: string }) {
         <Problem error={add.error} />
       </Body>
       <Footer keys={[navigate, ["Enter", "Open"], ["Backspace", "Back"], close]}>
-        <button
-          type="button"
-          onClick={async () => {
-            const picked = await window.parallax.pickFolder();
-            if (picked) go(`${picked}/${slug ? leaf : ""}`);
-          }}
-          className="ml-auto rounded-md px-1.5 py-0.5 hover:bg-hover hover:text-foreground"
-        >
-          {chooseInFiles()}
-        </button>
+        {hostId === localId && (
+          <button
+            type="button"
+            onClick={async () => {
+              const picked = await window.parallax.pickFolder();
+              if (picked) go(`${picked}/${slug ? leaf : ""}`);
+            }}
+            className="ml-auto rounded-md px-1.5 py-0.5 hover:bg-hover hover:text-foreground"
+          >
+            {chooseInFiles()}
+          </button>
+        )}
       </Footer>
     </>
   );
+}
+
+/** The folders in `path` on another computer, as `listFolders` lists this one's. */
+async function foldersOn(hostId: string, path: string): Promise<FolderListing> {
+  try {
+    const answer = await window.parallax.request(hostId, "host/folders", { path });
+    return "error" in answer ? { error: describeError(answer.error) } : answer.result;
+  } catch (error) {
+    return { error: String(error) };
+  }
 }
 
 /** `dir`'s parent, both ending in a separator, or undefined at the top (`~/` or `/`). */
@@ -561,10 +683,10 @@ export function parent(dir: string): string | undefined {
 }
 
 /**
- * Makes a repository on this computer, then registers it with its plxd. `key` names what's made,
- * so a retry after a failed `repo/add` registers the same one rather than making it again.
+ * Makes or finds a repository on `hostId`, then registers it with its plxd. `key` names what's
+ * made, so a retry after a failed `repo/add` registers the same one rather than making it again.
  */
-function useAdd(onAdded: (repo: Repo) => void) {
+function useAdd(hostId: string, onAdded: (hostId: string, repo: Repo) => void) {
   const made = useRef<{ key: string; path: string }>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -591,12 +713,12 @@ function useAdd(onAdded: (repo: Repo) => void) {
         made.current = { key, path: result.path };
       }
       // A fresh id is safe to retry with: plxd returns the entry a path already has.
-      const answer = await window.parallax.request(localId, "repo/add", {
+      const answer = await window.parallax.request(hostId, "repo/add", {
         id: uuidv7(),
         path: made.current.path,
       });
       if ("error" in answer) setError(describeError(answer.error));
-      else if (mounted.current) onAdded(answer.result.repo);
+      else if (mounted.current) onAdded(hostId, answer.result.repo);
     } catch (error) {
       setError(String(error));
     } finally {
@@ -630,7 +752,8 @@ function useList(count: number, active: number, setActive: (i: number) => void) 
   };
 }
 
-type Option = { id: string; name: string; detail?: string; icon: ReactNode };
+/** A list row. A `disabled` one shows but can't be picked, and its `detail` should say why. */
+type Option = { id: string; name: string; detail?: string; icon: ReactNode; disabled?: boolean };
 
 function Options({
   list,
@@ -653,13 +776,14 @@ function Options({
           role="option"
           tabIndex={-1}
           aria-selected={i === list.active}
+          aria-disabled={o.disabled || undefined}
           data-active={i === list.active || undefined}
           ref={i === list.active ? (el) => el?.scrollIntoView?.({ block: "nearest" }) : undefined}
           // Keeps the field focused, so the keys go on working.
           onMouseDown={(e) => e.preventDefault()}
           onMouseMove={() => i !== list.active && list.setActive(i)}
-          onClick={() => onPick(o)}
-          className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left data-active:bg-hover [&>svg]:size-5 [&>svg]:shrink-0 [&>svg]:text-muted-foreground"
+          onClick={() => !o.disabled && onPick(o)}
+          className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left data-active:bg-hover aria-disabled:opacity-50 [&>svg]:size-5 [&>svg]:shrink-0 [&>svg]:text-muted-foreground"
         >
           {o.icon}
           <span className="min-w-0 flex-1">

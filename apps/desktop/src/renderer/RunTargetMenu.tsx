@@ -38,7 +38,7 @@ export const hostIcon = (host: Host) =>
   );
 
 /** How a computer is reached, under its name. */
-const connection = (host: Host) =>
+export const connection = (host: Host) =>
   host.id === localId
     ? "This computer"
     : host.destination

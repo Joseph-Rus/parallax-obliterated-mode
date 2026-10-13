@@ -46,18 +46,19 @@ use crate::{
     EventsSubscribeResult, EventsUnsubscribeParams, EventsUnsubscribeResult, FullThreadDiffParams,
     GitStatus, GithubInstallParams, GithubSignIn, GithubSignInCancelParams,
     GithubSignInCancelResult, GithubSignInParams, GithubStatus, GithubStatusParams,
-    HostHealthParams, HostHealthResult, HostSettings, HostSettingsGetParams, HostSettingsSetParams,
-    HostUpdateParams, HostUpdateResult, HostVersionParams, HostVersionResult, InboxListParams,
-    InboxListResult, InboxSeenParams, InboxSeenResult, InitializeParams, InitializeResult,
-    LandApproveParams, LandQueueParams, LandResult, LandSendBackParams, MemoryDeleteParams,
-    MemoryDeleteResult, MemoryListParams, MemoryListResult, MemoryProposeParams,
-    MemoryProposeResult, MemoryReadParams, MemoryReadResult, MemoryWriteParams, MemoryWriteResult,
-    OrchestrationCommand, PrActParams, PrDiffResult, PrViewParams, PrWatchResult, PrWatchesParams,
-    PrWatchesResult, PreviewCallParams, PreviewCallResult, PreviewFrameParams, PreviewFrameResult,
-    PreviewInputParams, PreviewInputResult, PreviewListParams, PreviewListResult,
-    ProjectCreateParams, ProjectCreateResult, ProjectDeleteParams, ProjectDeleteResult,
-    ProjectFromThreadsParams, ProjectFromThreadsResult, ProjectListParams, ProjectListResult,
-    ProjectStartParams, ProjectUpdateParams, ProjectUpdateResult, PromptImage, ProvidersListParams,
+    HostFoldersParams, HostFoldersResult, HostHealthParams, HostHealthResult, HostSettings,
+    HostSettingsGetParams, HostSettingsSetParams, HostUpdateParams, HostUpdateResult,
+    HostVersionParams, HostVersionResult, InboxListParams, InboxListResult, InboxSeenParams,
+    InboxSeenResult, InitializeParams, InitializeResult, LandApproveParams, LandQueueParams,
+    LandResult, LandSendBackParams, MemoryDeleteParams, MemoryDeleteResult, MemoryListParams,
+    MemoryListResult, MemoryProposeParams, MemoryProposeResult, MemoryReadParams, MemoryReadResult,
+    MemoryWriteParams, MemoryWriteResult, OrchestrationCommand, PrActParams, PrDiffResult,
+    PrViewParams, PrWatchResult, PrWatchesParams, PrWatchesResult, PreviewCallParams,
+    PreviewCallResult, PreviewFrameParams, PreviewFrameResult, PreviewInputParams,
+    PreviewInputResult, PreviewListParams, PreviewListResult, ProjectCreateParams,
+    ProjectCreateResult, ProjectDeleteParams, ProjectDeleteResult, ProjectFromThreadsParams,
+    ProjectFromThreadsResult, ProjectListParams, ProjectListResult, ProjectStartParams,
+    ProjectUpdateParams, ProjectUpdateResult, PromptImage, ProvidersListParams,
     ProvidersListResult, ProvidersRemoveParams, ProvidersSaveParams, ProvidersUpdatesParams,
     ProvidersUpdatesResult, ProvidersUpgradeParams, ProvidersUpgradeResult, PullRequest,
     QuestionAnswerParams, QuestionAskParams, QuestionEscalateParams, QuestionListParams,
@@ -166,6 +167,9 @@ method_table! {
         /// release's SHA-256, and restarts into it once no agent's turn is running, or at once
         /// with `now`. It never downgrades. Gated on the `hostUpdate` capability (PLX-700, decision 0066).
         HostUpdate = "host/update": HostUpdateParams => HostUpdateResult;
+        /// `host/folders`: the folders in a folder on the host, for adding a repository there
+        /// (PLX-769). Gated on the `hostFolders` capability.
+        HostFolders = "host/folders": HostFoldersParams => HostFoldersResult;
         /// `project/list`: every project, and the event log's `seq` from before the read.
         ProjectList = "project/list": ProjectListParams => ProjectListResult;
         /// `project/create`: creates a project, idempotent on its client-generated id.
@@ -626,6 +630,7 @@ mod tests {
                 "host/health",
                 "host/version",
                 "host/update",
+                "host/folders",
                 "project/list",
                 "project/create",
                 "events/subscribe",

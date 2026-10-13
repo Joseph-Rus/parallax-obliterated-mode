@@ -614,10 +614,12 @@ test("Picking another computer in Runs on keeps the draft and starts the thread 
     },
   });
   await renderApp();
+  // Both computers have parallax, so the heading names the one the thread runs on (PLX-769).
+  expect(heading()).toBe("What should we build in parallax on This Mac?");
   act(() => void composer().editor!.commands.setContent("Fix it"));
   await choose("Runs on", "mac miniSSH · mini");
   expect(control("Runs on: mac mini, New worktree")).not.toBeNull();
-  expect(heading()).toBe("What should we build in parallax?");
+  expect(heading()).toBe("What should we build in parallax on mac mini?");
   // The typed text survived the switch, so Enter sends it.
   expect(composer().editor!.getText()).toBe("Fix it");
   await act(async () => {

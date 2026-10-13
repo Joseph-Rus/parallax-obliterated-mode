@@ -125,9 +125,10 @@ pub use handshake::{
     Capabilities, ClientInfo, InitializeParams, InitializeProtocol, InitializeResult, ProtocolRange,
 };
 pub use host::{
-    HostHealthParams, HostHealthResult, HostQueues, HostSettings, HostSettingsGetParams,
-    HostSettingsSetParams, HostUpdateParams, HostUpdateRestart, HostUpdateResult,
-    HostVersionParams, HostVersionResult, QueueStats, StoreState,
+    HostFolder, HostFoldersParams, HostFoldersResult, HostHealthParams, HostHealthResult,
+    HostQueues, HostSettings, HostSettingsGetParams, HostSettingsSetParams, HostUpdateParams,
+    HostUpdateRestart, HostUpdateResult, HostVersionParams, HostVersionResult, QueueStats,
+    StoreState,
 };
 pub use id::InvalidId;
 pub use inbox::{
