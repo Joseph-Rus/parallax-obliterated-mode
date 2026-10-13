@@ -966,11 +966,12 @@ export function TranscriptView({
       if (row.kind === "user" || row.kind === "pending")
         turn = row.kind === "user" ? row.turnId : undefined;
       else if (row.kind === "assistant") byTurn.set(turn, i);
-      // Work after it makes it commentary, which has no Fork or Copy, so no gap under it.
-      else if (row.kind === "work" && !row.done) byTurn.delete(turn);
+      // In the turn going now, work after it makes it commentary, which has no Fork or Copy, so
+      // no gap under it. An ended turn keeps them on its last message, whatever followed it.
+      else if (row.kind === "work" && going && i > latest) byTurn.delete(turn);
     });
     return new Map([...byTurn].map(([id, i]) => [i, id]));
-  }, [view]);
+  }, [view, going, latest]);
 
   const virtualizer = useVirtualizer({
     count: view.length,
