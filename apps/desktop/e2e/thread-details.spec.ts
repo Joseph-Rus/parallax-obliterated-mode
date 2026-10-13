@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 
 import type { ParallaxBridge } from "../src/preload/bridge";
 import { uuidv7 } from "../src/renderer/uuidv7";
-import { close, launch } from "./launch";
+import { close, launch, printFailure } from "./launch";
 
 declare const window: {
   parallax: ParallaxBridge;
@@ -19,9 +19,13 @@ test("checkout counts before starting and concise errors after a worktree is rem
   mkdirSync(repo);
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repo });
   git("init", "-b", "main");
+  // Checkout and hardened worktree Git must agree without the runner's global config.
+  git("config", "core.autocrlf", "false");
+  git("config", "user.name", "Test");
+  git("config", "user.email", "test@example.com");
   writeFileSync(path.join(repo, "README.md"), "original\n");
   git("add", ".");
-  git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Initial");
+  git("commit", "-m", "Initial");
   writeFileSync(path.join(repo, "README.md"), "replacement\nsecond\n");
   writeFileSync(path.join(repo, "notes.txt"), "one\ntwo");
   // Discovery cannot reach the user's provider CLIs or sign-in state.
@@ -125,6 +129,9 @@ test("checkout counts before starting and concise errors after a worktree is rem
       .locator(":scope > div")
       .screenshot({ path: path.join(fixture, "missing-worktree.png") });
     console.log(`PLX-722 screenshots: ${fixture}`);
+  } catch (error) {
+    await printFailure(launched);
+    throw error;
   } finally {
     await close(launched);
   }
