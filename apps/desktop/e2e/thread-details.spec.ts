@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -29,8 +29,8 @@ test("checkout counts before starting and concise errors after a worktree is rem
   mkdirSync(bin);
   for (const cli of ["claude", "codex", "cursor", "cursor-agent", "agent", "gh"])
     writeFileSync(path.join(bin, cli), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-  const launched = await launch("fork.json", bin);
-  const { page } = launched;
+  let launched = await launch("fork.json", bin);
+  let { page } = launched;
   try {
     await expect
       .poll(() =>
@@ -64,7 +64,7 @@ test("checkout counts before starting and concise errors after a worktree is rem
       .getByRole("option", { name: /^fixture-repo/ })
       .click();
     await page.getByRole("button", { name: "Thread details", exact: true }).click();
-    const details = page.getByRole("complementary", { name: "Thread details", exact: true });
+    let details = page.getByRole("complementary", { name: "Thread details", exact: true });
     await expect(details).toContainText("+4 −1");
     await expect(details.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
     await expect(details.locator('[aria-label="Workspace"] > div[title]')).toHaveAttribute(
@@ -100,9 +100,24 @@ test("checkout counts before starting and concise errors after a worktree is rem
       return answer.result.runs[0]!;
     });
     expect(run.worktreePath).toBeTruthy();
-    rmSync(run.worktreePath!, { recursive: true });
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Back to app", exact: true }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(async (id) => {
+          const answer = await window.parallax.request("local", "agent/list", {});
+          if ("error" in answer) throw new Error(answer.error.message);
+          return answer.result.runs.find((r) => r.id === id)?.status;
+        }, run.id),
+      )
+      .toBe("completed");
+    // Answer text precedes process exit and checkpoint Git work. Release their Windows cwd handles.
+    await close(launched);
+    rmSync(run.worktreePath!, { recursive: true, maxRetries: 5 });
+    expect(existsSync(run.worktreePath!)).toBe(false);
+    launched = await launch("fork.json", bin, undefined, launched.dataDir);
+    ({ page } = launched);
+    await page.getByText("Check the isolated checkout", { exact: true }).first().click();
+    await page.getByRole("button", { name: "Thread details", exact: true }).click();
+    details = page.getByRole("complementary", { name: "Thread details", exact: true });
     await expect(details.getByRole("alert")).toHaveText("Worktree no longer exists");
     expect(await details.getByRole("alert").getAttribute("title")).toContain(run.worktreePath);
     expect(await details.innerText()).not.toContain(run.worktreePath!);
