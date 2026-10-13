@@ -311,8 +311,7 @@ test("a Project is one row that opens its chat: its repository and branch, with 
   const welcome = main.querySelector("h2")!.parentElement!.parentElement!;
   for (const name of ["min-h-0", "flex-wrap", "overflow-hidden"])
     expect(welcome.classList.contains(name)).toBe(true);
-  expect(main.textContent).toContain("This Mac");
-  expect(main.textContent).toContain("Local checkout");
+  expect(main.querySelector('[aria-label="This Mac · Local checkout"]')).not.toBeNull();
   expect(main.textContent).toContain("main");
   expect(main.textContent).not.toContain("/src/ember");
   expect(composer()!.getAttribute("aria-placeholder")).toBe(
@@ -1323,9 +1322,8 @@ test("a Project's first message starts its coordinator and shows at once; ones s
   expect(transcript()).toContain("I'll plan it.");
   // The tab is the host and checkout, not a thread's worktree or the full path.
   const main = document.querySelector("main")!;
-  expect(main.textContent).toContain("This Mac");
-  expect(main.textContent).toContain("Local checkout");
-  expect(main.textContent).not.toContain("Worktree");
+  expect(main.querySelector('[aria-label="This Mac · Local checkout"]')).not.toBeNull();
+  expect(main.querySelector('[aria-label$="Worktree"]')).toBeNull();
   expect(main.textContent).not.toContain("/src/ember");
 
   type("Start with the settings page");

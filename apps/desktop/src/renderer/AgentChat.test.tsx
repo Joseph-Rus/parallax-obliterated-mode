@@ -1023,7 +1023,7 @@ test("opens from the thread's snapshot, appends its events, and a fresh snapshot
   expect(watch).toHaveBeenCalledWith("local", { threadId: runId }, expect.any(Function));
   await snapshot(logged.slice(0, 2));
   expect(transcriptText()).toContain("Add a README");
-  expect(document.body.textContent).toContain("Worktree"); // the footer's tab
+  expect(document.querySelector('[aria-label="Worktree"]')).not.toBeNull(); // the footer's tab
 
   await emit(logged[2]!);
   // The agent's messages are never folded into a work dropdown.
@@ -1162,10 +1162,11 @@ test.each(["live", "snapshot"] as const)(
 test("the composer tab shows the worktree and its branch", () => {
   const started = samples.find((m) => "result" in m && m.id === 2)!;
   render(<RunTab run={(started as unknown as { result: AgentRunResult }).result.run} />);
-  expect(document.body.textContent).toBe("Worktreeparallax/1a2b3c4d");
+  expect(document.querySelector('[aria-label="Worktree"]')).not.toBeNull();
+  expect(document.body.textContent).toBe("parallax/1a2b3c4d");
 });
 
-test("the composer tab names the host and local checkout, which has no branch of its own", () => {
+test("the composer tab shows icons for the host and local checkout, which has no branch of its own", () => {
   const started = samples.find((m) => "result" in m && m.id === 2)!;
   const {
     branch: _,
@@ -1173,16 +1174,19 @@ test("the composer tab names the host and local checkout, which has no branch of
     ...run
   } = (started as unknown as { result: AgentRunResult }).result.run;
   render(<RunTab run={{ ...run, checkout: true }} host={{ id: "local", name: "This Mac" }} />);
-  expect(document.body.textContent).toBe("This Mac·Local checkout");
+  const tab = document.querySelector('[aria-label="This Mac · Local checkout"]')!;
+  expect(tab.getAttribute("title")).toBe("This Mac · Local checkout");
+  expect(tab.querySelectorAll("svg")).toHaveLength(2);
+  expect(document.body.textContent).toBe("");
 });
 
 test("a chat in a Space has no worktree tab under the composer", async () => {
   fakeBridge(4);
   await renderChat();
-  expect(document.body.textContent).toContain("Worktree");
+  expect(document.querySelector('[aria-label="Worktree"]')).not.toBeNull();
   act(() => unmount());
   await renderChat(false, true);
-  expect(document.body.textContent).not.toContain("Worktree");
+  expect(document.querySelector('[aria-label="Worktree"]')).toBeNull();
 });
 
 test("Enter sends with a fresh v7 turn id, but not while an IME is composing", async () => {
