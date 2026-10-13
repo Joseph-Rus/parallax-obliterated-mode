@@ -615,7 +615,7 @@ test("Picking another computer in Runs on keeps the draft and starts the thread 
   });
   await renderApp();
   act(() => void composer().editor!.commands.setContent("Fix it"));
-  await choose("Runs on", "mac mini");
+  await choose("Runs on", "mac miniSSH · mini");
   expect(control("Runs on: mac mini, New worktree")).not.toBeNull();
   expect(heading()).toBe("What should we build in parallax?");
   // The typed text survived the switch, so Enter sends it.
@@ -665,11 +665,19 @@ test("New Thread lists another computer's repositories, and picking one opens it
     "Add repository…",
   ]);
   // Both computers have parallax, so neither is marked.
-  expect(options("Computer")).toEqual(["This Macthis one", "mac mini", "devbox"]);
+  expect(options("Computer")).toEqual([
+    "This MacThis computer",
+    "mac miniSSH · mini",
+    "devboxSSH · devbox",
+  ]);
   await choose("Repository", "dotfilesmac mini");
   expect(heading()).toBe("What should we build in dotfiles?");
   expect(control("Runs on: mac mini, New worktree")).not.toBeNull();
-  expect(options("Computer")).toEqual(["This Macno dotfiles", "mac mini", "devbox"]);
+  expect(options("Computer")).toEqual([
+    "This MacThis computerno dotfiles",
+    "mac miniSSH · mini",
+    "devboxSSH · devbox",
+  ]);
   // On mac mini, this computer has no repository it lacks.
   expect(options("Repository")).toEqual(["parallax", "dotfiles", "No Repo"]);
 });
@@ -684,7 +692,7 @@ test("Local checkout starts a thread in the repository itself, with no branch of
   });
   await renderApp();
   expect(control("Runs on: This Mac, New worktree")).not.toBeNull();
-  await choose("Runs on", "Local checkoutRight in the repository, on the branch you have out.");
+  await choose("Runs on", "Local checkout");
   expect(control("Runs on: This Mac, Local checkout")).not.toBeNull();
   await send("Fix it");
   expect(calls("thread/start")).toEqual([
@@ -732,7 +740,7 @@ describe("the ref picker", () => {
   test("the local checkout switches to the ref picked first", async () => {
     capabilities = { checkout: {}, repoRefs: {} };
     await renderApp();
-    await choose("Runs on", "Local checkoutRight in the repository, on the branch you have out.");
+    await choose("Runs on", "Local checkout");
     expect(button("Select ref")).toBeDefined();
     await choose("Ref", "featureworktree");
     expect(button("feature")).toBeDefined();
@@ -752,7 +760,7 @@ describe("the ref picker", () => {
     capabilities = { checkout: {}, repoRefs: {} };
     await renderApp();
     await choose("Ref", "origin/develop");
-    await choose("Runs on", "Local checkoutRight in the repository, on the branch you have out.");
+    await choose("Runs on", "Local checkout");
     expect(button("Select ref")).toBeDefined();
     await send("Fix it");
     expect(calls("thread/start")).toEqual([
@@ -776,7 +784,7 @@ test("Local checkout can't be picked without a repo, or from a plxd that would m
     ].find((b) => b.textContent?.startsWith("Local checkout"))!;
   await renderApp();
   expect(checkoutOption().disabled).toBe(true);
-  expect(checkoutOption().textContent).toContain("needs a newer plxd");
+  expect(checkoutOption().title).toContain("needs a newer plxd");
   act(() => unmount());
 
   capabilities = { checkout: {} };
@@ -785,7 +793,7 @@ test("Local checkout can't be picked without a repo, or from a plxd that would m
   await act(async () => checkoutOption().click());
   await choose("Repository", "No Repo");
   expect(checkoutOption().disabled).toBe(true);
-  expect(checkoutOption().textContent).toContain("needs a repo");
+  expect(checkoutOption().title).toContain("needs a repo");
   expect(control("Runs on: This Mac, New worktree")).not.toBeNull();
 });
 
