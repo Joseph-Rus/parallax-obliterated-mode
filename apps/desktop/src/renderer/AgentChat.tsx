@@ -88,6 +88,7 @@ import { Loader, type LoaderStyle } from "./Loader";
 import { locale } from "./locale";
 import { GitHubLogo, LinearLogo } from "./logos";
 import { markdownBlocks, SPLIT_FROM } from "./markdownBlocks";
+import { dollarMath } from "./math";
 import { useCatalog, type Provider, type RunOptions } from "./models";
 import { kinds } from "./providers";
 import {
@@ -2452,8 +2453,8 @@ const markdownComponents: Components = {
 // drawn by DiffLines instead. Built once: react-markdown runs its plugins' setup on every render,
 // and rehype-highlight's registers 37 languages each time.
 const highlighter = rehypeHighlight({ detect: false, plainText: ["diff", "patch"] });
-// Typesets $...$ and $$...$$ with KaTeX, which needs no network. Its output is plain elements, and
-// invalid LaTeX stays as its source text.
+// Typesets $...$ and $$...$$ (and \(...\) and \[...\], which dollarMath rewrites to them) with
+// KaTeX, which needs no network. Its output is plain elements, and invalid LaTeX stays as its source.
 const typeset = rehypeKatex({ strict: "ignore" });
 // Typesetting runs first, so math never reaches the code block renderer.
 const highlight: ComponentProps<typeof Markdown>["rehypePlugins"] = [
@@ -2486,7 +2487,7 @@ export const MarkdownText = memo(function MarkdownText({
         rehypePlugins={highlight}
         components={{ ...markdownComponents, ...components }}
       >
-        {text}
+        {dollarMath(text)}
       </Markdown>
     </div>
   );
@@ -2532,7 +2533,7 @@ const gfm = [remarkGfm, remarkMath, displayDoubleDollar];
 function StreamingMarkdown({ text }: { text: string }) {
   // The last update's blocks, so the split parses only the end of the message again.
   const blocks = useRef<string[]>([]);
-  blocks.current = markdownBlocks(text, blocks.current);
+  blocks.current = markdownBlocks(dollarMath(text), blocks.current);
   return (
     <div className="markdown streaming">
       {blocks.current.map((block, i) => (

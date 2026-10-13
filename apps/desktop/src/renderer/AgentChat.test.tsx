@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import type { TiptapEditorHTMLElement } from "@tiptap/react";
 import { Globe } from "lucide-react";
+import { readFileSync } from "node:fs";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, onTestFinished, test, vi } from "vite-plus/test";
@@ -331,6 +332,28 @@ test("$$...$$ within a line typesets as display math, and $...$ stays inline", (
   expect(document.querySelectorAll(".katex")).toHaveLength(2);
 });
 
+test("prices and shell variables stay text, and \\(...\\) and \\[...\\] typeset", () => {
+  row({
+    kind: "assistant",
+    key: "a",
+    text: "From $5 [to](https://example.com) $10, or $5-$10. Set $PATH and $HOME. Then \\(x^2\\) and $y$.\n\n\\[\nz = 1\n\\]",
+  });
+  expect(document.querySelector("p")?.textContent).toMatch(
+    /^From \$5 to \$10, or \$5-\$10\. Set \$PATH and \$HOME\. Then /,
+  );
+  // Markdown between dollars that aren't math still renders.
+  expect(document.querySelector("p a")?.textContent).toBe("to");
+  expect(document.querySelectorAll(".katex")).toHaveLength(3);
+  expect(document.querySelectorAll(".katex-display")).toHaveLength(1);
+});
+
+test("KaTeX's stylesheet styles the classes rehype-katex's KaTeX writes, so scripts shrink", () => {
+  row({ kind: "assistant", key: "a", text: "$x_i$" });
+  const script = document.querySelector(".msupsub .vlist > span > span")!;
+  const css = readFileSync(require.resolve("katex/dist/katex.min.css"), "utf8");
+  expect(css).toContain(`.${[...script.classList].slice(0, 3).join(".")}{`);
+});
+
 test("a streaming message marks its markdown, so unfinished LaTeX stays hidden until it ends", () => {
   const unfinished = "Setup:\n\n$$\n\\begin{aligned} x &= \\frac{1";
   row({ kind: "assistant", key: "a", text: unfinished, partial: true });
@@ -370,6 +393,8 @@ test("a streaming message renders as the whole text does, at every line", () => 
     "a\n\u00a0\nb",
     // A loose list whose next item, while it arrives, reads as a paragraph.
     "1. a\n\n2. b\n\n3. c\n\nText\n\n- d\n\n- e",
+    // Math in each delimiter, beside prices.
+    "From $5 to $10, so \\(a^2\\) and $b$.\n\n\\[\nx = 1\n\\]\n\n$$\ny = 2\n$$\n\nEnd.",
   ];
   // A row in a root of its own, which keeps it across renders, as the transcript does.
   const view = () => {
