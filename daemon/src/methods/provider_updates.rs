@@ -105,17 +105,24 @@ fn brew_upgrade(real: &Path) -> Option<(String, Vec<String>)> {
     let at = parts
         .iter()
         .position(|part| *part == "Caskroom" || *part == "Cellar")?;
-    let kind = if parts[at] == "Caskroom" {
-        "--cask"
+    // Homebrew skips `version :latest` and auto-updating casks (`claude-code@latest`) without
+    // `--greedy`, reporting a warning and exit 0.
+    let kind: &[&str] = if parts[at] == "Caskroom" {
+        &["--cask", "--greedy"]
     } else {
-        "--formula"
+        &["--formula"]
     };
     let package = parts.get(at + 1)?.to_str()?;
     let brew = parts[..at]
         .iter()
         .collect::<std::path::PathBuf>()
         .join("bin/brew");
-    let args = ["upgrade", kind, package].map(str::to_owned).to_vec();
+    let args = ["upgrade"]
+        .into_iter()
+        .chain(kind.iter().copied())
+        .chain([package])
+        .map(str::to_owned)
+        .collect();
     Some((brew.to_str()?.to_owned(), args))
 }
 
@@ -190,7 +197,10 @@ mod tests {
         let cask = Path::new("/opt/homebrew/Caskroom/claude-code@latest/2.1.295/claude");
         let (brew, args) = brew_upgrade(cask).unwrap();
         assert_eq!(Path::new(&brew), Path::new("/opt/homebrew/bin/brew"));
-        assert_eq!(args, ["upgrade", "--cask", "claude-code@latest"]);
+        assert_eq!(
+            args,
+            ["upgrade", "--cask", "--greedy", "claude-code@latest"]
+        );
 
         let formula = Path::new("/home/linuxbrew/.linuxbrew/Cellar/codex/0.162.1/bin/codex");
         let (brew, args) = brew_upgrade(formula).unwrap();
