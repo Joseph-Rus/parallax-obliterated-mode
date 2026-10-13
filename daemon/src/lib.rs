@@ -96,6 +96,7 @@ pub mod tailnet;
 mod terminals;
 mod threads;
 pub mod transport;
+pub mod tui;
 pub mod usage;
 #[cfg(windows)]
 pub mod windows;
@@ -122,6 +123,21 @@ pub fn version() -> &'static str {
             .and_then(|exe| stamped_version(&exe))
             .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned())
     })
+}
+
+/// The running `plxd`, through any link to the real file: where the app's bundled files sit
+/// beside it. Run through a `parallax` link (PLX-750), `current_exe` is the link on macOS. The
+/// path as given when links can't be followed, and on Windows, which canonicalizing would make
+/// `\\?\`.
+///
+/// # Errors
+///
+/// When `current_exe` can't tell.
+pub fn executable() -> std::io::Result<std::path::PathBuf> {
+    let program = std::env::current_exe()?;
+    #[cfg(unix)]
+    let program = std::fs::canonicalize(&program).unwrap_or(program);
+    Ok(program)
 }
 
 /// `bytes`' SHA-256, in lowercase hex.

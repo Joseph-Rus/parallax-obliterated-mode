@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use parallax_protocol::{CONNECT_PORT, RunId};
+use parallax_protocol::{CONNECT_PORT, ClientInfo, RunId};
 use plxd::attach::{
     self, DEFAULT_CONNECT_TIMEOUT, EXIT_UNAVAILABLE, MAX_CONNECT_TIMEOUT, Options, report,
 };
@@ -39,6 +39,9 @@ enum Command {
     Dial(DialArgs),
     /// Turn Parallax Connect on or off. A running plxd follows within 10 seconds.
     Connect(ConnectArgs),
+    /// Use Parallax in this terminal: the same threads, Spaces, and Projects as the app, live.
+    /// Starts plxd if it isn't running.
+    Tui(TuiArgs),
     /// Manage the per-user service that keeps plxd running: a `LaunchAgent` on macOS, a systemd
     /// user unit on Linux.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -105,6 +108,13 @@ struct AttachArgs {
     /// How long to wait for plxd to accept a connection, including starting it [default: 10]
     #[arg(long, value_name = "SECONDS", value_parser = parse_seconds)]
     connect_timeout: Option<Duration>,
+}
+
+#[derive(Debug, Args)]
+struct TuiArgs {
+    /// The data folder [default: ~/.parallax]
+    #[arg(long, value_name = "DIR", env = DATA_DIR_ENV)]
+    data_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -229,12 +239,14 @@ struct InstallOptions {
 fn main() -> ExitCode {
     // Before anything else, so the version is the one this process started as (see `version`).
     plxd::version();
-    let cli = Cli::parse();
+    let invoked_as = std::env::var_os(INVOKED_AS_ENV);
+    let cli = Cli::parse_from(as_parallax(std::env::args_os().collect(), invoked_as));
     match cli.command {
         Command::Serve(args) => serve(&args),
         Command::Attach(args) => attach(&args),
         Command::Dial(args) => dial(&args),
         Command::Connect(args) => connect(&args),
+        Command::Tui(args) => tui(&args),
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         Command::Service(args) => service_command(args.command),
         Command::Mcp(args) => mcp(&args),
@@ -308,6 +320,78 @@ fn mcp(args: &McpArgs) -> ! {
     std::process::exit(0)
 }
 
+/// Runs `tui` and exits with `std::process::exit`, since the thread reading keys never returns.
+/// It starts plxd as `attach` does, then its client opens connections of its own.
+fn tui(args: &TuiArgs) -> ! {
+    let report = |message: &dyn std::fmt::Display| {
+        let _ = writeln!(io::stderr(), "plxd tui: {message}");
+    };
+    let exit = |message: &dyn std::fmt::Display, code: u8| -> ! {
+        report(message);
+        std::process::exit(code.into())
+    };
+    let data_dir = DataDir::resolve(args.data_dir.as_deref()).unwrap_or_else(|error| {
+        exit(
+            &format!("could not find the data folder: {error}"),
+            EXIT_UNAVAILABLE,
+        )
+    });
+    let socket = data_dir.socket_path().unwrap_or_else(|error| {
+        exit(
+            &format!("could not find plxd's socket: {error}"),
+            EXIT_UNAVAILABLE,
+        )
+    });
+    let program = plxd::executable().unwrap_or_else(|error| {
+        exit(
+            &format!("could not find plxd's own executable: {error}"),
+            EXIT_UNAVAILABLE,
+        )
+    });
+    let options = Options {
+        program,
+        connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+        launch_agent: LaunchAgent::installed_for(&data_dir),
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|error| exit(&format!("could not start the runtime: {error}"), 1));
+    // Windows' pipe client connects inside the runtime, as in `attach`.
+    let entered = runtime.enter();
+    let first =
+        attach::connect(&data_dir, &options).unwrap_or_else(|error| exit(&error, EXIT_UNAVAILABLE));
+    // The client's first connection is that one; later ones, after a drop, are new.
+    let first = std::sync::Mutex::new(Some(first));
+    let plxd = plxd::peer::Plxd::new(move || {
+        let first = first.lock().ok().and_then(|mut first| first.take());
+        let socket = socket.path.clone();
+        async move {
+            let stream = match first {
+                #[cfg(unix)]
+                Some(stream) => stream
+                    .set_nonblocking(true)
+                    .and_then(|()| tokio::net::UnixStream::from_std(stream)),
+                #[cfg(windows)]
+                Some(stream) => Ok(stream),
+                None => plxd::transport::connect(&socket).await,
+            }
+            .map_err(|error| format!("could not reach plxd at {}: {error}", socket.display()))?;
+            let client = ClientInfo {
+                name: "plxd tui".to_owned(),
+                version: plxd::version().to_owned(),
+                machine_id: None,
+            };
+            Ok((stream, client))
+        }
+    });
+    drop(entered);
+    match runtime.block_on(plxd::tui::run(plxd)) {
+        Ok(()) => std::process::exit(0),
+        Err(error) => exit(&error, 1),
+    }
+}
+
 /// Runs `attach` and exits, with `std::process::exit`: the thread that reads stdin blocks until
 /// input arrives, and would keep the runtime from shutting down (0007).
 fn attach(args: &AttachArgs) -> ! {
@@ -317,7 +401,7 @@ fn attach(args: &AttachArgs) -> ! {
         Ok(data_dir) => data_dir,
         Err(error) => unavailable(&format!("could not find the data folder: {error}")),
     };
-    let program = match std::env::current_exe() {
+    let program = match plxd::executable() {
         Ok(program) => program,
         Err(error) => unavailable(&format!("could not find plxd's own executable: {error}")),
     };
@@ -757,13 +841,71 @@ fn fail(message: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
+/// Names the command plxd runs as, for a launcher that can't name the program itself: the
+/// app's `parallax.cmd` on Windows (PLX-750) sets it to `parallax`.
+const INVOKED_AS_ENV: &str = "PLXD_INVOKED_AS";
+
+/// `args` with `tui` put first when plxd runs as `parallax` with no subcommand, so `parallax`
+/// opens Parallax in the terminal, as `claude` and `codex` open theirs. That's plxd linked or
+/// copied under that name, or with [`INVOKED_AS_ENV`] set to it. Under that name, plxd is still
+/// every other command: `parallax attach` is `plxd attach`.
+fn as_parallax(
+    mut args: Vec<std::ffi::OsString>,
+    invoked_as: Option<std::ffi::OsString>,
+) -> Vec<std::ffi::OsString> {
+    let parallax = invoked_as.is_some_and(|name| name == "parallax")
+        || args
+            .first()
+            .and_then(|program| std::path::Path::new(program).file_stem())
+            .is_some_and(|name| name == "parallax");
+    // A subcommand, or plxd's own help and version, which `tui` doesn't take.
+    let own = args.get(1).is_some_and(|arg| {
+        let arg = arg.to_string_lossy();
+        !arg.starts_with('-') || ["-h", "--help", "-V", "--version"].contains(&arg.as_ref())
+    });
+    if parallax && !own {
+        args.insert(1, "tui".into());
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use clap::{CommandFactory, Parser};
 
-    use super::{AttachArgs, Cli, Command, OnOff, parse_dial_address};
+    use super::{AttachArgs, Cli, Command, OnOff, as_parallax, parse_dial_address};
+
+    #[test]
+    fn parallax_alone_is_the_tui() {
+        let args = |line: &[&str]| -> Vec<String> {
+            let line = line.iter().map(Into::into).collect();
+            as_parallax(line, None)
+                .into_iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            args(&["/usr/local/bin/parallax"]),
+            ["/usr/local/bin/parallax", "tui"]
+        );
+        assert_eq!(
+            args(&["parallax", "--data-dir", "/tmp/x"]),
+            ["parallax", "tui", "--data-dir", "/tmp/x"]
+        );
+        assert_eq!(args(&["parallax.exe"]), ["parallax.exe", "tui"]);
+        assert_eq!(args(&["parallax", "serve"]), ["parallax", "serve"]);
+        assert_eq!(args(&["parallax", "--version"]), ["parallax", "--version"]);
+        assert_eq!(args(&["parallax", "-h"]), ["parallax", "-h"]);
+        assert_eq!(args(&["plxd"]), ["plxd"]);
+        let launched = as_parallax(vec!["plxd.exe".into()], Some("parallax".into()));
+        assert_eq!(
+            launched,
+            ["plxd.exe", "tui"],
+            "as the Windows launcher runs it"
+        );
+    }
 
     #[test]
     fn the_command_line_definition_is_valid() {
