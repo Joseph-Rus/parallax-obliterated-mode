@@ -368,12 +368,17 @@ fn fake_launchctl(dir: &Path, then: &str) -> LaunchAgent {
 
     let script = dir.join("launchctl");
     let args = dir.join("launchctl-args");
-    fs::write(
-        &script,
-        format!("#!/bin/sh\necho \"$@\" >> '{}'\n{then}\n", args.display()),
-    )
-    .unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    {
+        // Held so that no process another test spawns inherits the script's write handle, which
+        // would fail running it with "Text file busy".
+        let _lock = spawn_lock();
+        fs::write(
+            &script,
+            format!("#!/bin/sh\necho \"$@\" >> '{}'\n{then}\n", args.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    }
     LaunchAgent {
         program: script,
         args: vec!["kickstart".to_owned(), "gui/501/plxd-test".to_owned()],

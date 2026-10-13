@@ -118,6 +118,7 @@ import {
   useModHeld,
 } from "./ui";
 import { PanelResize } from "./PanelResize";
+import { lookOf, numberOf, usePullRequests, type PullRequests } from "./PullRequests";
 import { instanceLogo, instanceName } from "./providers";
 import { UpdateButton } from "./Update";
 import { clockOptions } from "./prefs";
@@ -1553,10 +1554,26 @@ function RowHead({ repo, status }: { repo?: Repo; status: ReactNode }) {
 }
 
 /**
+ * The look of a thread's linked pull requests: that of the most common state among those read,
+ * and the newest linked one on a tie.
+ */
+function majorityLook(prs: PullRequests) {
+  const read = prs.urls.flatMap((url) => prs.get(url)?.pr ?? []);
+  let best: (typeof read)[number] | undefined;
+  let top = 0;
+  for (const pr of read) {
+    const n = read.filter((p) => p.state === pr.state).length;
+    if (n >= top) [best, top] = [pr, n];
+  }
+  return lookOf(best);
+}
+
+/**
  * A thread's row (0033): its repo and status (what it asks of the user, or how long ago it was
- * prompted), its title, then its branch, diff, and provider. Resting on it shows its card;
- * hovering or focusing it swaps the status for Snooze, Archive, and more actions, which also open
- * by right-clicking the row: native popovers, so Escape and clicking away close them.
+ * prompted), its title, then its branch, linked pull requests (the number of one, or +N for more),
+ * and provider. Resting on it shows its card; hovering or focusing it swaps the status for Snooze,
+ * Archive, and more actions, which also open by right-clicking the row: native popovers, so Escape
+ * and clicking away close them.
  */
 function ThreadRow({
   thread,
@@ -1634,7 +1651,10 @@ function ThreadRow({
     action();
   };
   const Logo = run?.backend ? (backendLogos[run.backend] ?? instanceLogo(run.backend)) : undefined;
-  const hasDetails = !!(run?.branch || run?.diff || Logo || device);
+  // Read once, not polled: a row's state is as of when the sidebar loaded it.
+  const prs = usePullRequests(hostId, run?.id, run?.pullRequests ?? [], false, false);
+  const prLook = majorityLook(prs);
+  const hasDetails = !!(run?.branch || prs.urls.length || Logo || device);
   const snoozedNow = !!thread.snoozedUntil && Date.parse(thread.snoozedUntil) > Date.now();
   const mainLabel = (
     <>
@@ -1701,10 +1721,15 @@ function ThreadRow({
         {hasDetails && (
           <span className="flex w-full items-center gap-2 text-[11.5px] text-faint-foreground">
             <span className="min-w-0 flex-1 truncate">{run?.branch}</span>
-            {run?.diff && (
-              <span className="shrink-0 tabular-nums">
-                <span className="text-added">+{run.diff.insertions}</span>{" "}
-                <span className="text-danger">−{run.diff.deletions}</span>
+            {prs.urls.length > 0 && (
+              <span
+                title={`${prs.urls.length} linked pull ${prs.urls.length === 1 ? "request" : "requests"}`}
+                className={`flex shrink-0 items-center gap-0.5 tabular-nums ${prLook.color}`}
+              >
+                <prLook.Icon aria-hidden className="size-3.5" />
+                <span>
+                  {prs.urls.length > 1 ? `+${prs.urls.length - 1}` : `#${numberOf(prs.urls[0]!)}`}
+                </span>
               </span>
             )}
             {device?.icon && (

@@ -2396,6 +2396,83 @@ test("the footer's Pull requests button opens a page of every linked pull reques
   expect(crumbs().at(-1)).toBe("Fix the flaky test");
 });
 
+test("a thread's sidebar row shows its linked pull requests, colored by their majority state, with its number or +N for more, instead of its diff", async () => {
+  const diff = { commit: "c1", files: 2, insertions: 12, deletions: 3 };
+  const url = (n: number) => `https://github.com/ryan-stoffel/parallax/pull/${n}`;
+  // 1 is open, 2 and 3 merged, 4 closed.
+  const states: Record<number, string> = { 1: "open", 2: "merged", 3: "merged", 4: "closed" };
+  answers["pr/view"] = (params) => {
+    const number = Number(String(params["url"]).split("/").pop());
+    return {
+      result: {
+        state: states[number],
+        draft: false,
+        author: "ryan",
+        updatedAt: "2026-09-29T12:00:00Z",
+        baseBranch: "develop",
+        headBranch: "feature/x",
+        changedFiles: 1,
+        additions: 1,
+        deletions: 0,
+        body: "",
+        comments: [],
+        reviewRequests: [],
+        checks: [],
+        repo: "ryan-stoffel/parallax",
+        number,
+        url: params["url"],
+        title: `Title of ${number}`,
+        labels: [],
+      },
+    };
+  };
+  const run = (id: string, pullRequests?: string[]) => ({
+    ...coordinatorRun(id, id),
+    project: parallax.id,
+    status: "completed" as const,
+    diff,
+    pullRequests,
+  });
+  const ids = ["t-none", "t-open", "t-merged", "t-closed"];
+  answers["thread/list"] = () => ({
+    result: {
+      repos: [parallax],
+      threads: ids.map((id) => ({
+        id,
+        repo: parallax.id,
+        title: id,
+        createdAt: "2026-09-29T11:00:00Z",
+      })),
+      seq: 7,
+    },
+  });
+  answers["agent/list"] = () => ({
+    result: {
+      runs: [
+        run("t-none"),
+        run("t-open", [url(1)]),
+        run("t-merged", [url(1), url(2), url(3)]),
+        run("t-closed", [url(4)]),
+      ],
+      seq: 7,
+    },
+  });
+  await renderApp();
+  const detail = (title: string) =>
+    [...document.querySelectorAll('#sidebar [data-kind="thread"]')]
+      .find((r) => r.querySelector("[data-title]")?.textContent === title)
+      ?.querySelector("button > span:last-child");
+  const chip = (title: string) => detail(title)?.querySelector("span[title*='linked']");
+  expect(detail("t-none")?.textContent).not.toContain("+12");
+  expect(chip("t-none")).toBeNull();
+  expect(chip("t-open")?.className).toContain("text-added");
+  expect(chip("t-open")?.textContent).toBe("#1");
+  // Two merged of three outvote the open one.
+  expect(chip("t-merged")?.className).toContain("text-project-violet");
+  expect(chip("t-merged")?.textContent).toBe("+2");
+  expect(chip("t-closed")?.className).toContain("text-danger");
+});
+
 test("with no Projects, Threads is the only section, and the toolbar's one button opens the add palette", async () => {
   answers["project/list"] = () => ({ result: { projects: [], seq: 7 } });
   await renderApp();
