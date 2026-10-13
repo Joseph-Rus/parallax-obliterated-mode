@@ -887,3 +887,16 @@ test("a picked /skill and an @token are drawn as pills; an unknown /path is not"
   const pills = () => [...box.querySelectorAll(".composer-token")].map((p) => p.textContent);
   expect(pills()).toEqual(["/review", "@src/a.ts", "/review"]);
 });
+
+test("Backspace at the end of a pill deletes the whole pill", async () => {
+  const { box, type, press } = await withMenus(async () => undefined);
+  await type("fix @src/a.ts /review");
+  await press("Backspace");
+  expect(box.textContent).toBe("fix @src/a.ts ");
+  // After the space it's an ordinary Backspace, and the pill goes on the next.
+  await press("Backspace");
+  expect(box.textContent).toBe("fix @src/a.ts ");
+  box.editor!.commands.setTextSelection(14);
+  await press("Backspace");
+  expect(box.textContent).toBe("fix  ");
+});

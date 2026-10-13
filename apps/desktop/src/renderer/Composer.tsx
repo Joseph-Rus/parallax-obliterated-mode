@@ -24,6 +24,7 @@ import Paragraph from "@tiptap/extension-paragraph";
 import Text from "@tiptap/extension-text";
 import { Dropcursor, Gapcursor, UndoRedo } from "@tiptap/extensions";
 import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { EditorState } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { EditorContent, markInputRule, useEditor, type Editor } from "@tiptap/react";
 import { defaultMarkdownSerializer, MarkdownSerializer } from "prosemirror-markdown";
@@ -849,6 +850,23 @@ export function Composer({
     (newThread
       ? "Build a feature, fix a bug, paste an image, use /skills, @files or threads"
       : "Reply, add detail, or steer what it does next");
+  // Known /skills and @tokens drawn as pills. The text itself, and so what is sent, is unchanged.
+  const pills = (state: EditorState) => {
+    const skills = new Set((loadedCommands ?? []).map((c) => c.text));
+    const marks: Decoration[] = [];
+    state.doc.descendants((node, pos, parent) => {
+      if (!node.isText || parent?.type.name === "codeBlock") return;
+      for (const m of node.text!.matchAll(/(?<=^|\s)(\/\S+|@\S+)/g)) {
+        if (m[1]![0] === "@" || skills.has(m[1]!))
+          marks.push(
+            Decoration.inline(pos + m.index, pos + m.index + m[1]!.length, {
+              class: "composer-token",
+            }),
+          );
+      }
+    });
+    return DecorationSet.create(state.doc, marks);
+  };
   // Its props are read again on every render, so its handlers see this render's state.
   const editor: Editor = useEditor({
     extensions,
@@ -865,23 +883,7 @@ export function Composer({
       if (!at) setClosedAt(undefined);
     },
     editorProps: {
-      // Known /skills and @tokens drawn as pills. The text itself, and so what is sent, is unchanged.
-      decorations: (state) => {
-        const skills = new Set((loadedCommands ?? []).map((c) => c.text));
-        const marks: Decoration[] = [];
-        state.doc.descendants((node, pos, parent) => {
-          if (!node.isText || parent?.type.name === "codeBlock") return;
-          for (const m of node.text!.matchAll(/(?<=^|\s)(\/\S+|@\S+)/g)) {
-            if (m[1]![0] === "@" || skills.has(m[1]!))
-              marks.push(
-                Decoration.inline(pos + m.index, pos + m.index + m[1]!.length, {
-                  class: "composer-token",
-                }),
-              );
-          }
-        });
-        return DecorationSet.create(state.doc, marks);
-      },
+      decorations: pills,
       // All of them, since these replace Tiptap's own (its role too) once props change.
       attributes: {
         id: "composer-input",
@@ -901,8 +903,20 @@ export function Composer({
         class:
           "composer-input markdown block max-h-[40vh] min-h-[calc(4.875em+1.125rem)] overflow-y-auto px-5 pt-4.5 focus-visible:outline-none",
       },
-      handleKeyDown: (_view, event): boolean => {
+      handleKeyDown: (view, event): boolean => {
         const plain = !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey;
+        // Backspace at the end of a pill, or inside one, takes the whole pill.
+        const { selection } = view.state;
+        if (event.key === "Backspace" && plain && selection.empty) {
+          const at = selection.from;
+          const pill = pills(view.state)
+            .find(at, at)
+            .find((d) => d.from < at);
+          if (pill) {
+            view.dispatch(view.state.tr.delete(pill.from, pill.to));
+            return true;
+          }
+        }
         if (menuOpen && plain && !event.isComposing) {
           const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
           if (event.key === "Escape") setClosedAt(trigger.from);
