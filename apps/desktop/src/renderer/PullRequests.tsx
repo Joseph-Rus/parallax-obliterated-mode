@@ -71,7 +71,7 @@ export interface PullRequests {
  * Reads each of a run's linked pull requests with `pr/view`, again whenever the list changes, and
  * acts on them with `pr/act`. With `diffs`, reads one's diff with `pr/diff` on demand. Reads are kept by run and URL, so a late answer for another thread
  * lands under that thread. An open one is read again every `POLL_MS`, so its checks,
- * comments, and state follow GitHub's. ponytail: every linked one is read on open; read on demand
+ * comments, and state follow GitHub's, unless `poll` is false (the sidebar's rows read once). ponytail: every linked one is read on open; read on demand
  * if threads come to link many.
  */
 export function usePullRequests(
@@ -79,6 +79,7 @@ export function usePullRequests(
   runId: string | undefined,
   urls: readonly string[],
   diffs = false,
+  poll = true,
 ): PullRequests {
   const [read, setRead] = useState<Readonly<Record<string, Linked>>>({});
   const put = useCallback(
@@ -119,7 +120,7 @@ export function usePullRequests(
   // A read can take minutes (plxd's gh timeout), so a poll skips one whose last read hasn't settled.
   const polling = useRef(new Set<string>());
   useEffect(() => {
-    if (!live) return;
+    if (!live || !poll) return;
     const timer = setInterval(() => {
       for (const url of live.split("\n")) {
         if (polling.current.has(url)) continue;
@@ -128,7 +129,7 @@ export function usePullRequests(
       }
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [live, refresh]);
+  }, [live, poll, refresh]);
   return {
     urls,
     get: (url) => read[`${runId} ${url}`],
