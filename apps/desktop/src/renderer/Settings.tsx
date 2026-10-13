@@ -626,6 +626,7 @@ const installable = new Set([
   "grokBuild",
   "hermes",
   "antigravity",
+  "ollamaCloud",
 ]);
 
 /** The dot before a row's state: only when it needs the user. */
@@ -1008,9 +1009,13 @@ function InstancePane({
   const busy = npmInstalling || info.installing === true;
   // Pi's installer puts `pi` on the host, which a 0.x instance's PI_ACP_PI_COMMAND doesn't run.
   const piCommand = instance.env.find((v) => v.name === "PI_ACP_PI_COMMAND")?.value ?? "pi";
+  // Ollama Cloud's runtime stays out of sight, unless it is one from before 0070 on Claude Code.
+  const ollamaCloud =
+    instance.kind === "ollamaCloud" && !instance.env.some((v) => v.name === "ANTHROPIC_BASE_URL");
   const canInstall =
     !info.installed &&
     installable.has(instance.kind) &&
+    (instance.kind !== "ollamaCloud" || ollamaCloud) &&
     !instance.program &&
     (instance.kind !== "pi" || piCommand === "pi");
   const save = async (change: Partial<ProviderInstance>) =>
@@ -1214,6 +1219,11 @@ function InstancePane({
               info.note ?? "Runs through the Cursor SDK on this host. Needs Node.js 22.13 or newer."
             }
           />
+        ) : ollamaCloud ? (
+          <Row
+            title="Ollama Cloud"
+            description="Runs Ollama Cloud's models on this host with the key in OLLAMA_API_KEY."
+          />
         ) : (
           <>
             {choices && version && (
@@ -1246,7 +1256,9 @@ function InstancePane({
             >
               <SavedField
                 aria-label="Binary path"
-                placeholder={kind.program}
+                placeholder={
+                  kind.program ?? (instance.kind === "ollamaCloud" ? "claude" : undefined)
+                }
                 required={instance.kind === "acp"}
                 value={instance.program ?? ""}
                 onSave={(next) => void save({ program: next.trim() || undefined })}
