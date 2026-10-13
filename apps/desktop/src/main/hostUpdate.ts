@@ -51,8 +51,12 @@ export type HostUpdaterDeps = {
   kindOf: (hostId: string) => HostKind | undefined;
   /** Each host's connection state now, `local` included. */
   states: () => Iterable<[string, ConnectionState]>;
-  /** Sends `host/update`, waiting as long as a download takes. */
-  update: (hostId: string, version: string) => Promise<RpcResponse<HostUpdateResult>>;
+  /** Sends `host/update`, waiting as long as a download takes; restarting at once with `now`. */
+  update: (
+    hostId: string,
+    version: string,
+    now?: boolean,
+  ) => Promise<RpcResponse<HostUpdateResult>>;
   /** Agents with a turn running on the host, from `host/health`; undefined when it didn't answer. */
   runningAgents: (hostId: string) => Promise<number | undefined>;
   /** Installs the app's plxd over ssh and reconnects; resolves to an error for people. */
@@ -86,6 +90,8 @@ export class HostUpdater {
   private readonly active = new Set<string>();
   /** Hosts waiting to reconnect on the new plxd. */
   private readonly pending = new Map<string, Pending>();
+  /** Each update started here until plxd answers, so `updateNow` sends after it, not over it. */
+  private readonly running = new Map<string, Promise<void>>();
   /** The local plxd ran the app's version once this launch. */
   private localCurrent = false;
 
@@ -125,6 +131,29 @@ export class HostUpdater {
     if (state) this.consider(hostId, state);
   }
 
+  /**
+   * Updates `hostId` to `version` now, cutting off its agents' turns, as Update everything does
+   * (PLX-746): even one waiting for its agents, or one that failed. One this launch is updating
+   * already is asked once plxd has answered that. Resolves once plxd answers; the result comes as
+   * the usual event once it reconnects. A plxd that doesn't know `now` waits for its agents.
+   */
+  async updateNow(hostId: string, version: string): Promise<void> {
+    await this.running.get(hostId);
+    this.tried.add(`${hostId}@${this.deps.version}`);
+    this.active.add(hostId);
+    const answer = await this.deps.update(hostId, version, true).catch((error: unknown) => ({
+      error: { message: error instanceof Error ? error.message : String(error) },
+    }));
+    if ("error" in answer) {
+      // Already restarting into the last update, which may cut this request off: its reconnect
+      // says how that went.
+      if (this.pending.get(hostId)?.restarted) return;
+      return this.fail(hostId, answer.error.message);
+    }
+    if (answer.result.restart === "upToDate") return this.done(hostId);
+    this.wait(hostId, answer.result.restart === "now", version);
+  }
+
   /** Updates `hostId` if it's a remote host, connected on an older plxd, not tried yet. */
   private consider(hostId: string, state: ConnectionState): void {
     const { packaged, version } = this.deps;
@@ -134,9 +163,12 @@ export class HostUpdater {
     if (!kind || this.tried.has(key) || this.active.has(hostId)) return;
     this.tried.add(key);
     this.active.add(hostId);
-    void this.run(hostId, kind, state).catch((error: unknown) =>
-      this.fail(hostId, error instanceof Error ? error.message : String(error)),
-    );
+    const running = this.run(hostId, kind, state)
+      .catch((error: unknown) =>
+        this.fail(hostId, error instanceof Error ? error.message : String(error)),
+      )
+      .finally(() => this.running.delete(hostId));
+    this.running.set(hostId, running);
   }
 
   private async run(
@@ -180,9 +212,11 @@ export class HostUpdater {
     }
   }
 
-  /** Waits for `hostId` to reconnect on the new plxd; within `RECONNECT_TIMEOUT_MS` if `restarted`. */
-  private wait(hostId: string, restarted: boolean): void {
-    const version = this.deps.version;
+  /**
+   * Waits for `hostId` to reconnect on plxd `version`, the app's unless given; within
+   * `RECONNECT_TIMEOUT_MS` if `restarted`.
+   */
+  private wait(hostId: string, restarted: boolean, version = this.deps.version): void {
     clearTimeout(this.pending.get(hostId)?.timer);
     const pending: Pending = { version, restarted };
     if (restarted) {

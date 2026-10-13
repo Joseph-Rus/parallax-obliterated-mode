@@ -95,7 +95,12 @@ for (const method of withheldMethods) rendererMethods.delete(method);
 
 /** Keeps remote hosts' plxd on the app's version (PLX-700). */
 let hostUpdater: HostUpdater | undefined;
-/** How long `host/update` may take: it downloads plxd, about 30 MB, before it answers. */
+/** The version Update everything puts each host's plxd on: the app's next release, else its own. */
+let targetVersion = () => app.getVersion();
+/**
+ * How long `host/update` may take: it downloads plxd, about 30 MB, before it answers. A
+ * provider's `providers/upgrade` gets as long.
+ */
 const UPDATE_TIMEOUT_MS = 15 * 60_000;
 
 /**
@@ -113,10 +118,12 @@ const settingsFile = () => path.join(app.getPath("userData"), "settings.json");
 
 /**
  * Connects to the local plxd, as host id `local`, and to every saved SSH host at once, and
- * serves the `window.parallax` calls that reach plxd or edit the hosts.
+ * serves the `window.parallax` calls that reach plxd or edit the hosts. `target` is the version
+ * Update everything puts remote hosts' plxd on.
  */
-export function startHosts(signedIn?: Account): void {
+export function startHosts(signedIn: Account | undefined, target: () => string): void {
   account = signedIn;
+  targetVersion = target;
   initialServiceCheck = repointService();
   hostUpdater = new HostUpdater({
     packaged: app.isPackaged && !process.env["PLXD_PATH"],
@@ -129,8 +136,10 @@ export function startHosts(signedIn?: Account): void {
           ? "remote"
           : undefined,
     states: () => [...connections].map(([id, each]) => [id, each.state]),
-    update: async (hostId, version) =>
-      (await connections.get(hostId)?.request("host/update", { version }, UPDATE_TIMEOUT_MS)) ?? {
+    update: async (hostId, version, now) =>
+      (await connections
+        .get(hostId)
+        ?.request("host/update", { version, ...(now && { now }) }, UPDATE_TIMEOUT_MS)) ?? {
         error: { code: ErrorCodes.InternalError, message: "That host isn't in Parallax anymore." },
       },
     runningAgents: async (hostId) => {
@@ -222,7 +231,9 @@ export function startHosts(signedIn?: Account): void {
       if (!host) return invalid(ErrorCodes.InvalidParams, `unknown host: ${String(hostId)}`);
       // plxd validates the params' shape; they only have to be an object to be sent.
       if (!isObject(params)) return invalid(ErrorCodes.InvalidParams, "params must be an object");
-      return host.request(method as RendererMethod, params as never);
+      // A provider's own update downloads it, which can take minutes (PLX-746).
+      const timeout = method === "providers/upgrade" ? UPDATE_TIMEOUT_MS : undefined;
+      return host.request(method as RendererMethod, params as never, timeout);
     },
   );
 
@@ -303,6 +314,10 @@ export function startHosts(signedIn?: Account): void {
   ipcMain.handle("parallax:retry", (_event, hostId: unknown) => connection(hostId).retry());
   ipcMain.handle("parallax:retryHostUpdate", (_event, hostId: unknown) => {
     if (typeof hostId === "string") hostUpdater?.retry(hostId);
+  });
+  ipcMain.handle("parallax:updateHostNow", async (_event, hostId: unknown) => {
+    if (typeof hostId === "string" && connections.has(hostId))
+      await hostUpdater?.updateNow(hostId, targetVersion());
   });
 
   // A window's terminals (terminal.ts), by an id it picks, which plxd runs (PLX-637): a shell in a
