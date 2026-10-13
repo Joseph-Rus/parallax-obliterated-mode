@@ -134,6 +134,37 @@ pub enum HostUpdateRestart {
     Unknown,
 }
 
+/// Params of `host/folders`, behind the `hostFolders` capability (PLX-769): the folders in a
+/// folder on the host, for adding a repository on another computer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HostFoldersParams {
+    /// The folder: an absolute path, or `~` or a path under it, for the home folder of the user
+    /// plxd runs as.
+    pub path: String,
+}
+
+/// Result of `host/folders`. A folder that can't be read fails with `invalidParams`, whose
+/// message says why.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HostFoldersResult {
+    /// The folder's absolute path.
+    pub path: String,
+    /// Its folders, and its symbolic links to folders, by name, ignoring case.
+    pub folders: Vec<HostFolder>,
+}
+
+/// A folder `host/folders` lists.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HostFolder {
+    /// Its name.
+    pub name: String,
+    /// Its absolute path.
+    pub path: String,
+}
+
 /// Params of `host/settings/get`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

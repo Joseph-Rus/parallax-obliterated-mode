@@ -70,6 +70,7 @@ const capabilities: Capabilities = Object.fromEntries(
     "repoGitStatus",
     "githubSetup",
     "githubStatus",
+    "hostFolders",
     "inbox",
     "integrationBranch",
     "landing",
@@ -802,6 +803,9 @@ const handlers: { [M in Method]?: Handler<M> } = {
     };
   },
 
+  // Every computer has the same folders in the preview.
+  "host/folders": (p) => listing(p.path),
+
   "repo/add": (p) => {
     const found = db.repos.find((r) => r.path === p.path);
     if (found) return { repo: found };
@@ -1512,6 +1516,14 @@ const folderTree: Record<string, string[]> = {
   [`${HOME}/Developer`]: ["personal", "work"],
   [`${HOME}/Developer/personal`]: ["parallax", "photon", "dotfiles"],
 };
+/** The folders in `input`, which may start with `~`, from `folderTree`. */
+const listing = (input: string) => {
+  const dir = expand(input);
+  return {
+    path: dir,
+    folders: (folderTree[dir] ?? []).map((name) => ({ name, path: `${dir}/${name}` })),
+  };
+};
 const expand = (p: string) => p.replace(/^~(?=\/|$)/, HOME).replace(/\/+$/, "") || "/";
 
 // The terminal app Settings > General chose, once Choose… is clicked.
@@ -1525,14 +1537,7 @@ export const mockBridge: ParallaxBridge = {
     document.documentElement.style.zoom = String(factor);
   },
   pickFolder: () => delay(`${HOME}/Developer/personal/new-repo`),
-  listFolders: (input) => {
-    const dir = expand(input);
-    return delay(
-      dir in folderTree
-        ? { path: dir, folders: folderTree[dir]!.map((name) => ({ name, path: `${dir}/${name}` })) }
-        : { path: dir, folders: [] },
-    );
-  },
+  listFolders: (input) => delay(listing(input)),
   createRepo: (name) => delay({ path: `${HOME}/.parallax/projects/${name}` }, 400),
   cloneRepo: (_slug, dest) => delay({ path: expand(dest) }, 1200),
   copyPicture: () => delay(undefined),

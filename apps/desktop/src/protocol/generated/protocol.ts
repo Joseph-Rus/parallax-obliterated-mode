@@ -44,6 +44,11 @@ export type ParallaxRequests = {
 	 */
 	"host/update": { params: HostUpdateParams, result: HostUpdateResult },
 	/**
+	 * `host/folders`: the folders in a folder on the host, for adding a repository there
+	 * (PLX-769). Gated on the `hostFolders` capability.
+	 */
+	"host/folders": { params: HostFoldersParams, result: HostFoldersResult },
+	/**
 	 * `project/list`: every project, and the event log's `seq` from before the read.
 	 */
 	"project/list": { params: ProjectListParams, result: ProjectListResult },
@@ -720,6 +725,7 @@ export const REQUEST_METHODS = [
 	"host/health",
 	"host/version",
 	"host/update",
+	"host/folders",
 	"project/list",
 	"project/create",
 	"events/subscribe",
@@ -1142,6 +1148,47 @@ export type HostUpdateResult = {
  * A newer plxd may send values that are not listed here. Treat those as unknown.
  */
 export type HostUpdateRestart = "now" | "afterRuns" | "upToDate";
+
+/**
+ * Params of `host/folders`, behind the `hostFolders` capability (PLX-769): the folders in a
+ * folder on the host, for adding a repository on another computer.
+ */
+export type HostFoldersParams = {
+	/**
+	 * The folder: an absolute path, or `~` or a path under it, for the home folder of the user
+	 * plxd runs as.
+	 */
+	path: string,
+};
+
+/**
+ * Result of `host/folders`. A folder that can't be read fails with `invalidParams`, whose
+ * message says why.
+ */
+export type HostFoldersResult = {
+	/**
+	 * The folder's absolute path.
+	 */
+	path: string,
+	/**
+	 * Its folders, and its symbolic links to folders, by name, ignoring case.
+	 */
+	folders: Array<HostFolder>,
+};
+
+/**
+ * A folder `host/folders` lists.
+ */
+export type HostFolder = {
+	/**
+	 * Its name.
+	 */
+	name: string,
+	/**
+	 * Its absolute path.
+	 */
+	path: string,
+};
 
 /**
  * Params of `project/list`.

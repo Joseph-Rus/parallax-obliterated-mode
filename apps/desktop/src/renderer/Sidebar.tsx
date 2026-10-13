@@ -86,7 +86,7 @@ import { ConnectionStatus } from "./ConnectionStatus";
 import { DeviceIcon } from "./DeviceIcon";
 import { hostIcon } from "./RunTargetMenu";
 import { ProfileButton } from "./ProfileMenu";
-import { type Host } from "./hosts";
+import { localId, type Host } from "./hosts";
 import { IconPicker } from "./IconPicker";
 import { imageUrl } from "./images";
 import { ClaudeLogo, CursorLogo, OpenAILogo, ParallaxMark } from "./logos";
@@ -316,6 +316,19 @@ type Item = (
   /** When it was last prompted, for the order. */
   at: string;
 };
+
+/**
+ * Why Local folder can't browse a computer, by id. This computer's folders are read by main, so it
+ * always can; another needs a connected plxd with `hostFolders`.
+ */
+const unbrowsable = (hosts: HostThreads[]) =>
+  new Map(
+    hosts.flatMap(({ host, view }): [string, string][] =>
+      host.id === localId || "hostFolders" in view.capabilities
+        ? []
+        : [[host.id, Object.keys(view.capabilities).length ? "Update plxd to browse" : "Offline"]],
+    ),
+  );
 
 /**
  * Search, the Repos filter, a menu to create a Project or add a repository, and New thread, then
@@ -765,6 +778,7 @@ export function ThreadList({
       <AddDialog
         ref={addDialog}
         hosts={hosts.map((h) => h.host)}
+        unbrowsable={unbrowsable(hosts)}
         hostId={host.id}
         repos={open?.state.repos ?? []}
         create={open?.createProject ?? (async () => "Not connected")}

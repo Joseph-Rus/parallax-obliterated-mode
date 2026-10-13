@@ -954,6 +954,13 @@ export function App() {
                           hosts.filter((h) => lacksRepo(views[h.id], group.name)).map((h) => h.id),
                         )
                       }
+                      shared={hosts.some(
+                        (h) =>
+                          h.id !== host.id &&
+                          views[h.id]?.state.repos.some(
+                            (r) => isRepository(r) && r.name === group.name,
+                          ),
+                      )}
                       local={host.id === localId}
                       addRepo={threads.addRepo}
                       start={threads.start}

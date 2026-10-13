@@ -46,6 +46,8 @@ interface NewThreadProps {
   onPickElsewhere: (hostId: string, groupId: string) => void;
   /** The computers, by id, that lack the picked repository, for the Computer menu. */
   missing?: ReadonlySet<string>;
+  /** Whether another computer has a repository of this name, so the heading names the computer. */
+  shared?: boolean;
   /** Whether the host is this computer, so its folders can be picked. */
   local: boolean;
   addRepo: (path: string) => Promise<Repo | string>;
@@ -137,6 +139,7 @@ export function NewThread({
   elsewhere,
   onPickElsewhere,
   missing,
+  shared,
   local,
   addRepo,
   start,
@@ -361,7 +364,7 @@ export function NewThread({
               >
                 {group.id === noRepo ? "without a repo" : group.name}
               </button>
-              ?
+              {shared && !repoless(group) && ` on ${hosts.find((h) => h.id === hostId)?.name}`}?
             </h1>
             {!repoless(group) && (
               <div className="relative mb-9 text-center">
