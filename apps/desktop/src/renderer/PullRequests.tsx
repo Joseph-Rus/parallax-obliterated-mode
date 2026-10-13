@@ -120,9 +120,14 @@ export function usePullRequests(
   const live = urls.filter(
     (url) => !["merged", "closed"].includes(read[`${runId} ${url}`]?.pr?.state ?? ""),
   );
-  // Any check, since one failed check makes the rolled-up state failed while others still run.
+  // Any check, since one failed check makes the rolled-up state failed while others still run. One
+  // running longer than STUCK_MS, or still queued, waits for POLL_MS, so a stuck check doesn't
+  // spend gh's quota every RUNNING_POLL_MS.
   const running = (url: string) =>
-    !!read[`${runId} ${url}`]?.pr?.checks.some((c) => c.state === "pending");
+    !!read[`${runId} ${url}`]?.pr?.checks.some(
+      (c) =>
+        c.state === "pending" && !!c.startedAt && Date.now() - Date.parse(c.startedAt) < STUCK_MS,
+    );
   const fast = live.filter(running).join("\n");
   const slow = live.filter((url) => !running(url)).join("\n");
   // A read can take minutes (plxd's gh timeout), so a poll skips one whose last read hasn't settled.
@@ -147,7 +152,12 @@ export function usePullRequests(
     const timer = setInterval(() => readAgain(slow), POLL_MS);
     return () => clearInterval(timer);
   }, [slow, poll, readAgain]);
-  const all = live.join("\n");
+  // Focus reads again only the ones not read within RUNNING_POLL_MS.
+  const fresh = (url: string) => {
+    const at = read[`${runId} ${url}`]?.at;
+    return !!at && Date.now() - Date.parse(at) < RUNNING_POLL_MS;
+  };
+  const all = live.filter((url) => !fresh(url)).join("\n");
   useEffect(() => {
     if (!poll) return;
     const focus = () => readAgain(all);
@@ -172,6 +182,8 @@ export function usePullRequests(
 export const POLL_MS = 60_000;
 /** How often one is read again while its checks run. */
 export const RUNNING_POLL_MS = 15_000;
+/** How long a check runs before it counts as stuck and its pull request is read every POLL_MS. */
+export const STUCK_MS = 30 * 60_000;
 
 /** A pull request's number, from its URL. */
 export const numberOf = (url: string) => /\/pull\/(\d+)/.exec(url)?.[1] ?? "?";
@@ -476,9 +488,10 @@ function ChecksList({
         {counts.map(([n, what]) => `${n} ${what}`).join(" · ") || "No checks"}
       </p>
       <ul className="flex max-h-[60vh] flex-col overflow-y-auto">
-        {sorted.map((c) => (
+        {sorted.map((c, i) => (
           <CheckRow
-            key={`${c.workflow} ${c.name}`}
+            // A job's URL is its own; two checks can share a workflow and name.
+            key={c.url ?? `${c.workflow} ${c.name} ${i}`}
             check={c}
             now={now}
             onOpen={onOpen}
@@ -607,16 +620,23 @@ const githubMarkdown: Components = {
 
 /**
  * GitHub's Markdown with each HTML `<img>`, as GitHub writes a dropped screenshot, as a Markdown
- * image, since Markdown here renders no HTML. ponytail: a regex, not an HTML parser; it misses an
- * `<img>` whose attributes hold a `>`.
+ * image, since Markdown here renders no HTML. Code, fenced or inline, stays as written. ponytail:
+ * regexes, not a Markdown or HTML parser; they miss an `<img>` whose attributes hold a `>`, and
+ * code fenced by more than three marks.
  */
 export function githubText(body: string): string {
-  return body.replace(/<img\b[^>]*>/gi, (tag) => {
+  return body
+    .split(/(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)/)
+    .map((part, i) => (i % 2 ? part : images(part)))
+    .join("");
+}
+
+const images = (text: string) =>
+  text.replace(/<img\b[^>]*>/gi, (tag) => {
     const attr = (name: string) => new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`, "i").exec(tag)?.[1];
     const src = attr("src");
     return src ? `![${(attr("alt") ?? "").replace(/[[\]]/g, "")}](${src})` : tag;
   });
-}
 
 /** A screenshot's name: its alt text, or without a useful one, its file's name. */
 export function shotName(src: string, alt: string): string {

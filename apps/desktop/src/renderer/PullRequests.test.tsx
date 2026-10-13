@@ -212,6 +212,20 @@ test("one whose checks run is read again every RUNNING_POLL_MS, until they end",
   expect(request).toHaveBeenCalledOnce();
 });
 
+test("a check running longer than STUCK_MS waits for POLL_MS", async () => {
+  vi.useFakeTimers({ now, toFake: ["Date", "setInterval", "clearInterval"] });
+  const stuck = { name: "deploy", state: "pending" as const, startedAt: "2026-10-02T11:00:00Z" };
+  read = { [url(42)]: prOf(42, { checks: [stuck] }) };
+  await render([url(42)], () => null);
+  request.mockClear();
+  await act(async () => void vi.advanceTimersByTime(RUNNING_POLL_MS));
+  await settle();
+  expect(request).not.toHaveBeenCalled();
+  await act(async () => void vi.advanceTimersByTime(POLL_MS));
+  await settle();
+  expect(request).toHaveBeenCalledOnce();
+});
+
 test("the checks' state opens every check, failed first, spinning a running one, with its details and page", async () => {
   const failed = {
     name: "lint",
@@ -274,6 +288,9 @@ test("a screenshot opens large, with its name and place, and arrows to the other
 
 test("githubText makes HTML images Markdown, and linkedPr finds a linked one from any of its tabs", () => {
   expect(githubText('<img alt="A [b]" src="https://x/y.png" />')).toBe("![A b](https://x/y.png)");
+  // Code shows the tag as written.
+  const code = '`<img src="a.png">` and\n```html\n<img src="b.png">\n```\n';
+  expect(githubText(code)).toBe(code);
   expect(linkedPr(`${url(42)}/files#diff`, [url(4), url(42)])).toBe(url(42));
   expect(linkedPr(url(7), [url(42)])).toBeUndefined();
 });
