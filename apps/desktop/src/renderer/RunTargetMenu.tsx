@@ -4,7 +4,7 @@ import { useId } from "react";
 
 import { DeviceIcon } from "./DeviceIcon";
 import { localId, type Host } from "./hosts";
-import { Menu, MenuOption, menuButton, menuHeading, type PickerOption } from "./ui";
+import { Menu, menuButton, type PickerOption } from "./ui";
 
 /** Where a new thread works: a worktree of its own, or the repository's own checkout. */
 export type Workspace = "worktree" | "checkout";
@@ -36,6 +36,16 @@ export const hostIcon = (host: Host) =>
   ) : (
     <Laptop />
   );
+
+/** How a computer is reached, under its name. */
+const connection = (host: Host) =>
+  host.id === localId
+    ? "This computer"
+    : host.destination
+      ? `SSH · ${host.destination}`
+      : host.routes
+        ? "Same network"
+        : "Parallax Connect";
 
 /**
  * Where a thread runs: which of Parallax's computers, and in a new worktree or the local checkout.
@@ -81,51 +91,82 @@ export function RunTargetMenu({
         {workspace.label}
         <ChevronDown aria-hidden className="opacity-70" />
       </button>
-      <Menu id={id} label="Runs on" className="w-[26rem] p-1" focus='[aria-checked="true"]'>
-        <div role="group" aria-label="Computer">
-          <p aria-hidden className={menuHeading}>
-            Computer
-          </p>
-          {hosts.map((h) => (
-            <MenuOption
-              key={h.id}
-              option={{
-                value: h.id,
-                label: h.name,
-                icon: hostIcon(h),
-                hint: missing?.hostIds.has(h.id)
-                  ? `no ${missing.repo}`
-                  : h.id === localId
-                    ? "this one"
-                    : undefined,
-              }}
-              checked={h === host}
-              onClick={() => onHostChange(h.id)}
-            />
-          ))}
+      <Menu
+        id={id}
+        label="Runs on"
+        className="w-80 overflow-hidden p-0"
+        focus='[aria-checked="true"]'
+      >
+        <div role="group" aria-label="Computer" className="grid gap-px p-1.5">
+          {hosts.map((h) => {
+            const selected = h === host;
+            return (
+              <button
+                key={h.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={selected}
+                onClick={() => onHostChange(h.id)}
+                className={`flex w-full items-center gap-2.5 rounded-[9px] py-1.5 pr-2 pl-1.5 text-left hover:bg-hover ${selected ? "bg-selected hover:bg-selected" : ""}`}
+              >
+                <span
+                  className={`grid size-[30px] shrink-0 place-items-center rounded-lg border [&_svg]:size-4 ${selected ? "border-accent/35 bg-accent/15 text-accent" : "border-border bg-hover text-muted-foreground"}`}
+                >
+                  {hostIcon(h)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] leading-snug font-medium">
+                    {h.name}
+                  </span>
+                  <span className="block truncate text-[11.5px] leading-snug text-faint-foreground">
+                    {connection(h)}
+                  </span>
+                </span>
+                {missing?.hostIds.has(h.id) && (
+                  <span className="shrink-0 rounded-[5px] bg-warning/12 px-1.5 py-0.5 text-[11px] text-warning">
+                    no {missing.repo}
+                  </span>
+                )}
+              </button>
+            );
+          })}
           {hosts.length === 1 && (
-            <p className="px-2 pt-0.5 pb-1.5 text-[12px] text-faint-foreground">
+            <p className="pt-1 pr-2.5 pb-1.5 pl-[50px] text-[11.5px] text-faint-foreground">
               Computers you add under Hosts show up here.
             </p>
           )}
         </div>
-        <div role="separator" className="-mx-1 my-1 h-px bg-border" />
-        <div role="group" aria-label="Workspace">
-          <p aria-hidden className={menuHeading}>
-            Workspace
-          </p>
-          {workspaces.map((w) => {
-            const unavailable = w.value === "checkout" ? checkoutUnavailable : undefined;
-            return (
-              <MenuOption
-                key={w.value}
-                option={unavailable ? { ...w, hint: unavailable } : w}
-                checked={w === workspace}
-                disabled={!!unavailable}
-                onClick={() => onWorkspaceChange(w.value)}
-              />
-            );
-          })}
+        <div
+          role="group"
+          aria-label="Workspace"
+          className="border-t border-border bg-background/50 p-1.5"
+        >
+          <div className="flex gap-0.5 rounded-[10px] border border-border bg-hover p-[3px]">
+            {workspaces.map((w) => {
+              const unavailable = w.value === "checkout" ? checkoutUnavailable : undefined;
+              const selected = w === workspace;
+              return (
+                <button
+                  key={w.value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={selected}
+                  disabled={!!unavailable}
+                  title={unavailable ?? w.description}
+                  onClick={() => onWorkspaceChange(w.value)}
+                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-[7px] px-1.5 py-1 text-[12.5px] [&_svg]:size-3.5 ${selected ? "bg-selected text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"} disabled:text-faint-foreground/60 disabled:hover:text-faint-foreground/60`}
+                >
+                  {w.icon}
+                  {w.label}
+                </button>
+              );
+            })}
+          </div>
+          {checkoutUnavailable && (
+            <p className="px-1.5 pt-1.5 pb-0.5 text-[11.5px] text-faint-foreground">
+              Local checkout {checkoutUnavailable}.
+            </p>
+          )}
         </div>
       </Menu>
     </>
