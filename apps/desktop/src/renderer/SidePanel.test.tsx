@@ -20,10 +20,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function render() {
+async function render(onClose = () => {}) {
   const root = createRoot(document.body.appendChild(document.createElement("div")));
   act(() =>
-    root.render(<SidePanel open onClose={() => {}} expanded={false} onExpandedChange={() => {}} />),
+    root.render(<SidePanel open onClose={onClose} expanded={false} onExpandedChange={() => {}} />),
   );
   unmount = () => {
     root.unmount();
@@ -77,8 +77,9 @@ test("views open as tabs: + shows the list, a view's letter opens it, and pickin
   expect(tabs()).toEqual(["Diff*", "Files"]);
 });
 
-test("closing the shown tab shows its neighbour, and closing the last shows the list", async () => {
-  await render();
+test("closing the shown tab shows its neighbour, and closing the last collapses the panel", async () => {
+  const onClose = vi.fn();
+  await render(onClose);
   for (const name of ["Diff", "Terminal", "Files"]) {
     await click(listButton(name));
     await click(openAView());
@@ -93,24 +94,19 @@ test("closing the shown tab shows its neighbour, and closing the last shows the 
   // Without a folder, Terminal shows its empty state.
   expect(shown()!.textContent).toContain("No folder here");
 
+  expect(onClose).not.toHaveBeenCalled();
   await click(panel().querySelector('button[aria-label="Close Terminal"]'));
   expect(tabs()).toEqual([]);
-  expect(listShown()).toBe(true);
+  expect(onClose).toHaveBeenCalledOnce();
 });
 
-test("closing a tab keeps focus in the panel, so the list's letters work after closing the last", async () => {
+test("closing a tab keeps focus in the panel", async () => {
   await render();
   await click(listButton("Diff"));
   await click(openAView());
   await click(listButton("Files"));
   await click(panel().querySelector('button[aria-label="Close Files"]'));
   expect(document.activeElement).toBe(tab("D"));
-
-  await click(panel().querySelector('button[aria-label="Close Diff"]'));
-  expect(document.activeElement).toBe(openAView());
-  expect(listShown()).toBe(true);
-  press("t");
-  expect(tabs()).toEqual(["Terminal*"]);
 });
 
 test("normal threads offer only their five views in order", async () => {
