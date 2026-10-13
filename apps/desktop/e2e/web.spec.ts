@@ -121,6 +121,8 @@ test("a paired browser lists threads, opens one, and sends a message", async () 
   const box = page.getByRole("textbox", { name: "Message", exact: true });
   for (const prompt of ["Add a README", "Fix the flaky test"]) {
     await page.getByRole("button", { name: "New thread", exact: true }).first().click();
+    // New thread opens the repository picker; its first row is where the thread goes.
+    await page.getByRole("dialog", { name: "New thread in" }).getByRole("option").first().click();
     await box.fill(prompt);
     await box.press("Enter");
     await expect(page.getByText("The fake agent is on it.")).toBeVisible();

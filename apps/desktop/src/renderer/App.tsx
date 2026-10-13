@@ -49,16 +49,7 @@ import {
   useSnoozeAlarms,
   useThreadAlarms,
 } from "./alarms";
-import {
-  placeRail,
-  ProjectIcon,
-  railWidth,
-  RepoIcon,
-  SettingsNav,
-  settingsNames,
-  Sidebar,
-  ThreadList,
-} from "./Sidebar";
+import { ProjectIcon, RepoIcon, SettingsNav, settingsNames, Sidebar, ThreadList } from "./Sidebar";
 import { useThemePreference } from "./theme";
 import type { ThreadLinks } from "./threadContext";
 import { useAppearanceEffects } from "./appearance";
@@ -677,18 +668,15 @@ export function App() {
   }, []);
   const sidePanelOpen = panelOpen && chat;
   const expanded = sidePanelOpen && panelExpanded;
-  // The rail of places widens the sidebar past its list (PLX-739), so the panels share what's left.
-  const railShown = placeRail.use();
-  const room = viewportWidth - (sidebarOpen && chat && railShown ? railWidth : 0);
   const [leftWidth, rightWidth] = panelWidths(
-    room,
+    viewportWidth,
     sidebarOpen ? requestedWidths[0] : 0,
     sidePanelOpen && !expanded ? requestedWidths[1] : 0,
   );
   const resizePanel = (side: 0 | 1, value: number) => {
     const other =
       side === 0 ? (sidePanelOpen && !expanded ? rightWidth : 0) : sidebarOpen ? leftWidth : 0;
-    const maximum = Math.max(0, room - Math.min(400, room / 2) - other);
+    const maximum = Math.max(0, viewportWidth - Math.min(400, viewportWidth / 2) - other);
     setRequestedWidths((widths) => {
       const next: [number, number] = [...widths];
       next[side] = Math.max(
@@ -747,7 +735,7 @@ export function App() {
               setPrsOpen(true);
             }}
             onDelete={deleteThread}
-            onNewThread={() => newThread()}
+            onNewThread={() => picker.current?.showModal()}
             split={split}
             onOpenBeside={openBeside}
             onClosePane={closePane}

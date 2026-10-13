@@ -1084,6 +1084,13 @@ describe("keyboard shortcuts (PLX-316)", () => {
     expect(threadRow("Tidy the README")).toBeDefined();
   });
 
+  test("the sidebar's New thread opens Cmd+N's picker", async () => {
+    await renderApp();
+    const button = document.querySelector<HTMLElement>('#sidebar [aria-label="New thread"]')!;
+    await act(async () => button.click());
+    expect(picker().open).toBe(true);
+  });
+
   test("Cmd+N picks the new thread's repository, and Cmd+Shift+N opens one with no repo", async () => {
     await renderApp();
     await key({ key: "n", code: "KeyN", metaKey: true, shiftKey: true });

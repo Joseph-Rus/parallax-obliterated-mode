@@ -24,7 +24,7 @@ import type {
   Thread,
 } from "../protocol/generated/protocol";
 import { App } from "./App";
-import { collapsedProjects, collapsedThreads, placeRail } from "./Sidebar";
+import { collapsedProjects, collapsedThreads } from "./Sidebar";
 import { sidebarDefaults, sidebarPrefs } from "./sidebarPrefs";
 import { fakeWatch } from "./fakeWatch";
 
@@ -97,7 +97,6 @@ beforeEach(() => {
   sidebarPrefs.set(sidebarDefaults);
   collapsedProjects.set(false);
   collapsedThreads.set(false);
-  placeRail.set(true);
   popoverSources = [];
   listeners = new Set();
   capabilities = {};
@@ -849,7 +848,7 @@ test("Change icon opens the picker under the row's icon, and each pick saves the
     return updates(p, host);
   };
   await renderApp();
-  expect(rowIcon("ember")).toEqual(["folder-kanban", "text-accent"]);
+  expect(rowIcon("ember")).toEqual(["layers", "text-accent"]);
   const row = projectRow("ember");
   expect(iconPicker(row)!.childElementCount).toBe(0);
 
@@ -860,13 +859,13 @@ test("Change icon opens the picker under the row's icon, and each pick saves the
     iconPicker(row)!
       .querySelector('[role="option"][aria-selected="true"]')!
       .getAttribute("aria-label"),
-  ).toBe("Folder kanban");
+  ).toBe("Layers");
 
   // A color, then an icon before the first answer: the second keeps the color.
   await pickColor(row, "Violet");
   await pickIcon(row, "Rocket");
   expect(calls("project/update")).toEqual([
-    { project: "p-ember", icon: { name: "folder-kanban", color: "violet" } },
+    { project: "p-ember", icon: { name: "layers", color: "violet" } },
     { project: "p-ember", icon: { name: "rocket", color: "violet" } },
   ]);
   expect(hostsOf("project/update")).toEqual(["local", "local"]);
@@ -902,7 +901,7 @@ test("another client's project.updated renames a row and changes its icon, in th
   ]);
 });
 
-test("with iconImages, Change icon uploads an image, and a Project's and its repo's images draw in the row, the place menu, the breadcrumb, and the chat", async () => {
+test("with iconImages, Change icon uploads an image, and a Project's and its repo's images draw in the row, the Repos filter, the breadcrumb, and the chat", async () => {
   capabilities = { projectEdit: {}, iconImages: { maxBytes: 65536 } };
   const logo = { mediaType: "image/webp" as const, data: "UklGRg==" };
   const repoLogo = { mediaType: "image/png" as const, data: "iVBORw==" };
@@ -942,7 +941,7 @@ test("with iconImages, Change icon uploads an image, and a Project's and its rep
   });
   await settle();
   expect(calls("project/update")).toEqual([
-    { project: "p-ember", icon: { name: "folder-kanban", image: logo } },
+    { project: "p-ember", icon: { name: "layers", image: logo } },
   ]);
 
   const drawn = (within: Element | null | undefined) =>
@@ -951,9 +950,9 @@ test("with iconImages, Change icon uploads an image, and a Project's and its rep
     );
   const projectUrl = `data:image/webp;base64,${logo.data}`;
   const repoUrl = `data:image/png;base64,${repoLogo.data}`;
-  // The row has no repo line (PLX-340), so the repo's image draws in the place menu.
+  // The row has no repo line (PLX-340), so the repo's image draws in the Repos filter.
   expect(drawn(rowButton("ember"))).toEqual([projectUrl]);
-  expect(drawn(document.querySelector('#sidebar [role="menu"][aria-label="Places"]'))).toEqual([
+  expect(drawn(document.querySelector('#sidebar [role="menu"][aria-label="Repos"]'))).toEqual([
     repoUrl,
   ]);
   await click(rowButton("ember"));
@@ -961,7 +960,7 @@ test("with iconImages, Change icon uploads an image, and a Project's and its rep
   expect(drawn(document.querySelector("main svg.size-10")?.parentElement)).toEqual([projectUrl]);
 });
 
-test("an icon name or color this app doesn't know draws FolderKanban or the accent in its place", async () => {
+test("an icon name or color this app doesn't know draws Layers or the accent in its place", async () => {
   answers["project/list"] = () => ({
     result: {
       projects: [
@@ -979,16 +978,13 @@ test("an icon name or color this app doesn't know draws FolderKanban or the acce
     },
   });
   await renderApp();
-  expect(rowIcon("ember")).toEqual(["folder-kanban", "text-project-red"]);
+  expect(rowIcon("ember")).toEqual(["layers", "text-project-red"]);
   expect(rowIcon("photon")).toEqual(["bug", "text-accent"]);
-  expect(rowIcon("parallax")).toEqual(["folder-kanban", "text-accent"]);
+  expect(rowIcon("parallax")).toEqual(["layers", "text-accent"]);
   await click(rowButton("ember"));
   const crumbIcon = document.querySelector('[aria-label="Breadcrumb"] li:last-child svg');
-  expect(looks(crumbIcon)).toEqual(["folder-kanban", "text-project-red"]);
-  expect(looks(document.querySelector("main svg.size-10"))).toEqual([
-    "folder-kanban",
-    "text-project-red",
-  ]);
+  expect(looks(crumbIcon)).toEqual(["layers", "text-project-red"]);
+  expect(looks(document.querySelector("main svg.size-10"))).toEqual(["layers", "text-project-red"]);
 });
 
 const iconButton = () =>
@@ -1027,7 +1023,7 @@ test("Create Project's icon opens the picker, project/create sends the chosen ic
         };
   await renderApp();
   await openNewProject();
-  expect(dialogIcon()).toEqual(["folder-kanban", "text-accent"]);
+  expect(dialogIcon()).toEqual(["layers", "text-accent"]);
   await openDialogPicker();
   await pickColor(dialog(), "Teal");
   await pickIcon(dialog(), "Rocket");
@@ -1058,7 +1054,7 @@ test("Create Project's icon opens the picker, project/create sends the chosen ic
 
   // It opens again on the default.
   await openNewProject();
-  expect(dialogIcon()).toEqual(["folder-kanban", "text-accent"]);
+  expect(dialogIcon()).toEqual(["layers", "text-accent"]);
 });
 
 test("without projectEdit, a Project row has no actions and Create Project's icon is no button, and nothing sends an icon", async () => {
@@ -1075,7 +1071,7 @@ test("without projectEdit, a Project row has no actions and Create Project's ico
   await openNewProject();
   expect(iconButton()).toBeNull();
   expect(iconPicker(dialog())).toBeNull();
-  expect(dialogIcon()).toEqual(["folder-kanban", "text-accent"]);
+  expect(dialogIcon()).toEqual(["layers", "text-accent"]);
 });
 
 test("Create Project's icon follows the Workspace's host: an icon only where that host's plxd keeps one", async () => {
@@ -1101,7 +1097,7 @@ test("Create Project's icon follows the Workspace's host: an icon only where tha
 
   await click(workspaceItem("parallax"));
   expect(iconButton()).toBeNull();
-  expect(dialogIcon()).toEqual(["folder-kanban", "text-accent"]);
+  expect(dialogIcon()).toEqual(["layers", "text-accent"]);
   await click(inDialog("Create Project"));
 
   expect(calls("project/create")).toEqual([
@@ -2391,7 +2387,7 @@ test("a Project row is one line, with no repo line, and its agents in its toolti
   expect(rowButton("photon").hasAttribute("title")).toBe(false);
 });
 
-test("search, the place menu, and Mod+number cover both sections, and a collapsed section's rows get no numbers", async () => {
+test("search, the repo filter, and Mod+number cover both sections, and a collapsed section's rows get no numbers", async () => {
   withThread();
   await renderApp();
   const search = document.querySelector<HTMLInputElement>(
@@ -2407,15 +2403,15 @@ test("search, the place menu, and Mod+number cover both sections, and a collapse
   const repoChoice = (name: string) =>
     [
       ...document.querySelectorAll<HTMLElement>(
-        '#sidebar [role="menu"][aria-label="Places"] [role="menuitemradio"]',
+        '#sidebar [role="menu"][aria-label="Repos"] [role="menuitemradio"]',
       ),
-    ].find((b) => b.querySelector("[data-name]")?.textContent === name);
+    ].find((b) => b.textContent === name);
   // Neither Project's folder is a listed repository.
   await click(repoChoice("No repo"));
   expect(sidebarTitles()).toEqual(["photon", "ember"]);
   await click(repoChoice("parallax"));
   expect(sidebarTitles()).toEqual(["Fix the flaky test"]);
-  await click(repoChoice("Inbox"));
+  await click(repoChoice("All repos"));
 
   await keyDown({ key: "Meta", metaKey: true });
   expect(["photon", "ember", "Fix the flaky test"].map(statusOf)).toEqual(["⌘1", "⌘2", "⌘3"]);
@@ -2429,67 +2425,6 @@ test("search, the place menu, and Mod+number cover both sections, and a collapse
   await keyDown({ key: "1", code: "Digit1", metaKey: true });
   await settle();
   expect(crumbs()).toEqual(["This Mac", "parallax", "Fix the flaky test"]);
-});
-
-test("the rail of places lists Inbox, Spaces, repos, and No repo, filters the list, and hides from the footer", async () => {
-  const space: Repo = { ...repo("Reading", "/data/spaces/s1"), id: "s1", space: true };
-  withThread();
-  answers["thread/list"] = () => ({
-    result: { repos: [parallax, space], threads: [flaky], seq: 7 },
-  });
-  await renderApp();
-  const rail = () => document.querySelector('#sidebar [role="group"][aria-label="Places"]');
-  const place = (name: string) =>
-    [...rail()!.querySelectorAll<HTMLButtonElement>("button")].find(
-      (b) => b.getAttribute("aria-label")?.split(",")[0] === name,
-    );
-  // The thread finished unseen, so parallax says so; Inbox speaks only of what needs the user.
-  // Neither Project's folder is listed.
-  expect([...rail()!.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual([
-    "Inbox",
-    "Reading",
-    "parallax, done",
-    "No repo",
-    "New project or repository",
-  ]);
-  expect(place("Reading")!.className).toContain("rounded-lg");
-  expect(place("parallax")!.className).toContain("rounded-lg");
-
-  const heading = () => document.querySelector('#sidebar button[aria-label^="Place: "]')!;
-  expect(heading().textContent).toBe("InboxAll places");
-  await click(place("Reading"));
-  expect(place("Reading")!.getAttribute("aria-pressed")).toBe("true");
-  expect(heading().textContent).toBe("ReadingSpace");
-  expect(sidebarTitles()).toEqual([]);
-  await click(place("parallax"));
-  expect(sidebarTitles()).toEqual(["Fix the flaky test"]);
-  await click(place("No repo"));
-  expect(sidebarTitles()).toEqual(["photon", "ember"]);
-  await click(place("Inbox"));
-  expect(sidebarTitles()).toEqual(["photon", "ember", "Fix the flaky test"]);
-
-  // Under reduced motion the toggle hides and shows at once, and the choice is kept.
-  document.documentElement.classList.add("reduce-motion");
-  onTestFinished(() => document.documentElement.classList.remove("reduce-motion"));
-  const toggle = (label: string) =>
-    document.querySelector<HTMLButtonElement>(`#sidebar button[aria-label="${label}"]`);
-  await click(toggle("Hide places"));
-  expect(rail()).toBeNull();
-  expect(localStorage.getItem("parallax:placeRail")).toBe("false");
-  // With the rail hidden, the heading is the switcher.
-  const menuChoice = (name: string) =>
-    [
-      ...document.querySelectorAll<HTMLElement>(
-        '#sidebar [role="menu"][aria-label="Places"] [role="menuitemradio"]',
-      ),
-    ].find((b) => b.querySelector("[data-name]")?.textContent === name);
-  expect(heading().querySelector("svg.lucide-chevrons-up-down")).not.toBeNull();
-  await click(menuChoice("parallax"));
-  expect(heading().getAttribute("aria-label")).toBe("Place: parallax");
-  expect(sidebarTitles()).toEqual(["Fix the flaky test"]);
-  await click(toggle("Show places"));
-  expect(rail()).not.toBeNull();
-  expect(localStorage.getItem("parallax:placeRail")).toBe("true");
 });
 
 test("Delete… asks first, shows plxd's error in the dialog, then deletes the open Project and leaves its page", async () => {
@@ -2892,7 +2827,7 @@ test("with spaces, the add palette offers New Space, which creates one and close
   expect(dialog().open).toBe(false);
 });
 
-test("with spaces, a Space's row in the place menu renames and deletes it", async () => {
+test("with spaces, a Space's row in the Repos filter renames and deletes it, and the filter makes none", async () => {
   capabilities = { spaces: {} };
   const space: Repo = { ...repo("Reading", "/data/spaces/s1"), id: "s1", space: true };
   let spaces = [space];
@@ -2905,7 +2840,7 @@ test("with spaces, a Space's row in the place menu renames and deletes it", asyn
   answers["space/delete"] = () => ({ result: {} });
   await renderApp();
   const filter = () =>
-    document.querySelector<HTMLElement>('#sidebar [role="menu"][aria-label="Places"]')!;
+    document.querySelector<HTMLElement>('#sidebar [role="menu"][aria-label="Repos"]')!;
   const press = (label: string) => filter().querySelector<HTMLElement>(`[aria-label="${label}"]`);
   const spaceDialog = (label: string) =>
     document.querySelector<HTMLDialogElement>(`dialog[aria-label="${label}"]`)!;
@@ -2918,31 +2853,24 @@ test("with spaces, a Space's row in the place menu renames and deletes it", asyn
     await settle();
   };
 
-  expect(filter().textContent).toContain("Reading");
+  expect(filter().textContent).not.toContain("New Space");
+
   await click(press("Rename Reading"));
   typeInto(spaceDialog("Rename Reading").querySelector("input")!, "Notes");
   await submit(spaceDialog("Rename Reading"));
   expect(calls("repo/update")).toEqual([{ repo: "s1", name: "Notes" }]);
   expect(filter().textContent).toContain("Notes");
 
-  // Deleting the Space the list shows leaves Inbox showing, checked on the rail and in the menu.
-  const choice = (name: string) =>
-    [...filter().querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
-      (b) => b.querySelector("[data-name]")?.textContent === name,
-    );
-  await click(choice("Notes"));
-  expect(choice("Notes")!.getAttribute("aria-checked")).toBe("true");
+  // Filtered to the Space, deleting it shows every repo again.
+  const trigger = () => document.querySelector('#sidebar [aria-label^="Repos:"]')!;
+  await click(
+    [...filter().querySelectorAll('[role="menuitemradio"]')].find((b) => b.textContent === "Notes"),
+  );
+  expect(trigger().getAttribute("aria-label")).toBe("Repos: Notes");
   await click(press("Delete Notes"));
   await submit(spaceDialog("Delete Notes"));
   expect(calls("space/delete")).toEqual([{ space: "s1" }]);
   expect(filter().textContent).not.toContain("Notes");
-  expect(
-    document.querySelector('#sidebar button[aria-haspopup="menu"]')!.getAttribute("aria-label"),
-  ).toBe("Place: Inbox");
-  expect(choice("Inbox")!.getAttribute("aria-checked")).toBe("true");
-  expect(
-    document
-      .querySelector('#sidebar [aria-label="Places"] button[aria-pressed="true"]')!
-      .getAttribute("aria-label"),
-  ).toBe("Inbox");
+  expect(trigger().getAttribute("aria-label")).toBe("Repos: All repos");
+  expect(trigger().getAttribute("aria-pressed")).toBe("false");
 });

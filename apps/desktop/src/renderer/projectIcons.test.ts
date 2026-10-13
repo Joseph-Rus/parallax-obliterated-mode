@@ -35,16 +35,16 @@ test("the accent comes first with no key, then nine named colors, each a palette
   }
 });
 
-test("an icon draws its glyph in its color, and falls back to FolderKanban and the accent on its own", () => {
+test("an icon draws its glyph in its color, and falls back to Layers and the accent on its own", () => {
   const rocket = projectIcons.find((i) => i.name === "rocket")!.Icon;
   expect(iconLook({ name: "rocket", color: "green" })).toEqual({
     Icon: rocket,
     color: "text-project-green",
   });
-  expect(iconLook(undefined)).toEqual({ Icon: lucide.FolderKanban, color: "text-accent" });
+  expect(iconLook(undefined)).toEqual({ Icon: lucide.Layers, color: "text-accent" });
   expect(iconLook({ name: "rocket" })).toEqual({ Icon: rocket, color: "text-accent" });
   expect(iconLook({ name: "not-an-icon", color: "green" })).toEqual({
-    Icon: lucide.FolderKanban,
+    Icon: lucide.Layers,
     color: "text-project-green",
   });
   expect(iconLook({ name: "rocket", color: "chartreuse" })).toEqual({

@@ -505,10 +505,12 @@ test("starts a thread in the repository's current checkout, on its branch, with 
   )) as { result: { repo: { id: string } } };
   expect(added).not.toHaveProperty("error");
 
-  // New thread, then quill from the heading's repository menu.
+  // New thread opens the repository picker; pick quill.
   await page.getByRole("button", { name: "New thread", exact: true }).click();
-  await page.getByRole("heading", { level: 1 }).getByRole("button").click();
-  await page.getByRole("menuitemradio", { name: "quill" }).click();
+  await page
+    .getByRole("dialog", { name: "New thread in" })
+    .getByRole("option", { name: /^quill/ })
+    .click();
   // The heading's accessible name spaces out the repository button inside it, so match its text.
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "What should we build in quill?",
