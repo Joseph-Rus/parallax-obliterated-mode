@@ -346,7 +346,7 @@ export function NewThread({
         {starting === undefined && (
           <>
             <h1
-              className={`${group.id === noRepo ? "mb-7" : "mb-2"} text-center text-[24px] font-medium tracking-tight`}
+              className={`${repoless(group) ? "mb-7" : "mb-2"} text-center text-[24px] font-medium tracking-tight`}
             >
               {group.id === noRepo
                 ? "What should we work on "
@@ -363,7 +363,7 @@ export function NewThread({
               </button>
               ?
             </h1>
-            {group.id !== noRepo && (
+            {!repoless(group) && (
               <div className="relative mb-9 text-center">
                 {/* Its shortcut, Mod+Shift+N unless rebound, shows under it on hover or focus. */}
                 <button
@@ -453,6 +453,7 @@ export function NewThread({
               : undefined
           }
           // A new thread asks only through a plxd that sends its requests (PLX-196).
+          noAccess={group.space}
           manualDenied={
             connection?.status === "connected" && !("approvals" in connection.capabilities)
               ? "host"
@@ -464,7 +465,7 @@ export function NewThread({
                 <LoaderCircle aria-hidden className="animate-spin" />
                 Starting…
               </span>
-            ) : (
+            ) : group.space ? undefined : (
               <>
                 <RunTargetMenu
                   hosts={hosts}

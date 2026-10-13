@@ -213,6 +213,7 @@ export function AgentChat({
   prompt,
   going,
   noRepo,
+  space,
   tab,
   strip,
   startOver,
@@ -246,6 +247,8 @@ export function AgentChat({
   going?: boolean;
   /** A thread with no repo: its scratch repository has no origin, so it gets no Open PR. */
   noRepo?: boolean;
+  /** A chat in a Space: no Access picker. */
+  space?: boolean;
   /** The host the run is on, named in the composer's tab. */
   host?: Host;
   /** The composer's tab in place of the run's worktree, such as a coordinator's repository. */
@@ -805,6 +808,7 @@ export function AgentChat({
           optionsDisabled={optionsDisabled}
           imageCaps={imageCaps(connection)}
           manualDenied={manualDenied}
+          noAccess={space}
           projectMode={projectMode}
           insert={compose && !compose.send ? compose.text : undefined}
           menus={

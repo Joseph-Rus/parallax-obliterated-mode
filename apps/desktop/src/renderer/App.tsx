@@ -791,7 +791,9 @@ export function App() {
               )}
               <Breadcrumb items={crumbs} />
               <div className="ml-auto flex shrink-0 items-center gap-2">
-                <ThreadDetailsButton open={details.mode !== "hidden"} onToggle={details.toggle} />
+                {!group.space && (
+                  <ThreadDetailsButton open={details.mode !== "hidden"} onToggle={details.toggle} />
+                )}
                 {folder && (
                   <IconButton
                     label={drawerOpen ? "Hide terminal" : "Show terminal"}
@@ -862,6 +864,9 @@ export function App() {
                           ? lineageOf(threads.state, paneThread)?.parent?.id
                           : undefined;
                       const title = threads.state.titles[threadId];
+                      const inSpace = threads.state.repos.some(
+                        (r) => r.id === paneThread?.repo && r.space,
+                      );
                       // Keyed, so another run starts from an empty transcript.
                       return (
                         <section
@@ -897,10 +902,9 @@ export function App() {
                             going={focused && selection.started}
                             noRepo={repoless({
                               id: paneThread ? groupOf(threads.state, paneThread) : noRepo,
-                              space: threads.state.repos.some(
-                                (r) => r.id === paneThread?.repo && r.space,
-                              ),
+                              space: inSpace,
                             })}
+                            space={inSpace}
                             pullRequests={
                               focused &&
                               prs.urls.length > 0 && <PullRequestChip prs={prs} onOpen={openPr} />
@@ -1010,7 +1014,7 @@ export function App() {
               </div>
               <ThreadDetails
                 key={panelKey}
-                mode={details.mode}
+                mode={group.space ? "hidden" : details.mode}
                 hostName={host.name}
                 hostId={host.id}
                 folder={folder?.path === "~" ? undefined : folder?.path}
