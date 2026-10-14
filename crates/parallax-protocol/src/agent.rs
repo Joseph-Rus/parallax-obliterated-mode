@@ -789,6 +789,52 @@ pub enum AgentOutputItem {
     Unknown,
 }
 
+/// One of an agent's background tasks still running (PLX-777): a command it started in the
+/// background, a Monitor, or one of its own subagents. `agent/stopTask` stops it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentBackgroundTask {
+    /// The CLI's id for it, which `agent/stopTask` takes.
+    pub task_id: String,
+    /// What it is.
+    pub kind: AgentBackgroundKind,
+    /// What it does, as the agent described it, such as `Watching pull request #746`.
+    pub description: String,
+}
+
+/// What an [`AgentBackgroundTask`] is.
+///
+/// A newer plxd may send a kind this version does not know; treat it as unknown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentBackgroundKind {
+    /// A command the agent started in the background.
+    Command,
+    /// A Monitor: a command whose output wakes the agent.
+    Monitor,
+    /// One of the agent's own subagents, started in the background.
+    Agent,
+    /// A kind this version does not know yet.
+    #[serde(other)]
+    #[ts(skip)]
+    Unknown,
+}
+
+/// Params of `agent/stopTask` (PLX-777): stops one of a live run's background tasks.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStopTaskParams {
+    /// The run.
+    pub run_id: RunId,
+    /// The task, as its [`AgentBackgroundTask`] names it.
+    pub task_id: String,
+}
+
+/// Result of `agent/stopTask`. The task's end arrives as an `agent.background` event.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStopTaskResult {}
+
 /// How a secret request stands (0063).
 ///
 /// A newer plxd may send a status this version does not know; treat it as unknown.

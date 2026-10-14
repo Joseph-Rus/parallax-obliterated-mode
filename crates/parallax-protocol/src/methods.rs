@@ -37,14 +37,14 @@ use crate::{
     AgentFileRenameParams, AgentFileResult, AgentFilesParams, AgentFilesResult,
     AgentGitStatusParams, AgentImageParams, AgentListParams, AgentListResult, AgentOpenPrParams,
     AgentOpenPrResult, AgentPushParams, AgentRequestChangesParams, AgentResumeNowParams,
-    AgentRunResult, AgentSendParams, AgentStartParams, AgentWaitParams, AgentWaitResult,
-    ConnectDevicesParams, ConnectDevicesResult, ContextListParams, ContextListResult,
-    ContextReadParams, ContextReadResult, ContextWriteParams, ContextWriteResult,
-    CursorInstallParams, CursorInstallResult, CursorSignInCancelParams, CursorSignInCancelResult,
-    CursorSignInParams, CursorSignInResult, CursorSignOutParams, CursorSignOutResult,
-    DelegatedTask, DispatchResult, EventsEventParams, EventsResyncParams, EventsSubscribeParams,
-    EventsSubscribeResult, EventsUnsubscribeParams, EventsUnsubscribeResult, FullThreadDiffParams,
-    GitStatus, GithubInstallParams, GithubSignIn, GithubSignInCancelParams,
+    AgentRunResult, AgentSendParams, AgentStartParams, AgentStopTaskParams, AgentStopTaskResult,
+    AgentWaitParams, AgentWaitResult, ConnectDevicesParams, ConnectDevicesResult,
+    ContextListParams, ContextListResult, ContextReadParams, ContextReadResult, ContextWriteParams,
+    ContextWriteResult, CursorInstallParams, CursorInstallResult, CursorSignInCancelParams,
+    CursorSignInCancelResult, CursorSignInParams, CursorSignInResult, CursorSignOutParams,
+    CursorSignOutResult, DelegatedTask, DispatchResult, EventsEventParams, EventsResyncParams,
+    EventsSubscribeParams, EventsSubscribeResult, EventsUnsubscribeParams, EventsUnsubscribeResult,
+    FullThreadDiffParams, GitStatus, GithubInstallParams, GithubSignIn, GithubSignInCancelParams,
     GithubSignInCancelResult, GithubSignInParams, GithubStatus, GithubStatusParams,
     HostFoldersParams, HostFoldersResult, HostHealthParams, HostHealthResult, HostReadUploadParams,
     HostReadUploadResult, HostSettings, HostSettingsGetParams, HostSettingsSetParams,
@@ -403,6 +403,10 @@ method_table! {
         /// decision 0049). Gated on the `autoResume` capability, like `agent/autoResume` and
         /// `host/settings/*`.
         AgentResumeNow = "agent/resumeNow": AgentResumeNowParams => AgentRunResult;
+        /// `agent/stopTask` (PLX-777): stops one of a live run's background tasks, such as a
+        /// Monitor, through the CLI. Fails with `invalidParams` when the run has no live CLI or
+        /// its backend can't stop one.
+        AgentStopTask = "agent/stopTask": AgentStopTaskParams => AgentStopTaskResult;
         /// `agent/autoResume`: sets or clears a run's auto-resume override.
         AgentAutoResume = "agent/autoResume": AgentAutoResumeParams => AgentRunResult;
         /// `host/settings/get`: this host's settings.
@@ -712,6 +716,7 @@ mod tests {
                 "github/status",
                 "thread/search",
                 "agent/resumeNow",
+                "agent/stopTask",
                 "agent/autoResume",
                 "host/settings/get",
                 "host/settings/set",

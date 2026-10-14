@@ -349,6 +349,15 @@ impl Input {
         self.control("interrupt");
     }
 
+    /// Stops one of the CLI's background tasks: the SDK's `stopTask()` (PLX-777).
+    pub fn stop_task(&self, task_id: &str) {
+        let id = serde_json::Value::from(&*self.id);
+        let task_id = serde_json::Value::from(task_id);
+        self.send(format!(
+            "{{\"id\":{id},\"type\":\"stopTask\",\"taskId\":{task_id}}}\n"
+        ));
+    }
+
     /// Ends the query's prompt, so the CLI exits after its last turn, as closing its stdin did.
     pub fn end(&self) {
         self.control("end");

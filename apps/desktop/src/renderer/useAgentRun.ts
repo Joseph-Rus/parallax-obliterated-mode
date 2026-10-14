@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { RpcError } from "../preload/bridge";
 import type {
+  AgentBackgroundTask,
   AgentDelivery,
   AgentSendParams,
   LoggedEvent,
@@ -22,6 +23,10 @@ export interface AgentRunView {
   queue: QueuedMessage[];
   /** Whether a Stop or a restart holds the queue until it is resumed (0060). */
   held: boolean;
+  /** The agent's background tasks running now, such as a Monitor (PLX-777). */
+  background: AgentBackgroundTask[];
+  /** The URLs of the thread's pull requests plxd watches (PLX-777). */
+  watching: string[];
   /**
    * Sends a message, its images, and the threads attached to it as the run's next turn, with a new
    * model, effort, or access for the run if given. Resolves to plxd's error, or why the run
@@ -101,6 +106,8 @@ export function useAgentRun(hostId: string, runId: string, connected: boolean): 
   const [older, setOlder] = useState(false);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
   const [held, setHeld] = useState(false);
+  const [background, setBackground] = useState<AgentBackgroundTask[]>([]);
+  const [watching, setWatching] = useState<string[]>([]);
   const [watchKey, failed] = useWatchKey(`${hostId}\n${runId}`, connected, hostId);
 
   // Loads the page before `p`'s oldest event into it, one at a time: `false` while another is
@@ -170,6 +177,8 @@ export function useAgentRun(hostId: string, runId: string, connected: boolean): 
         setOlder(p.before !== undefined);
         showQueue(queuedOf(s.runs));
         setHeld(s.runs.some((r) => r.status === "queued" && r.queueHeld));
+        setBackground(s.background ?? []);
+        setWatching(s.watching ?? []);
         setError(undefined);
         void fill(p, t);
         return;
@@ -179,6 +188,8 @@ export function useAgentRun(hostId: string, runId: string, connected: boolean): 
         showQueue(event.messages);
         setHeld(!!event.held);
       }
+      if (event.kind === "pr.watches" && event.runId === runId) setWatching(event.urls);
+      if (event.kind === "agent.background" && event.runId === runId) setBackground(event.tasks);
       pages.current?.events.push(message.event);
       setTranscript((prev) => applyEvents(prev, [message.event], runId));
       if (event.kind === "thread.reverted" && event.runId === runId) {
@@ -249,5 +260,17 @@ export function useAgentRun(hostId: string, runId: string, connected: boolean): 
     [hostId, runId],
   );
 
-  return { transcript, error, sent, send, cancel, queue, held, older, loadOlder };
+  return {
+    transcript,
+    error,
+    sent,
+    send,
+    cancel,
+    queue,
+    held,
+    background,
+    watching,
+    older,
+    loadOlder,
+  };
 }

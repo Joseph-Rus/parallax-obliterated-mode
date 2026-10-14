@@ -3,6 +3,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { RpcError } from "../preload/bridge";
 import { ErrorCodes } from "../protocol/generated/protocol";
 import type {
+  AgentBackgroundTask,
   AccountChoice,
   Capabilities,
   AgentRun,
@@ -16,6 +17,7 @@ import type {
   ProjectUpdateParams,
   PromptImage,
   Repo,
+  RunWaiting,
   Thread,
   ParallaxEvent,
 } from "../protocol/generated/protocol";
@@ -47,7 +49,24 @@ export interface ThreadsState {
    * revert (0062), so its Changes view knows to reload.
    */
   checkpoints: Readonly<Record<string, number>>;
+  /**
+   * By run id: whether its agent waits on background work that will wake it, a subagent or a
+   * Monitor, or on pull requests plxd watches (PLX-777). A run waiting on neither has no entry.
+   */
+  waiting: Readonly<Record<string, Waiting>>;
 }
+
+/** What a run's agent waits on (PLX-777). */
+interface Waiting {
+  background: boolean;
+  watching: boolean;
+}
+
+/**
+ * Whether `tasks` will wake the agent, as T3 Code's `backgroundWorkHoldsCompletion` decides: a
+ * subagent or a Monitor does, a command such as a dev server doesn't.
+ */
+const wakes = (tasks: AgentBackgroundTask[] = []) => tasks.some((t) => t.kind !== "command");
 
 export const emptyThreads: ThreadsState = {
   projects: [],
@@ -57,14 +76,40 @@ export const emptyThreads: ThreadsState = {
   runs: {},
   approvals: {},
   checkpoints: {},
+  waiting: {},
 };
 
 /** How many permission requests run `runId` waits on. */
 export const asksOf = (state: ThreadsState, runId: string) =>
   state.approvals[runId]?.items.length ?? 0;
 
+/** What run `runId`'s agent waits on (PLX-777): a watched pull request, else work that wakes it. */
+export const waitingOf = (state: ThreadsState, runId: string) => {
+  const waiting = state.waiting[runId];
+  return waiting?.watching ? "monitoring" : waiting?.background ? "waiting" : undefined;
+};
+
+/** `waiting` with run `runId`'s `part` set to `on`, dropping the run once it waits on neither. */
+function setWaiting(
+  waiting: ThreadsState["waiting"],
+  runId: string,
+  part: keyof Waiting,
+  on: boolean,
+): ThreadsState["waiting"] {
+  const next = { background: false, watching: false, ...waiting[runId], [part]: on };
+  const { [runId]: _, ...rest } = waiting;
+  return next.background || next.watching ? { ...rest, [runId]: next } : rest;
+}
+
 export type ThreadsAction =
-  | { type: "snapshot"; projects: Project[]; repos: Repo[]; threads: Thread[]; runs: AgentRun[] }
+  | {
+      type: "snapshot";
+      projects: Project[];
+      repos: Repo[];
+      threads: Thread[];
+      runs: AgentRun[];
+      waiting?: RunWaiting[];
+    }
   | { type: "runs"; runs: AgentRun[] }
   /** A Project's new coordinator, which no host-level event announces (0024). */
   | { type: "coordinator"; run: AgentRun }
@@ -86,6 +131,12 @@ export function threadsReducer(state: ThreadsState, action: ThreadsAction): Thre
         runs: byId(action.runs),
         approvals: {},
         checkpoints: state.checkpoints,
+        waiting: Object.fromEntries(
+          (action.waiting ?? []).map((w) => [
+            w.runId,
+            { background: wakes(w.background), watching: !!w.watching?.length },
+          ]),
+        ),
       };
     case "runs":
       return {
@@ -163,6 +214,16 @@ export function threadsReducer(state: ThreadsState, action: ThreadsAction): Thre
         }
         case "thread.deleted":
           return { ...state, threads: state.threads.filter((t) => t.id !== e.runId) };
+        case "agent.background":
+          return {
+            ...state,
+            waiting: setWaiting(state.waiting, e.runId, "background", wakes(e.tasks)),
+          };
+        case "pr.watches":
+          return {
+            ...state,
+            waiting: setWaiting(state.waiting, e.runId, "watching", e.urls.length > 0),
+          };
         case "thread.checkpoint":
         case "thread.reverted":
           return {
@@ -577,8 +638,8 @@ export function useThreads(
         return setError(old ? undefined : message.error.message);
       }
       if (message.type === "snapshot") {
-        const { projects, repos, threads, runs, requests } = message.snapshot;
-        dispatch({ type: "snapshot", projects, repos, threads, runs });
+        const { projects, repos, threads, runs, requests, waiting } = message.snapshot;
+        dispatch({ type: "snapshot", projects, repos, threads, runs, waiting });
         dispatch({ type: "approvals", events: requests });
         setError(undefined);
         setOutdated(false);

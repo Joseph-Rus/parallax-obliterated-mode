@@ -21,6 +21,7 @@ import {
 } from "../src/preload/bridge";
 import {
   PROTOCOL_VERSION,
+  type AgentBackgroundTask,
   type AgentOutputItem,
   type AgentRun,
   type Capabilities,
@@ -42,7 +43,7 @@ import {
   type ThreadRun,
   type ThreadSnapshot,
 } from "../src/protocol/generated/protocol";
-import { createFixtures, HOME, PARALLAX_PATH, type RunEvent } from "./fixtures";
+import { createFixtures, HOME, ids, PARALLAX_PATH, type RunEvent } from "./fixtures";
 
 const LOCAL = "local";
 const LOG_ID = "0199a6f0-0000-7000-8000-preview00log";
@@ -153,6 +154,16 @@ type Listener = {
 };
 let subscriptions = 0;
 const listeners = new Set<Listener>();
+
+// What "Rework the updater" waits on (PLX-777): a Monitor on its CI, and plxd's watch of its pull
+// request. Stop ends either, with the event plxd would send.
+const background = new Map<string, AgentBackgroundTask[]>([
+  [
+    ids.updater,
+    [{ taskId: "monitor-1", kind: "monitor", description: "Watching CI on pull request #588" }],
+  ],
+]);
+const watching = new Map([[ids.updater, ["https://github.com/ryan-stoffel/parallax/pull/588"]]]);
 
 /** Logs and delivers an event, as plxd does: a run's to its scope, a host-level one to the host. */
 function emit(event: ParallaxEvent, project?: string) {
@@ -960,6 +971,19 @@ const handlers: { [M in Method]?: Handler<M> } = {
     return { run };
   },
   "agent/resumeNow": (p) => runResult(p.runId),
+  "agent/stopTask": (p) => {
+    const tasks = (background.get(p.runId) ?? []).filter((t) => t.taskId !== p.taskId);
+    background.set(p.runId, tasks);
+    later(300, () => emit({ kind: "agent.background", runId: p.runId, tasks }));
+    return {};
+  },
+  "pr/unwatch": (p) => {
+    const before = watching.get(p.runId) ?? [];
+    const urls = before.filter((url) => url !== p.url);
+    watching.set(p.runId, urls);
+    emit({ kind: "pr.watches", runId: p.runId, urls });
+    return { url: p.url, watching: false, wasWatching: urls.length < before.length };
+  },
   "agent/autoResume": (p) => {
     const run = patchRun(p.runId, {
       ...(p.autoResume !== undefined && { autoResume: p.autoResume }),
@@ -1649,6 +1673,11 @@ export const mockBridge: ParallaxBridge = {
         threads: known ? db.threads.filter((t) => own(t.id)) : [],
         runs,
         requests: waiting(runs.map((r) => r.id)),
+        waiting: runs.flatMap((r) =>
+          background.get(r.id)?.length || watching.get(r.id)?.length
+            ? [{ runId: r.id, background: background.get(r.id), watching: watching.get(r.id) }]
+            : [],
+        ),
       };
     } else {
       const run = runOf(thread);
@@ -1665,6 +1694,8 @@ export const mockBridge: ParallaxBridge = {
         events: logs.get(thread) ?? [],
         more: false,
         requests: [],
+        background: background.get(thread) ?? [],
+        watching: watching.get(thread) ?? [],
       };
     }
     const entry: Listener = {

@@ -75,14 +75,14 @@ pub use account::{
     Provider, RawKey,
 };
 pub use agent::{
-    AgentAttachParams, AgentAttachResult, AgentAutoResumeParams, AgentCancelParams, AgentEffort,
-    AgentEventsParams, AgentEventsResult, AgentFailureKind, AgentImageParams, AgentListParams,
-    AgentListResult, AgentOutcome, AgentOutputItem, AgentPermission, AgentPolicy,
-    AgentRequestUsage, AgentResumeNowParams, AgentRun, AgentRunResult, AgentRunState,
-    AgentSendParams, AgentStartParams, AgentStatus, AgentSubagentStatus, AgentTodoItem,
-    AgentTodoStatus, AgentToolStatus, AgentWaitParams, AgentWaitResult, AgentWaitUntil,
-    CoordinatorThreadId, DiffSummary, ImageId, ImageMediaType, LoggedEvent, PromptImage, RunId,
-    SecretStatus, TurnId,
+    AgentAttachParams, AgentAttachResult, AgentAutoResumeParams, AgentBackgroundKind,
+    AgentBackgroundTask, AgentCancelParams, AgentEffort, AgentEventsParams, AgentEventsResult,
+    AgentFailureKind, AgentImageParams, AgentListParams, AgentListResult, AgentOutcome,
+    AgentOutputItem, AgentPermission, AgentPolicy, AgentRequestUsage, AgentResumeNowParams,
+    AgentRun, AgentRunResult, AgentRunState, AgentSendParams, AgentStartParams, AgentStatus,
+    AgentStopTaskParams, AgentStopTaskResult, AgentSubagentStatus, AgentTodoItem, AgentTodoStatus,
+    AgentToolStatus, AgentWaitParams, AgentWaitResult, AgentWaitUntil, CoordinatorThreadId,
+    DiffSummary, ImageId, ImageMediaType, LoggedEvent, PromptImage, RunId, SecretStatus, TurnId,
 };
 pub use approval::{
     AgentApprovalAnswer, AgentApprovalBy, AgentApprovalDecision, AgentApproveParams,
@@ -145,10 +145,10 @@ pub use memory::{
 };
 pub use orchestration::{
     CheckpointFile, CheckpointStatus, DispatchMode, DispatchResult, FullThreadDiffParams,
-    MAX_REPLAY_BYTES, MAX_REPLAY_EVENTS, OrchestrationCommand, ShellSnapshot, SubscribeShellParams,
-    SubscribeShellResult, SubscribeThreadParams, SubscribeThreadResult, ThreadHistoryParams,
-    ThreadHistoryResult, ThreadRun, ThreadRunStatus, ThreadRunsParams, ThreadRunsResult,
-    ThreadSnapshot, TurnCheckpoint, TurnDiffParams, TurnDiffResult,
+    MAX_REPLAY_BYTES, MAX_REPLAY_EVENTS, OrchestrationCommand, RunWaiting, ShellSnapshot,
+    SubscribeShellParams, SubscribeShellResult, SubscribeThreadParams, SubscribeThreadResult,
+    ThreadHistoryParams, ThreadHistoryResult, ThreadRun, ThreadRunStatus, ThreadRunsParams,
+    ThreadRunsResult, ThreadSnapshot, TurnCheckpoint, TurnDiffParams, TurnDiffResult,
 };
 pub use preview::{
     PreviewCallParams, PreviewCallResult, PreviewFrameParams, PreviewFrameResult, PreviewInput,

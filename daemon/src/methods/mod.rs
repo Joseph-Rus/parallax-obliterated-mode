@@ -301,6 +301,7 @@ async fn route(context: &Context, request: &Request) -> Result<Value, ErrorObjec
         AgentPush => |p| agent::git(context, p.run_id, GitAction::Push),
         AgentCommands => |p| composer::list_commands(context, p),
         AgentResumeNow => |p| agent::resume_now(context, p),
+        AgentStopTask => |p| agent::stop_task(context, p),
         AgentAutoResume => |p| agent::auto_resume(context, p),
         PrView => |p| agents::view_pr(Arc::clone(daemon), p),
         PrAct => |p| pr::act(context, p),

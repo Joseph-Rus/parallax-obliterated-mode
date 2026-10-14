@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    AccountChoice, AgentEffort, AgentPermission, AgentRun, LoggedEvent, Project, PromptImage, Repo,
-    RunId, SubscriptionId, Thread, TurnId,
+    AccountChoice, AgentBackgroundTask, AgentEffort, AgentPermission, AgentRun, LoggedEvent,
+    Project, PromptImage, Repo, RunId, SubscriptionId, Thread, TurnId,
 };
 
 /// The most events a resume replays before it sends a snapshot instead.
@@ -389,6 +389,24 @@ pub struct ShellSnapshot {
     /// The permission requests runs wait on, oldest first, each as an `agent.output` with its one
     /// `approvalRequested` item, at the `seq` it was logged at.
     pub requests: Vec<LoggedEvent>,
+    /// The runs whose agents wait on something now (PLX-777). Later `agent.background` and
+    /// `pr.watches` events replace each part. Absent means none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub waiting: Vec<RunWaiting>,
+}
+
+/// What one run's agent waits on (PLX-777): background tasks, pull request watches, or both.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RunWaiting {
+    /// The run.
+    pub run_id: RunId,
+    /// Its agent's background tasks running now, as `ThreadSnapshot.background`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub background: Vec<AgentBackgroundTask>,
+    /// The URLs of its pull requests plxd watches, as `ThreadSnapshot.watching`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub watching: Vec<String>,
 }
 
 /// Params of `orchestration/subscribeThread`.
@@ -434,6 +452,14 @@ pub struct ThreadSnapshot {
     /// The permission requests it waits on, as [`ShellSnapshot::requests`], for those older
     /// than `events`.
     pub requests: Vec<LoggedEvent>,
+    /// Its agent's background tasks running now (PLX-777), as the last `agent.background` event
+    /// says, which may be older than `events`. Later ones replace it. Absent means none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub background: Vec<AgentBackgroundTask>,
+    /// The URLs of its pull requests plxd watches (PLX-777), as `pr/watches` has them. Later
+    /// `pr.watches` events replace it. Absent means none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub watching: Vec<String>,
 }
 
 /// Params of `orchestration/threadHistory`.

@@ -8,6 +8,7 @@ use std::ops::{Add, AddAssign};
 
 use jiff::Timestamp;
 pub use parallax_protocol::{
+    AgentBackgroundKind as BackgroundKind, AgentBackgroundTask as BackgroundTask,
     AgentSubagentStatus as SubagentStatus, AgentTodoItem as TodoItem,
     AgentTodoStatus as TodoStatus, AgentToolStatus as ToolStatus,
 };
@@ -206,10 +207,11 @@ pub enum Event {
     },
     /// The agent's background commands and subagents still running changed (PLX-725), from Claude
     /// Code's `background_tasks_changed`, `task_started`, and `task_notification`. While any run,
-    /// they keep its idle session up, as T3 Code's pending background tasks do.
+    /// they keep its idle session up, as T3 Code's pending background tasks do, and the app shows
+    /// them over the composer (PLX-777).
     BackgroundTasks {
         /// Every one still running, by Claude Code's `task_id`.
-        task_ids: Vec<String>,
+        tasks: Vec<BackgroundTask>,
     },
     /// Something in the CLI's output that the backend skipped. It never ends a run.
     Warning {

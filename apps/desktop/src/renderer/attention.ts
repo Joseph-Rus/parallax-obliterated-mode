@@ -2,21 +2,36 @@ import type { AgentRun, Thread } from "../protocol/generated/protocol";
 import { isRunning } from "./transcript";
 
 /**
- * What a sidebar row asks of the user (0033): its agent is working, it waits on the user, it
- * stopped since the user last looked (done or failed), or there is nothing new (settled).
+ * What a sidebar row asks of the user (0033): its agent is working, its turn ended but plxd
+ * watches a pull request for it (monitoring) or it waits on a subagent or a Monitor (waiting,
+ * PLX-777), it waits on the user, it stopped since the user last looked (done or failed), or
+ * there is nothing new (settled).
  */
-export type Attention = "working" | "needsYou" | "done" | "failed" | "settled";
+export type Attention =
+  | "working"
+  | "monitoring"
+  | "waiting"
+  | "needsYou"
+  | "done"
+  | "failed"
+  | "settled";
 
 /**
- * A thread's attention, from its run, how many permission requests it waits on, and when the
- * user last saw it. A run stopped after `seenAt` (or never seen) is unseen. An archived thread is
- * always settled.
+ * A thread's attention, from its run, how many permission requests it waits on, what its agent
+ * waits on once its turn ends (`waiting`), and when the user last saw it. A run stopped after
+ * `seenAt` (or never seen) is unseen. An archived thread is always settled.
  */
-export function attentionOf(thread: Thread, run: AgentRun | undefined, asks: number): Attention {
+export function attentionOf(
+  thread: Thread,
+  run: AgentRun | undefined,
+  asks: number,
+  waiting?: "monitoring" | "waiting",
+): Attention {
   if (thread.archived) return "settled";
   if (asks > 0) return "needsYou";
   if (!run) return "settled";
   if (isRunning(run.status)) return "working";
+  if (waiting) return waiting;
   // A run waiting out a usage limit (0049) is no news yet: its row shows when it resumes.
   if (run.status === "waiting") return "settled";
   const unseen = !thread.seenAt || Date.parse(run.updatedAt) > Date.parse(thread.seenAt);
@@ -44,7 +59,15 @@ export function runAttention(run: AgentRun, asks: number): Attention {
 export const childOrder: Attention[] = ["needsYou", "working", "done", "failed"];
 
 // Most urgent first: what waits on the user, then news, then work still going.
-const urgency: Attention[] = ["needsYou", "failed", "done", "working", "settled"];
+const urgency: Attention[] = [
+  "needsYou",
+  "failed",
+  "done",
+  "working",
+  "monitoring",
+  "waiting",
+  "settled",
+];
 
 /** The most urgent of `attentions`, as a collapsed group of threads shows it; settled for none. */
 export const mostUrgent = (attentions: Attention[]): Attention =>

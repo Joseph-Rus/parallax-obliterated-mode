@@ -12,6 +12,8 @@ import { isRunning, statusLabel, subagentLabels, type SubagentState } from "./tr
 
 const dotColors: Record<Attention, string> = {
   working: "bg-working",
+  monitoring: "bg-working",
+  waiting: "bg-working",
   needsYou: "bg-warning",
   done: "bg-added",
   failed: "bg-danger",
@@ -19,6 +21,8 @@ const dotColors: Record<Attention, string> = {
 };
 const attentionNames: Record<Exclude<Attention, "settled">, string> = {
   working: "Working",
+  monitoring: "Monitoring",
+  waiting: "Waiting",
   needsYou: "Needs you",
   done: "Done",
   failed: "Failed",

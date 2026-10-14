@@ -258,6 +258,17 @@ pub trait Run: Send + Sync {
     /// because plxd has a waiting message for it (PLX-370). Returns at once. A backend that
     /// exits after its turns regardless ignores it, the default.
     fn hold(&self, _held: bool) {}
+
+    /// Stops one of the agent's background tasks, as [`Event::BackgroundTasks`] named it
+    /// (PLX-777). Returns at once; the task's end arrives as another [`Event::BackgroundTasks`].
+    ///
+    /// # Errors
+    ///
+    /// [`AnswerError::Unsupported`] if the backend can't, the default, and
+    /// [`AnswerError::Finished`] once the run has ended.
+    fn stop_task(&self, _task_id: &str) -> Result<(), AnswerError> {
+        Err(AnswerError::Unsupported)
+    }
 }
 
 /// A task for a backend.
@@ -821,6 +832,8 @@ pub struct RunHandle {
     cancel: CancelSwitch,
     /// Where [`Run::answer`] sends answers, for a driver that takes them.
     answers: Option<mpsc::UnboundedSender<Answer>>,
+    /// Where [`Run::stop_task`] sends task ids, for a driver that stops them.
+    task_stops: Option<mpsc::UnboundedSender<String>>,
     /// [`Run::hold`]'s flag, which a driver reads through [`RunHandle::held`].
     hold: watch::Sender<bool>,
 }
@@ -842,6 +855,7 @@ impl RunHandle {
             turns: Mutex::new(HashMap::new()),
             cancel,
             answers: None,
+            task_stops: None,
             hold: watch::Sender::new(false),
         };
         (handle, receiver)
@@ -860,6 +874,15 @@ impl RunHandle {
     pub fn with_answers(mut self) -> (Self, mpsc::UnboundedReceiver<Answer>) {
         let (answers, receiver) = mpsc::unbounded_channel();
         self.answers = Some(answers);
+        (self, receiver)
+    }
+
+    /// Takes [`Run::stop_task`]'s task ids (PLX-777), and returns the receiver its driver reads
+    /// them from. The driver drops it once it can stop no more.
+    #[must_use]
+    pub fn with_task_stops(mut self) -> (Self, mpsc::UnboundedReceiver<String>) {
+        let (stops, receiver) = mpsc::unbounded_channel();
+        self.task_stops = Some(stops);
         (self, receiver)
     }
 }
@@ -905,6 +928,15 @@ impl Run for RunHandle {
 
     fn hold(&self, held: bool) {
         self.hold.send_replace(held);
+    }
+
+    fn stop_task(&self, task_id: &str) -> Result<(), AnswerError> {
+        let Some(stops) = &self.task_stops else {
+            return Err(AnswerError::Unsupported);
+        };
+        stops
+            .send(task_id.to_owned())
+            .map_err(|_| AnswerError::Finished)
     }
 }
 

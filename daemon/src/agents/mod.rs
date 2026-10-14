@@ -68,11 +68,12 @@ use std::time::Duration;
 use parallax_protocol::jsonrpc::ErrorObject;
 use parallax_protocol::{
     AccountChoice, AgentAcceptParams, AgentAcceptResult, AgentApproveParams, AgentApproveResult,
-    AgentAttachParams, AgentAttachResult, AgentDelivery, AgentEffort, AgentFailureKind,
-    AgentImageParams, AgentOpenPrResult, AgentOutcome, AgentOutputItem, AgentPermission, AgentRun,
-    AgentSendParams, AgentStartParams, ApprovalId, CoordinatorThreadId, ErrorKind, GitStatus,
-    ImageId, ImageMediaType, ParallaxEvent, PrActParams, PrDiffResult, PrViewParams, ProjectId,
-    ProjectPermission, PromptImage, PullRequest, QueueResult, Role, RunId, TurnId,
+    AgentAttachParams, AgentAttachResult, AgentBackgroundTask, AgentDelivery, AgentEffort,
+    AgentFailureKind, AgentImageParams, AgentOpenPrResult, AgentOutcome, AgentOutputItem,
+    AgentPermission, AgentRun, AgentSendParams, AgentStartParams, ApprovalId, CoordinatorThreadId,
+    ErrorKind, GitStatus, ImageId, ImageMediaType, ParallaxEvent, PrActParams, PrDiffResult,
+    PrViewParams, ProjectId, ProjectPermission, PromptImage, PullRequest, QueueResult, Role, RunId,
+    TurnId,
 };
 use parallax_store::{RunFields, RunState, StoreError, ThreadFields, WorktreeFields};
 use tokio::sync::{mpsc, oneshot};
@@ -119,6 +120,9 @@ pub(crate) struct Agents {
     pub(super) idle: IdleSessions,
     /// The slots for turns of threads in shared worktrees (0063).
     pub(crate) shared_slots: crate::delegation::Slots,
+    /// Each live run's background tasks running now, as its last `backgroundTasks` item says,
+    /// for a thread's snapshot (PLX-777). A run without any has no entry.
+    background: Mutex<HashMap<RunId, Vec<AgentBackgroundTask>>>,
 }
 
 /// The most idle live sessions a host keeps (0060). Past it, the least recently used is released.
@@ -199,6 +203,7 @@ impl Agents {
             placing: tokio::sync::Mutex::new(()),
             idle: IdleSessions::default(),
             shared_slots: crate::delegation::Slots::default(),
+            background: Mutex::default(),
         }
     }
 
@@ -1850,6 +1855,35 @@ pub(crate) async fn rename_branch(
         reply,
     })
     .await
+}
+
+/// Run `id`'s background tasks running now (PLX-777), for its thread's snapshot.
+pub(crate) fn background(daemon: &Daemon, id: RunId) -> Vec<AgentBackgroundTask> {
+    let background = daemon
+        .agents
+        .background
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    background.get(&id).cloned().unwrap_or_default()
+}
+
+/// Every live run's background tasks running now (PLX-777), for the shell's snapshot.
+pub(crate) fn backgrounds(daemon: &Daemon) -> HashMap<RunId, Vec<AgentBackgroundTask>> {
+    daemon
+        .agents
+        .background
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+}
+
+/// `agent/stopTask` (PLX-777): stops one of run `id`'s background tasks through its live CLI.
+pub(crate) async fn stop_task(
+    daemon: &Arc<Daemon>,
+    id: RunId,
+    task_id: String,
+) -> Result<(), ErrorObject> {
+    ask(daemon, id, |reply| Command::StopTask { task_id, reply }).await
 }
 
 /// `agent/resumeNow` (PLX-371): resumes a run waiting for its usage limit to reset now.

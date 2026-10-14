@@ -4,9 +4,9 @@ use ts_rs::TS;
 
 use crate::id::uuid_v7_id;
 use crate::{
-    AgentFailureKind, AgentMerge, AgentOutcome, AgentOutputItem, AgentRun, AgentRunState,
-    ContextFile, InboxItem, Project, ProjectId, QueuedMessage, Repo, RepoId, RunId, ScriptStatus,
-    ScriptTrigger, Thread, TurnCheckpoint, TurnId,
+    AgentBackgroundTask, AgentFailureKind, AgentMerge, AgentOutcome, AgentOutputItem, AgentRun,
+    AgentRunState, ContextFile, InboxItem, Project, ProjectId, QueuedMessage, Repo, RepoId, RunId,
+    ScriptStatus, ScriptTrigger, Thread, TurnCheckpoint, TurnId,
 };
 
 uuid_v7_id! {
@@ -224,6 +224,24 @@ pub enum ParallaxEvent {
     InboxAdded {
         /// The new item.
         item: InboxItem,
+    },
+    /// A run's agent's background tasks still running changed (PLX-777): every one, replacing
+    /// the last such event's. Empty once none runs, and when the CLI exits, which ends them all.
+    #[serde(rename = "agent.background")]
+    AgentBackground {
+        /// The run's id.
+        run_id: RunId,
+        /// Every one still running, oldest first.
+        tasks: Vec<AgentBackgroundTask>,
+    },
+    /// The pull requests plxd watches for a run changed (PLX-777): `pr/watch`, `pr/unwatch`, or
+    /// a watch that ended on its own, such as on a merge.
+    #[serde(rename = "pr.watches")]
+    PrWatches {
+        /// The run's id.
+        run_id: RunId,
+        /// The URLs it watches now, as `pr/watches` has them.
+        urls: Vec<String>,
     },
     /// A run's queue of waiting messages changed (PLX-370, decision 0048): one was queued,
     /// edited, reordered, cancelled, steered, sent, or dropped.
