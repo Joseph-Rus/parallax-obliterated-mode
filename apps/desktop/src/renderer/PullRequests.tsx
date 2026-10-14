@@ -3,10 +3,10 @@ import {
   ArrowUpRight,
   BookOpen,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleAlert,
   CircleCheck,
-  CircleDot,
   CircleMinus,
   CircleX,
   Copy,
@@ -20,11 +20,13 @@ import {
   GitPullRequestDraft,
   Hammer,
   Link,
+  LoaderCircle,
   MessageCircleQuestionMark,
   MessageSquare,
   RefreshCw,
   Tag,
   Users,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
@@ -70,9 +72,10 @@ export interface PullRequests {
 /**
  * Reads each of a run's linked pull requests with `pr/view`, again whenever the list changes, and
  * acts on them with `pr/act`. With `diffs`, reads one's diff with `pr/diff` on demand. Reads are kept by run and URL, so a late answer for another thread
- * lands under that thread. An open one is read again every `POLL_MS`, so its checks,
- * comments, and state follow GitHub's, unless `poll` is false (the sidebar's rows read once). ponytail: every linked one is read on open; read on demand
- * if threads come to link many.
+ * lands under that thread. An open one is read again every `POLL_MS`, every `RUNNING_POLL_MS`
+ * while its checks run, and when the window regains focus, so its checks, comments, and state
+ * follow GitHub's, unless `poll` is false (the sidebar's rows read once). ponytail: every linked
+ * one is read on open; read on demand if threads come to link many.
  */
 export function usePullRequests(
   hostId: string,
@@ -113,23 +116,56 @@ export function usePullRequests(
   useEffect(() => {
     for (const url of key ? key.split("\n") : []) void refresh(url);
   }, [key, refresh]);
-  // A merged or closed one won't change much, so only the rest are polled.
-  const live = urls
-    .filter((url) => !["merged", "closed"].includes(read[`${runId} ${url}`]?.pr?.state ?? ""))
-    .join("\n");
+  // A merged or closed one won't change much, so only the rest are polled, sooner while checks run.
+  const live = urls.filter(
+    (url) => !["merged", "closed"].includes(read[`${runId} ${url}`]?.pr?.state ?? ""),
+  );
+  // Any check, since one failed check makes the rolled-up state failed while others still run. One
+  // running longer than STUCK_MS, or still queued, waits for POLL_MS, so a stuck check doesn't
+  // spend gh's quota every RUNNING_POLL_MS.
+  const running = (url: string) =>
+    !!read[`${runId} ${url}`]?.pr?.checks.some(
+      (c) =>
+        c.state === "pending" && !!c.startedAt && Date.now() - Date.parse(c.startedAt) < STUCK_MS,
+    );
+  const fast = live.filter(running).join("\n");
+  const slow = live.filter((url) => !running(url)).join("\n");
   // A read can take minutes (plxd's gh timeout), so a poll skips one whose last read hasn't settled.
   const polling = useRef(new Set<string>());
-  useEffect(() => {
-    if (!live || !poll) return;
-    const timer = setInterval(() => {
-      for (const url of live.split("\n")) {
+  const readAgain = useCallback(
+    (list: string) => {
+      for (const url of list ? list.split("\n") : []) {
         if (polling.current.has(url)) continue;
         polling.current.add(url);
         void refresh(url).finally(() => polling.current.delete(url));
       }
-    }, POLL_MS);
+    },
+    [refresh],
+  );
+  useEffect(() => {
+    if (!fast || !poll) return;
+    const timer = setInterval(() => readAgain(fast), RUNNING_POLL_MS);
     return () => clearInterval(timer);
-  }, [live, poll, refresh]);
+  }, [fast, poll, readAgain]);
+  useEffect(() => {
+    if (!slow || !poll) return;
+    const timer = setInterval(() => readAgain(slow), POLL_MS);
+    return () => clearInterval(timer);
+  }, [slow, poll, readAgain]);
+  // Focus reads again only the ones not read within RUNNING_POLL_MS, as of the focus.
+  const latest = useRef(read);
+  latest.current = read;
+  const all = live.join("\n");
+  useEffect(() => {
+    if (!poll) return;
+    const stale = (url: string) => {
+      const at = latest.current[`${runId} ${url}`]?.at;
+      return !at || Date.now() - Date.parse(at) >= RUNNING_POLL_MS;
+    };
+    const focus = () => readAgain(all.split("\n").filter(stale).join("\n"));
+    window.addEventListener("focus", focus);
+    return () => window.removeEventListener("focus", focus);
+  }, [all, poll, readAgain, runId]);
   return {
     urls,
     get: (url) => read[`${runId} ${url}`],
@@ -146,9 +182,18 @@ export function usePullRequests(
 
 /** How often an open linked pull request is read again. */
 export const POLL_MS = 60_000;
+/** How often one is read again while its checks run. */
+export const RUNNING_POLL_MS = 15_000;
+/** How long a check runs before it counts as stuck and its pull request is read every POLL_MS. */
+export const STUCK_MS = 30 * 60_000;
 
 /** A pull request's number, from its URL. */
 export const numberOf = (url: string) => /\/pull\/(\d+)/.exec(url)?.[1] ?? "?";
+/** Which of `urls`, a thread's linked pull requests, `href` goes to, on any of its tabs. */
+export const linkedPr = (href: string, urls: readonly string[]) => {
+  const pr = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/i.exec(href)?.[0].toLowerCase();
+  return pr ? urls.find((url) => url.toLowerCase() === pr) : undefined;
+};
 const repoOf = (url: string) => /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(url)?.[1] ?? "";
 
 /** How a pull request's state looks: open green, draft gray, merged purple, closed red. */
@@ -268,13 +313,198 @@ export function PullRequestList({
   );
 }
 
+/** A check's icon and its classes: a running one spins until it ends. */
 const checkIcons: Record<string, { Icon: LucideIcon; color: string }> = {
   passed: { Icon: CircleCheck, color: "text-added" },
   failed: { Icon: CircleX, color: "text-danger" },
-  pending: { Icon: CircleDot, color: "text-warning" },
+  pending: { Icon: LoaderCircle, color: "animate-spin text-warning" },
 };
 /** A check, or all of them, neither passed, failed, nor running: skipped, or none. */
 const noCheck = { Icon: CircleMinus, color: "text-faint-foreground" };
+
+/** A span of time in a few words: `45s`, `3m 12s`, or `1h 4m`. */
+export function span(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+/** Where a check is, in words: queued, running for how long, or how it ended and how long it took. */
+export function checkStatus(c: PrCheck, now = Date.now()): string {
+  const started = c.startedAt ? Date.parse(c.startedAt) : undefined;
+  const took = started && span((c.completedAt ? Date.parse(c.completedAt) : now) - started);
+  if (c.state === "pending") return took ? `Running for ${took}` : "Queued";
+  const ended = (c.conclusion ?? c.state).replaceAll("_", " ");
+  return `${ended[0]!.toUpperCase()}${ended.slice(1)}${took ? ` in ${took}` : ""}`;
+}
+
+// Failed first, then running, then the rest, as GitHub lists them.
+const checkOrder: Record<string, number> = { failed: 0, pending: 1, passed: 2 };
+
+/**
+ * One check of the checks popover: its icon, spinning while it runs, its workflow and name, and its
+ * status. Hovering or focusing it shows Details and Open on GitHub; Details unfolds when it started,
+ * how long it took, and, for a failed one, Fix in this thread.
+ */
+function CheckRow({
+  check,
+  now,
+  onOpen,
+  onFix,
+}: {
+  check: PrCheck;
+  now: number;
+  onOpen: (url: string) => void;
+  onFix: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { Icon, color } = checkIcons[check.state] ?? noCheck;
+  const action =
+    "rounded-md px-1.5 py-0.5 text-[12px] text-muted-foreground hover:bg-hover hover:text-foreground";
+  return (
+    <li className="group/check">
+      <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-[13px] group-hover/check:bg-hover group-focus-within/check:bg-hover">
+        <Icon aria-label={check.state} className={`size-4 shrink-0 ${color}`} />
+        <span className="min-w-0 flex-1 truncate" title={check.name}>
+          {check.workflow && <span className="text-faint-foreground">{check.workflow} / </span>}
+          {check.name}
+        </span>
+        <span className="shrink-0 text-[12px] text-faint-foreground">
+          {checkStatus(check, now)}
+        </span>
+        <span className="hidden shrink-0 items-center group-focus-within/check:flex group-hover/check:flex">
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+            className={action}
+          >
+            Details
+          </button>
+          {check.url && (
+            <button
+              type="button"
+              title="Open on GitHub"
+              aria-label={`Open ${check.name} on GitHub`}
+              onClick={() => onOpen(check.url!)}
+              className={`${action} grid place-items-center`}
+            >
+              <ArrowUpRight aria-hidden className="size-3.5" />
+            </button>
+          )}
+        </span>
+      </div>
+      {open && (
+        <div className="mx-2 mt-1 mb-2 rounded-lg border border-border px-3 py-2.5 text-[12.5px]">
+          <dl className="grid grid-cols-[5.5rem_1fr] gap-y-1">
+            {check.workflow && (
+              <>
+                <dt className="text-faint-foreground">Workflow</dt>
+                <dd>{check.workflow}</dd>
+              </>
+            )}
+            <dt className="text-faint-foreground">Status</dt>
+            <dd>{checkStatus(check, now)}</dd>
+            {check.startedAt && (
+              <>
+                <dt className="text-faint-foreground">Started</dt>
+                <dd>{ago(check.startedAt)}</dd>
+              </>
+            )}
+            {check.completedAt && (
+              <>
+                <dt className="text-faint-foreground">Finished</dt>
+                <dd>{ago(check.completedAt)}</dd>
+              </>
+            )}
+          </dl>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {check.url && (
+              <button
+                type="button"
+                onClick={() => onOpen(check.url!)}
+                className="flex items-center gap-1 rounded-md border border-border px-2 py-1 hover:bg-hover"
+              >
+                <ArrowUpRight aria-hidden className="size-3.5" />
+                Open on GitHub
+              </button>
+            )}
+            {check.url && (
+              <button
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(check.url!)}
+                className="flex items-center gap-1 rounded-md border border-border px-2 py-1 hover:bg-hover"
+              >
+                <Link aria-hidden className="size-3.5" />
+                Copy link
+              </button>
+            )}
+            {check.state === "failed" && (
+              <button
+                type="button"
+                onClick={onFix}
+                className="flex items-center gap-1 rounded-md border border-border px-2 py-1 hover:bg-hover"
+              >
+                <Hammer aria-hidden className="size-3.5" />
+                Fix in this thread
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}
+
+/** The checks popover's list: a count of each state over every check, failed first. Running times tick. */
+function ChecksList({
+  checks,
+  onOpen,
+  onFix,
+}: {
+  checks: readonly PrCheck[];
+  onOpen: (url: string) => void;
+  onFix: (check: PrCheck) => void;
+}) {
+  const running = checks.some((c) => c.state === "pending");
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running]);
+  const count = (state: string) => checks.filter((c) => c.state === state).length;
+  const counts = [
+    [count("failed"), "failed"],
+    [count("pending"), "running"],
+    [count("passed"), "passed"],
+    [count("skipped"), "skipped"],
+  ].filter(([n]) => n);
+  // A check's URL, workflow, and name, counted, since statuses can share all three.
+  const seen = new Map<string, number>();
+  const keyOf = (c: PrCheck) => {
+    const key = `${c.url} ${c.workflow} ${c.name}`;
+    const n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    return `${key} ${n}`;
+  };
+  const sorted = [...checks].sort(
+    (a, b) => (checkOrder[a.state] ?? 3) - (checkOrder[b.state] ?? 3),
+  );
+  return (
+    <>
+      <p className="px-2 pt-1 pb-2 text-[13px] font-medium">
+        {counts.map(([n, what]) => `${n} ${what}`).join(" · ") || "No checks"}
+      </p>
+      <ul className="flex max-h-[60vh] flex-col overflow-y-auto">
+        {sorted.map((c) => (
+          <CheckRow key={keyOf(c)} check={c} now={now} onOpen={onOpen} onFix={() => onFix(c)} />
+        ))}
+      </ul>
+    </>
+  );
+}
 
 /** All of a pull request's checks in a few words, as its Summary tab shows them. */
 function checksOf(pr: PullRequest): { Icon: LucideIcon; color: string; text: string } {
@@ -370,20 +600,163 @@ const onGithub = (src: unknown): src is string =>
 
 /**
  * A pull request's description and comments are GitHub's, not the agent's, so their GitHub-hosted
- * images load, unlike a transcript's. Any other image stays a link with its alt text. ponytail: a
- * private repository's attachments need GitHub's sign-in and show broken; proxy them through `gh`
- * if that matters.
+ * images load, unlike a transcript's, and open in the Lightbox when clicked. Any other image stays
+ * a link with its alt text. ponytail: a private repository's attachments need GitHub's sign-in and
+ * show broken; proxy them through `gh` if that matters.
  */
 const githubMarkdown: Components = {
   img: ({ src, alt }) =>
     onGithub(src) ? (
-      <img src={src} alt={alt ?? ""} loading="lazy" className="max-w-full rounded-md" />
+      <img
+        src={src}
+        alt={alt ?? ""}
+        loading="lazy"
+        data-shot
+        className="max-w-full cursor-zoom-in rounded-md"
+      />
     ) : (
       <a href={typeof src === "string" && src ? src : undefined} target="_blank" rel="noreferrer">
         {alt || "Image"}
       </a>
     ),
 };
+
+/**
+ * GitHub's Markdown with each HTML `<img>`, as GitHub writes a dropped screenshot, as a Markdown
+ * image, since Markdown here renders no HTML. Code, fenced or inline, stays as written. ponytail:
+ * regexes, not a Markdown or HTML parser; they miss an `<img>` whose attributes hold a `>`, and
+ * code fenced by more than three marks.
+ */
+export function githubText(body: string): string {
+  return body
+    .split(/(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)/)
+    .map((part, i) => (i % 2 ? part : images(part)))
+    .join("");
+}
+
+const images = (text: string) =>
+  text.replace(/<img\b[^>]*>/gi, (tag) => {
+    const attr = (name: string) => new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`, "i").exec(tag)?.[1];
+    const src = attr("src");
+    return src ? `![${(attr("alt") ?? "").replace(/[[\]]/g, "")}](${src})` : tag;
+  });
+
+/** A screenshot's name: its alt text, or without a useful one, its file's name. */
+export function shotName(src: string, alt: string): string {
+  if (alt.trim() && alt.trim().toLowerCase() !== "image") return alt.trim();
+  return decodeURIComponent(new URL(src).pathname.split("/").at(-1) || "Screenshot");
+}
+
+/**
+ * Screenshots shown large over the app: the shown one's name, its place among them and arrows (or
+ * the arrow keys) to the others when there are several, and Close (or Escape, or a click beside
+ * it). Clicking the image zooms in once at the cursor, which pans it; clicking again zooms out.
+ */
+export function Lightbox({
+  images,
+  index,
+  onIndex,
+  onClose,
+}: {
+  images: readonly { src: string; name: string }[];
+  index: number;
+  onIndex: (index: number) => void;
+  onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  // Where the zoom centers, as percentages of the image; absent while zoomed out.
+  const [zoom, setZoom] = useState<{ x: number; y: number }>();
+  useEffect(() => dialog.current?.showModal(), []);
+  const image = images[index]!;
+  const many = images.length > 1;
+  const go = (step: number) => {
+    setZoom(undefined);
+    onIndex((index + step + images.length) % images.length);
+  };
+  const at = (e: { currentTarget: Element; clientX: number; clientY: number }) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    return {
+      x: ((e.clientX - box.left) / box.width) * 100,
+      y: ((e.clientY - box.top) / box.height) * 100,
+    };
+  };
+  const arrow =
+    "absolute top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full bg-white/10 text-white hover:bg-white/20 [&_svg]:size-5";
+  return (
+    <dialog
+      ref={dialog}
+      aria-label={image.name}
+      onClose={onClose}
+      onKeyDown={(e) => {
+        if (many && e.key === "ArrowLeft") go(-1);
+        else if (many && e.key === "ArrowRight") go(1);
+      }}
+      onClick={(e) => e.target === e.currentTarget && dialog.current?.close()}
+      className="m-0 h-full max-h-none w-full max-w-none bg-black/90 p-0 text-white outline-none backdrop:bg-transparent backdrop:backdrop-blur-sm"
+    >
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center gap-3 px-4 py-3 text-[13px]">
+        <span className="min-w-0 flex-1 truncate font-medium" title={image.name}>
+          {image.name}
+        </span>
+        {many && (
+          <span className="shrink-0 text-white/70">
+            {index + 1} / {images.length}
+          </span>
+        )}
+        <button
+          type="button"
+          aria-label="Close"
+          onClick={() => dialog.current?.close()}
+          className="pointer-events-auto grid size-8 place-items-center rounded-full hover:bg-white/15 [&_svg]:size-5"
+        >
+          <X aria-hidden />
+        </button>
+      </div>
+      <div
+        className="grid h-full place-items-center px-16 py-14"
+        onClick={(e) => e.target === e.currentTarget && dialog.current?.close()}
+      >
+        <span
+          className={`overflow-hidden rounded-md ${zoom ? "cursor-zoom-out" : "cursor-zoom-in"}`}
+          onClick={(e) => setZoom(zoom ? undefined : at(e))}
+          onMouseMove={(e) => zoom && setZoom(at(e))}
+        >
+          <img
+            key={image.src}
+            src={image.src}
+            alt={image.name}
+            draggable={false}
+            style={{
+              transform: zoom ? "scale(2)" : undefined,
+              transformOrigin: zoom ? `${zoom.x}% ${zoom.y}%` : undefined,
+            }}
+            className="block max-h-[calc(100vh-7rem)] max-w-[calc(100vw-8rem)] object-contain transition-transform duration-150"
+          />
+        </span>
+      </div>
+      {many && (
+        <>
+          <button
+            type="button"
+            aria-label="Previous"
+            onClick={() => go(-1)}
+            className={`${arrow} left-4`}
+          >
+            <ChevronLeft aria-hidden />
+          </button>
+          <button
+            type="button"
+            aria-label="Next"
+            onClick={() => go(1)}
+            className={`${arrow} right-4`}
+          >
+            <ChevronRight aria-hidden />
+          </button>
+        </>
+      )}
+    </dialog>
+  );
+}
 
 // ponytail: "long" by length, not rendered height; measure it if this cuts the wrong ones.
 const isLong = (c: PrComment) => c.body.length > 600 || c.body.split("\n").length > 12;
@@ -407,7 +780,7 @@ function CommentCard({
       <div
         className={`mt-2 select-text ${folded ? "max-h-48 overflow-hidden [mask-image:linear-gradient(to_bottom,black_55%,transparent)]" : ""}`}
       >
-        <MarkdownText text={c.body} components={githubMarkdown} />
+        <MarkdownText text={githubText(c.body)} components={githubMarkdown} />
       </div>
       {folded && (
         <button
@@ -647,7 +1020,10 @@ function TimelineEvent({
  * count, Merge, and a `…` menu of everything else; its title, author, branches, and size; then its
  * tabs (PLX-328): a Summary of its reviewers, labels, description, and comments, newest first; a
  * Timeline of its commits, comments, reviews, and merge; and, on a plxd with `prDiff`, the Code it
- * changes. The checks' state beside the tabs opens a list of every check.
+ * changes. The checks' state beside the tabs, spinning while any runs, opens a popover of every
+ * check, live. A screenshot in the
+ * description or a comment opens in the Lightbox with the others beside it. Opening the view reads
+ * the pull request again when its last read is stale.
  * `onCompose` hands a message to this thread's chat: sent, or put in the composer to finish.
  */
 export function PullRequestView({
@@ -668,10 +1044,13 @@ export function PullRequestView({
   const id = useId();
   const menu = useRef<HTMLDivElement>(null);
   const mergeMenu = useRef<HTMLDivElement>(null);
+  const checksMenu = useRef<HTMLDivElement>(null);
+  const view = useRef<HTMLDivElement>(null);
   const closeDialog = useRef<HTMLDialogElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<RpcError>();
   const [tab, setTab] = useState<"summary" | "timeline" | "code">("summary");
+  const [shots, setShots] = useState<{ images: { src: string; name: string }[]; index: number }>();
   const [description, setDescription] = useState(true);
   const [comments, setComments] = useState(true);
   const [full, setFull] = useState<ReadonlySet<number>>(new Set());
@@ -685,6 +1064,14 @@ export function PullRequestView({
   const openOnGithub = (to: string) => (inBrowser ? onBrowse?.(to) : window.open(to, "_blank"));
   const readDiff = prs.diff;
   const updatedAt = pr?.updatedAt;
+  // Opening it reads it again, unless its last read is fresh or still on its way.
+  const reread = prs.refresh;
+  const last = useRef(linked);
+  last.current = linked;
+  useEffect(() => {
+    const at = last.current?.at;
+    if (at && Date.now() - Date.parse(at) > RUNNING_POLL_MS) void reread(url);
+  }, [reread, url]);
   useEffect(() => {
     if (tab !== "code" || !readDiff || !updatedAt || diff?.for === updatedAt) return;
     let live = true;
@@ -712,6 +1099,20 @@ export function PullRequestView({
   const copy = (text: string) => {
     menu.current?.hidePopover();
     void navigator.clipboard.writeText(text);
+  };
+  // A screenshot opens with the others in its description or comment.
+  const showShot = (target: EventTarget) => {
+    const shot = (target as Element).closest?.("img[data-shot]");
+    if (!(shot instanceof HTMLImageElement)) return;
+    const all = [
+      ...(shot.closest(".markdown") ?? shot.parentElement!).querySelectorAll<HTMLImageElement>(
+        "img[data-shot]",
+      ),
+    ];
+    setShots({
+      images: all.map((img) => ({ src: img.src, name: shotName(img.src, img.alt) })),
+      index: all.indexOf(shot),
+    });
   };
   const failed = error ?? linked?.error;
   // `gh` missing or signed out: a short line by Set up GitHub, in place of plxd's message.
@@ -893,7 +1294,11 @@ export function PullRequestView({
     </button>
   );
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <div
+      ref={view}
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+      onClick={(e) => showShot(e.target)}
+    >
       <header className="border-b border-border px-4 pt-2 pb-3">
         <div className="flex items-center gap-2">
           <a
@@ -958,8 +1363,21 @@ export function PullRequestView({
         <h2 className="mt-2 truncate text-[15px] font-semibold" title={pr.title}>
           {pr.title}
         </h2>
-        <p className="mt-1 text-[12.5px] text-muted-foreground">
-          {pr.author} <span className="text-faint-foreground">· updated {ago(pr.updatedAt)}</span>
+        <p className="mt-1 flex items-center gap-1 text-[12.5px] text-muted-foreground">
+          {pr.author}
+          <span className="min-w-0 flex-1 truncate text-faint-foreground">
+            · updated {ago(pr.updatedAt)}
+          </span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={refresh}
+            title="Refresh"
+            className="flex shrink-0 items-center gap-1 rounded-md px-1 text-faint-foreground hover:bg-hover hover:text-foreground"
+          >
+            <RefreshCw aria-hidden className={`size-3 ${busy ? "animate-spin" : ""}`} />
+            {linked?.at ? `synced ${ago(linked.at)}` : "syncing…"}
+          </button>
         </p>
         <div className="mt-2 flex items-center gap-3 text-[12.5px]">
           <span
@@ -987,10 +1405,10 @@ export function PullRequestView({
           type="button"
           popoverTarget={`${id}-checks`}
           aria-haspopup="dialog"
-          className={`ml-auto flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12.5px] hover:bg-hover ${summary.color}`}
+          className="ml-auto flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12.5px] hover:bg-hover"
         >
-          <summary.Icon aria-hidden className="size-4" />
-          <span className="text-muted-foreground">{summary.text}</span>
+          <summary.Icon aria-hidden className={`size-4 shrink-0 ${summary.color}`} />
+          <span className="truncate whitespace-nowrap text-muted-foreground">{summary.text}</span>
         </button>
       </div>
 
@@ -1088,7 +1506,7 @@ export function PullRequestView({
           onToggle={() => setDescription(!description)}
         >
           {pr.body.trim() ? (
-            <MarkdownText text={pr.body} components={githubMarkdown} />
+            <MarkdownText text={githubText(pr.body)} components={githubMarkdown} />
           ) : (
             <p className="text-[13px] text-faint-foreground">No description</p>
           )}
@@ -1117,38 +1535,29 @@ export function PullRequestView({
       </div>
 
       <div
+        ref={checksMenu}
         id={`${id}-checks`}
         popover="auto"
         role="dialog"
         aria-label="Checks"
-        className={`${menuPanel("end")} w-96 p-3`}
+        // Opens at most as wide as the side panel, less its padding, so it stays off the divider.
+        onBeforeToggle={(e) => {
+          if (e.newState === "open" && view.current)
+            e.currentTarget.style.maxWidth = `${view.current.clientWidth - 32}px`;
+        }}
+        className={`${menuPanel("end")} w-[26rem] p-2`}
       >
-        <p className="text-[14px] font-medium">{summary.text}</p>
-        <ul className="mt-2 flex flex-col gap-1.5">
-          {pr.checks.map((c, i) => {
-            const { Icon, color } = checkIcons[c.state] ?? noCheck;
-            return (
-              <li key={i} className="flex items-center gap-2 text-[13px]">
-                <Icon aria-hidden className={`size-4 shrink-0 ${color}`} />
-                <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                <span className="shrink-0 text-[12px] text-faint-foreground">
-                  {c.conclusion ?? c.state}
-                </span>
-                {c.url && (
-                  <a
-                    href={c.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="shrink-0 text-[12px] text-accent hover:underline"
-                  >
-                    Details
-                  </a>
-                )}
-              </li>
+        <ChecksList
+          checks={pr.checks}
+          onOpen={openOnGithub}
+          onFix={(c) => {
+            checksMenu.current?.hidePopover();
+            compose(
+              `The "${c.name}" check failed on this pull request: ${url}. Read its log with gh, fix the cause, and push.`,
+              true,
             );
-          })}
-          {pr.checks.length === 0 && <li className="text-[13px] text-faint-foreground">None</li>}
-        </ul>
+          }}
+        />
       </div>
 
       {open && (
@@ -1270,6 +1679,15 @@ export function PullRequestView({
       >
         “{pr.title}” closes without merging. It can be reopened on GitHub.
       </ConfirmDialog>
+
+      {shots && (
+        <Lightbox
+          images={shots.images}
+          index={shots.index}
+          onIndex={(index) => setShots({ ...shots, index })}
+          onClose={() => setShots(undefined)}
+        />
+      )}
     </div>
   );
 }

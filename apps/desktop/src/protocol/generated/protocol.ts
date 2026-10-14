@@ -5513,6 +5513,18 @@ export type PrCheck = {
 	 * Its page, when it has one.
 	 */
 	url?: string,
+	/**
+	 * The GitHub Actions workflow it is a job of. Absent for another CI's status.
+	 */
+	workflow?: string,
+	/**
+	 * When it started. Absent when GitHub doesn't say.
+	 */
+	startedAt?: string,
+	/**
+	 * When it finished. Absent while it runs.
+	 */
+	completedAt?: string,
 };
 
 /**

@@ -335,6 +335,9 @@ struct Check {
     state: Option<String>,
     details_url: Option<String>,
     target_url: Option<String>,
+    workflow_name: Option<String>,
+    started_at: Option<String>,
+    completed_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -514,7 +517,16 @@ fn check(check: Check) -> PrCheck {
             .details_url
             .or(check.target_url)
             .filter(|url| !url.is_empty()),
+        workflow: check.workflow_name.filter(|name| !name.is_empty()),
+        started_at: time(check.started_at),
+        completed_at: time(check.completed_at),
     }
+}
+
+/// A check's time. GitHub sends `0001-01-01T00:00:00Z` for one it doesn't have yet.
+fn time(time: Option<String>) -> Option<Timestamp> {
+    time.and_then(|time| time.parse::<Timestamp>().ok())
+        .filter(|time| time.as_second() > 0)
 }
 
 /// `diff` cut to at most `max` bytes, at the end of a line.
@@ -619,9 +631,11 @@ mod tests {
             "statusCheckRollup": [
                 {"__typename": "CheckRun", "name": "build", "status": "COMPLETED",
                  "conclusion": "SUCCESS", "detailsUrl": "https://github.com/me/app/runs/1",
-                 "workflowName": "CI"},
+                 "workflowName": "CI", "startedAt": "2026-10-02T12:01:00Z",
+                 "completedAt": "2026-10-02T12:04:00Z"},
                 {"__typename": "CheckRun", "name": "test", "status": "IN_PROGRESS",
-                 "conclusion": "", "detailsUrl": ""},
+                 "conclusion": "", "detailsUrl": "", "workflowName": "CI",
+                 "startedAt": "2026-10-02T12:02:00Z", "completedAt": "0001-01-01T00:00:00Z"},
                 {"__typename": "CheckRun", "name": "lint", "status": "COMPLETED",
                  "conclusion": "SKIPPED", "detailsUrl": ""},
                 {"__typename": "StatusContext", "context": "deploy", "state": "FAILURE",
@@ -706,6 +720,18 @@ mod tests {
             ]
         );
         assert_eq!(pr.checks_state, Some(PrCheckState::Failed));
+        let test = &pr.checks[1];
+        assert_eq!(test.workflow.as_deref(), Some("CI"));
+        assert_eq!(
+            test.started_at,
+            Some("2026-10-02T12:02:00Z".parse().unwrap())
+        );
+        assert_eq!(test.completed_at, None, "GitHub's zero time is no time");
+        assert_eq!(
+            pr.checks[0].completed_at,
+            Some("2026-10-02T12:04:00Z".parse().unwrap())
+        );
+        assert_eq!(pr.checks[3].workflow, None);
         assert_eq!(pr.merge_state, Some(PrMergeState::Blocked));
         assert_eq!(pr.auto_merge, Some(PrMergeMethod::Squash));
         assert_eq!(pr.created_at, Some("2026-10-02T12:00:00Z".parse().unwrap()));

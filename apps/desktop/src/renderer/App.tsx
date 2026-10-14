@@ -34,7 +34,13 @@ import { ThreadDetails, ThreadDetailsButton, useThreadDetails } from "./ThreadDe
 import { AgentsPanel, useProjectAgents } from "./ProjectAgents";
 import { ProjectChat } from "./ProjectChat";
 import { ProjectHome, waitingCount } from "./ProjectHome";
-import { PullRequestChip, PullRequestList, PullRequestView, usePullRequests } from "./PullRequests";
+import {
+  linkedPr,
+  PullRequestChip,
+  PullRequestList,
+  PullRequestView,
+  usePullRequests,
+} from "./PullRequests";
 import { PullRequestsPage, type PrEntry } from "./PullRequestsPage";
 import { Settings } from "./Settings";
 import { SidePanel } from "./SidePanel";
@@ -877,6 +883,20 @@ export function App() {
                             aria-label={paired ? (title ?? "Thread") : undefined}
                             // Clicking or tabbing into a side focuses it.
                             onPointerDownCapture={() => !focused && openThreadId(threadId)}
+                            // A link to a pull request the thread links opens its view, not GitHub,
+                            // unless a modifier key asks for the browser.
+                            onClickCapture={(e) => {
+                              const href = (e.target as Element)
+                                .closest?.("a[href]")
+                                ?.getAttribute("href");
+                              const pr =
+                                linksPrs &&
+                                href &&
+                                linkedPr(href, threads.state.runs[threadId]?.pullRequests ?? []);
+                              if (!pr || e.metaKey || e.ctrlKey || e.shiftKey) return;
+                              e.preventDefault();
+                              openPr(pr);
+                            }}
                             // Not focus the window or the app gives with nothing focused before, such as a
                             // notification's click or an approval card's.
                             onFocusCapture={(e) =>
