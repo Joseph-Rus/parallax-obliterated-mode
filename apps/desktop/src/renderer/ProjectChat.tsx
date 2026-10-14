@@ -10,6 +10,7 @@ import { offlineReason, useConnection } from "./ConnectionStatus";
 import type { Host } from "./hosts";
 import { describeError } from "./errors";
 import { imageCaps } from "./images";
+import { uploadBytes } from "./uploads";
 import type { RunOptions } from "./models";
 import { accountOptions, defaultBackend } from "./NewThread";
 import type { ProjectAgentsView } from "./ProjectAgents";
@@ -264,6 +265,7 @@ export function ProjectChat({
           disabledReason={disabledReason}
           tab={tab}
           imageCaps={imageCaps(connection)}
+          uploadBytes={uploadBytes(connection)}
           menus={connected && "composerMenus" in connection.capabilities ? { hostId } : undefined}
           // The coordinator asks only through a plxd that sends its requests.
           manualDenied={connected && !("approvals" in connection.capabilities) ? "host" : undefined}

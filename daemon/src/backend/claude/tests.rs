@@ -493,6 +493,8 @@ fn worker_sandbox(cwd: &Path) -> WorkerSandbox {
 }
 
 /// A worker's policy, sandbox, model, effort, and second account reached the CLI.
+// The settings are spelled out whole, so a changed one shows in the diff.
+#[allow(clippy::too_many_lines)]
 fn assert_worker_invocation(fake: &Fake) {
     let argv = fake.argv();
     let cwd = fake.root().display().to_string();
@@ -548,11 +550,13 @@ fn assert_worker_invocation(fake: &Fake) {
                         "/Users/u/Library/Application Support/parallax/context/p",
                         format!("{cwd}/.git"),
                         "/Users/u/src/app/.git",
+                        "/Users/u/Library/Application Support/parallax/uploads",
                         format!("/tmp/parallax-625c7f6d/Ab12Cd/claude-{uid}"),
                     ],
                     "denyWrite": [
                         format!("{cwd}/.git"),
                         "/Users/u/src/app/.git",
+                        "/Users/u/Library/Application Support/parallax/uploads",
                         "/tmp/claude",
                         "/private/tmp/claude",
                         "~/.npm/_logs",

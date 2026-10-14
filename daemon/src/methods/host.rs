@@ -1,4 +1,5 @@
-//! `initialize`, `host/health`, `host/version`, `host/folders`, and `host/settings/*`.
+//! `initialize`, `host/health`, `host/version`, `host/folders`, `host/upload`, and
+//! `host/settings/*`.
 //! `host/update` is in `crate::self_update`.
 
 use std::collections::BTreeMap;
@@ -9,12 +10,13 @@ use parallax_protocol::framing::MAX_FRAME_BYTES;
 use parallax_protocol::jsonrpc::{ErrorObject, Request};
 use parallax_protocol::{
     Capabilities, ClientInfo, DEVICE_ICONS, HostFolder, HostFoldersParams, HostFoldersResult,
-    HostHealthParams, HostHealthResult, HostQueues, HostSettings, HostSettingsGetParams,
-    HostSettingsSetParams, HostVersionParams, HostVersionResult, IncompatibleProtocolDetail,
-    InitializeParams, InitializeProtocol, InitializeResult, MAX_DEVICE_NAME_CHARS, ProtocolRange,
-    StoreState,
+    HostHealthParams, HostHealthResult, HostQueues, HostReadUploadParams, HostReadUploadResult,
+    HostSettings, HostSettingsGetParams, HostSettingsSetParams, HostUploadParams, HostUploadResult,
+    HostVersionParams, HostVersionResult, IncompatibleProtocolDetail, InitializeParams,
+    InitializeProtocol, InitializeResult, MAX_DEVICE_NAME_CHARS, ProtocolRange, StoreState,
 };
 use tracing::info;
+use uuid::Uuid;
 
 use super::Context;
 use crate::agents::attached;
@@ -210,6 +212,9 @@ pub(crate) fn initialize(
 /// `schedules` (0063): `schedule/*`, and the webhooks the HTTPS listener serves.
 /// `prWatch` (0063): `pr/watch`, `pr/unwatch`, and `pr/watches`.
 /// `setupScripts` (PLX-650): `repo/scripts`, `repo/saveScripts`, and the `thread.script` event.
+/// `fileUploads` (PLX-779, 0071): `host/upload`, which saves a file attached to a message on the
+/// host for the agent to read, and `host/readUpload`, which reads it back for the transcript.
+/// Its option `maxBytes` is the cap on the file's base64 `data`.
 /// `hostUpdate` (PLX-700, 0066): `host/update`, which installs a newer plxd and restarts into it.
 /// `providerUpdates` (PLX-746): `providers/updates` and `providers/upgrade`, and `host/update`'s
 /// `now`.
@@ -245,6 +250,10 @@ fn capabilities_advertised() -> Capabilities {
         ("eventFilters".to_owned(), serde_json::Map::new()),
         ("eventsBefore".to_owned(), serde_json::Map::new()),
         ("fileEdit".to_owned(), serde_json::Map::new()),
+        (
+            "fileUploads".to_owned(),
+            serde_json::Map::from_iter([("maxBytes".to_owned(), MAX_UPLOAD_BYTES.into())]),
+        ),
         ("files".to_owned(), serde_json::Map::new()),
         ("git".to_owned(), serde_json::Map::new()),
         ("repoGitStatus".to_owned(), serde_json::Map::new()),
@@ -351,6 +360,81 @@ fn list_folders(input: &str, home: Option<&Path>) -> Result<HostFoldersResult, E
     Ok(HostFoldersResult {
         path: dir.to_string_lossy().into_owned(),
         folders,
+    })
+}
+
+/// The longest an uploaded file's `data` may be, in bytes of base64, about 4.5 MiB of file: what
+/// fits in one of 0007's 8 MiB frames with the envelope.
+pub(crate) const MAX_UPLOAD_BYTES: usize = 6 * 1024 * 1024;
+
+/// `host/upload`: saves the file in a new folder of the data folder's `uploads/` and answers its
+/// path, which the app puts in the message for the agent to read (0071).
+// ponytail: uploads are never removed; prune them with their thread if the folder grows.
+pub(crate) async fn upload(
+    context: &Context,
+    params: HostUploadParams,
+) -> Result<HostUploadResult, ErrorObject> {
+    let dir = context
+        .daemon
+        .data_dir
+        .uploads_dir()
+        .join(Uuid::now_v7().to_string());
+    super::context::run_blocking(move || save_upload(&dir, &params)).await
+}
+
+/// Writes `params`' file as `<dir>/<name>`, after checking its name and size.
+fn save_upload(dir: &Path, params: &HostUploadParams) -> Result<HostUploadResult, ErrorObject> {
+    let name = params.name.as_str();
+    // `:` too: on Windows `C:x` is a path on drive C, which `join` would put outside `dir`.
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':', '\0']) {
+        return Err(ErrorObject::invalid_params(format!(
+            "{:?} is not a plain file name",
+            untrusted(name)
+        )));
+    }
+    if params.data.len() > MAX_UPLOAD_BYTES {
+        return Err(ErrorObject::invalid_params(format!(
+            "the file is {} bytes of base64; it must be at most {MAX_UPLOAD_BYTES}",
+            params.data.len()
+        )));
+    }
+    let bytes = images::decode(&params.data)
+        .ok_or_else(|| ErrorObject::invalid_params("data is not standard base64 with padding"))?;
+    let path = dir.join(name);
+    fs::create_dir_all(dir)
+        .and_then(|()| fs::write(&path, bytes))
+        .map_err(|error| {
+            ErrorObject::internal_error(format!("could not save the file: {error}"))
+        })?;
+    Ok(HostUploadResult {
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// `host/readUpload`: a file [`upload`] saved, as base64.
+pub(crate) async fn read_upload(
+    context: &Context,
+    params: HostReadUploadParams,
+) -> Result<HostReadUploadResult, ErrorObject> {
+    let root = context.daemon.data_dir.uploads_dir();
+    super::context::run_blocking(move || read_upload_at(&root, &params.path)).await
+}
+
+/// The file at `path`, as base64, if it's inside `root` once links are followed.
+fn read_upload_at(root: &Path, path: &str) -> Result<HostReadUploadResult, ErrorObject> {
+    let refuse =
+        || ErrorObject::invalid_params(format!("{:?} is not an uploaded file", untrusted(path)));
+    let root = fs::canonicalize(root).map_err(|_| refuse())?;
+    let file = fs::canonicalize(path).map_err(|_| refuse())?;
+    // Only what `host/upload` could have saved, which fits in a frame.
+    let fits = fs::metadata(&file)
+        .is_ok_and(|meta| meta.is_file() && meta.len() <= (MAX_UPLOAD_BYTES / 4 * 3) as u64);
+    if !file.starts_with(&root) || !fits {
+        return Err(refuse());
+    }
+    let bytes = fs::read(&file).map_err(|_| refuse())?;
+    Ok(HostReadUploadResult {
+        data: images::encode(&bytes),
     })
 }
 
@@ -536,7 +620,12 @@ fn plist_string<'a>(plist: &'a str, key: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_device_icon, clean_device_name, list_folders, plist_string};
+    use parallax_protocol::HostUploadParams;
+
+    use super::{
+        check_device_icon, clean_device_name, list_folders, plist_string, read_upload_at,
+        save_upload,
+    };
 
     #[test]
     fn device_names_are_cleaned_and_icons_checked() {
@@ -586,6 +675,44 @@ mod tests {
                 .code,
             -32602
         );
+    }
+
+    #[test]
+    fn saves_an_upload_under_its_own_name_and_refuses_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let upload = |name: &str, data: &str| {
+            save_upload(
+                &dir.path().join("id"),
+                &HostUploadParams {
+                    name: name.to_owned(),
+                    data: data.to_owned(),
+                },
+            )
+        };
+
+        let saved = upload("paper v3.pdf", "JVBERi0=").unwrap();
+        let path = dir.path().join("id").join("paper v3.pdf");
+        assert_eq!(saved.path, path.to_string_lossy());
+        assert_eq!(std::fs::read(path).unwrap(), b"%PDF-");
+
+        for name in ["", ".", "..", "../x", "a/b", "a\\b", "C:x"] {
+            assert_eq!(upload(name, "").unwrap_err().code, -32602, "{name}");
+        }
+        assert_eq!(upload("x", "not base64").unwrap_err().code, -32602);
+
+        // Read back by its path, and nothing outside the uploads folder.
+        let read = |path: &std::path::Path| read_upload_at(dir.path(), &path.to_string_lossy());
+        assert_eq!(
+            read(std::path::Path::new(&saved.path)).unwrap().data,
+            "JVBERi0="
+        );
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        assert_eq!(read(outside.path()).unwrap_err().code, -32602);
+        assert_eq!(
+            read(&dir.path().join("id/../id/missing")).unwrap_err().code,
+            -32602
+        );
+        assert_eq!(read(&dir.path().join("id")).unwrap_err().code, -32602);
     }
 
     #[test]

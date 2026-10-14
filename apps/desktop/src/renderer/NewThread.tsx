@@ -8,6 +8,7 @@ import { useConnection } from "./ConnectionStatus";
 import { describeError } from "./errors";
 import type { Host } from "./hosts";
 import { imageCaps } from "./images";
+import { uploadBytes } from "./uploads";
 import type { RunOptions } from "./models";
 import { newThreadPrefs } from "./prefs";
 import { RefMenu } from "./RefMenu";
@@ -450,6 +451,7 @@ export function NewThread({
           }
           disabledReason={starting === undefined ? disabledReason : "Starting thread…"}
           imageCaps={imageCaps(connection)}
+          uploadBytes={uploadBytes(connection)}
           menus={
             connection?.status === "connected" && "composerMenus" in connection.capabilities
               ? { hostId, repo: group.id === noRepo || group.space ? undefined : group.id }

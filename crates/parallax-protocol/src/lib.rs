@@ -126,9 +126,9 @@ pub use handshake::{
 };
 pub use host::{
     HostFolder, HostFoldersParams, HostFoldersResult, HostHealthParams, HostHealthResult,
-    HostQueues, HostSettings, HostSettingsGetParams, HostSettingsSetParams, HostUpdateParams,
-    HostUpdateRestart, HostUpdateResult, HostVersionParams, HostVersionResult, QueueStats,
-    StoreState,
+    HostQueues, HostReadUploadParams, HostReadUploadResult, HostSettings, HostSettingsGetParams,
+    HostSettingsSetParams, HostUpdateParams, HostUpdateRestart, HostUpdateResult, HostUploadParams,
+    HostUploadResult, HostVersionParams, HostVersionResult, QueueStats, StoreState,
 };
 pub use id::InvalidId;
 pub use inbox::{

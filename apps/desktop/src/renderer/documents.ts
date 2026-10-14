@@ -48,14 +48,20 @@ const listeners = new Set<() => void>();
 let version = 0;
 const keyOf = (hostId: string, doc: DocRef) => `${hostId}\n${doc.runId}\n${doc.path}`;
 
-async function openPdf(bytes: Uint8Array): Promise<PDFDocumentProxy> {
+/** `bytes` as a PDF, with pdf.js loaded on first use. */
+export async function openPdf(bytes: Uint8Array): Promise<PDFDocumentProxy> {
   const [pdfjs, worker] = await Promise.all([
     import("pdfjs-dist"),
     import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
   ]);
   pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
   // pdf.js takes the buffer over, and the download keeps it.
-  return pdfjs.getDocument({ data: bytes.slice() }).promise;
+  const task = pdfjs.getDocument({ data: bytes.slice() });
+  // A file that isn't a PDF, or is locked, would keep its worker running.
+  return task.promise.catch(async (error: unknown) => {
+    await task.destroy();
+    throw error;
+  });
 }
 
 async function load(hostId: string, doc: DocRef): Promise<Loaded> {

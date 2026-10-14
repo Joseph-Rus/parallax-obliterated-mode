@@ -85,6 +85,8 @@ import type { Host } from "./hosts";
 import { FileCards } from "./FileCards";
 import { HtmlRender, pageUrl } from "./HtmlRender";
 import { imageCaps, imageUrl, loadImage } from "./images";
+import { FileCard } from "./FileCard";
+import { splitFiles, uploadBytes } from "./uploads";
 import { Loader, type LoaderStyle } from "./Loader";
 import { locale } from "./locale";
 import { GitHubLogo, LinearLogo } from "./logos";
@@ -812,6 +814,7 @@ export function AgentChat({
           unavailable={unavailable}
           optionsDisabled={optionsDisabled}
           imageCaps={imageCaps(connection)}
+          uploadBytes={uploadBytes(connection)}
           manualDenied={manualDenied}
           noAccess={space}
           projectMode={projectMode}
@@ -1410,11 +1413,21 @@ export const RowView = memo(function RowView({
           </Disclosure>
         );
       const text = row.text ?? sent?.text;
+      // Files sent with it are listed after the user's own text (0071), and show as cards.
+      const { text: said, paths: files } =
+        text === undefined ? { text, paths: [] } : splitFiles(text);
       // Images sent from here are at hand; the log's come from plxd by id.
       const images = row.kind === "pending" ? row.images : (sent?.images ?? row.images);
       const threads = row.threads ?? sent?.threads;
       return (
         <div className="group/prompt flex flex-col items-end gap-1.5">
+          {files.length > 0 && (
+            <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+              {files.map((path) => (
+                <SentFile key={path} path={path} />
+              ))}
+            </div>
+          )}
           {images && images.length > 0 && (
             <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
               {images.map((image, i) => (
@@ -1430,11 +1443,11 @@ export const RowView = memo(function RowView({
               ))}
             </div>
           )}
-          {/* A message of images alone has no bubble. */}
-          {(!images?.length || text?.trim() !== "") && (
+          {/* A message of images or files alone has no bubble. */}
+          {((!images?.length && !files.length) || said?.trim() !== "") && (
             <div className="max-w-[85%] rounded-2xl bg-selected px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap">
               {/* A follow-up from an older log, which has no text for it. */}
-              {text ?? <span className="text-muted-foreground italic">Follow-up message</span>}
+              {said ?? <span className="text-muted-foreground italic">Follow-up message</span>}
             </div>
           )}
           <PromptMeta
@@ -1609,6 +1622,12 @@ function ModelLabel({ model }: { model: string }) {
       {modelName(model)}
     </span>
   );
+}
+
+/** A file sent with a message, as a card, read from the thread's host. */
+function SentFile({ path }: { path: string }) {
+  const hostId = useContext(ThreadLinksContext)?.hostId;
+  return <FileCard file={path} hostId={hostId} />;
 }
 
 /**

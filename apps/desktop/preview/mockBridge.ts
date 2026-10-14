@@ -106,6 +106,7 @@ const capabilities: Capabilities = Object.fromEntries(
     "threads",
   ].map((name) => [name, {}]),
 );
+capabilities["fileUploads"] = { maxBytes: 6 * 1024 * 1024 };
 capabilities["iconImages"] = { maxBytes: 64 * 1024 };
 capabilities["promptImages"] = {
   maxImages: 10,
@@ -547,6 +548,9 @@ const fileScripts: RepoScript[] = [
   { id: "link-check", name: "Link check", command: "pnpm lychee docs", runOnSettle: true },
 ];
 
+// Files `host/upload` took, by path, for `host/readUpload`.
+const uploads = new Map<string, string>();
+
 const handlers: { [M in Method]?: Handler<M> } = {
   "repo/scripts": (p) => ({
     scripts: repoScripts.get(p.repo) ?? [],
@@ -805,6 +809,18 @@ const handlers: { [M in Method]?: Handler<M> } = {
 
   // Every computer has the same folders in the preview.
   "host/folders": (p) => listing(p.path),
+
+  // Kept in memory, at the path plxd would save it at.
+  "host/upload": (p) => {
+    const path = `${HOME}/.parallax/uploads/${crypto.randomUUID()}/${p.name}`;
+    uploads.set(path, p.data);
+    return { path };
+  },
+  "host/readUpload": (p) => {
+    const data = uploads.get(p.path);
+    if (data === undefined) throw new Error(`${p.path} is not an uploaded file`);
+    return { data };
+  },
 
   "repo/add": (p) => {
     const found = db.repos.find((r) => r.path === p.path);
