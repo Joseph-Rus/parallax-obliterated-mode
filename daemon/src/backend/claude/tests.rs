@@ -3696,21 +3696,26 @@ fn tasks(running: &[(&str, BackgroundKind, &str)]) -> Step {
 }
 
 /// PLX-777: a `Monitor` call's task is a monitor, though Claude Code reports it as `local_bash`
-/// like any background command.
+/// like any background command, and stays one through `background_tasks_changed`, which names no
+/// call. As in T3 Code's fixture, the roster can list the task before its `task_started`.
 #[test]
 fn a_monitor_call_s_task_is_a_monitor() {
     let mut translator = Translator::new(ToolPolicy::NoWrite, "none");
     let call = br#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"toolu_mon","name":"Monitor","input":{"description":"Watching pull request #746","command":"gh pr checks 746 --watch"}}]}}"#;
     let started = br#"{"type":"system","subtype":"task_started","task_id":"m1","tool_use_id":"toolu_mon","description":"Watching pull request #746","task_type":"local_bash"}"#;
+    let roster = br#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"m1","task_type":"local_bash","description":"Watching pull request #746"}]}"#;
+    let with_server = br#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"m1","task_type":"local_bash","description":"Watching pull request #746"},{"task_id":"b1","task_type":"local_bash","description":"npm run dev"}]}"#;
+    let monitor = ("m1", BackgroundKind::Monitor, "Watching pull request #746");
     translator.line(&init_line(r#"["Read"]"#));
     translator.line(call);
+    translator.line(roster);
+    assert_eq!(translator.line(started), [tasks(&[monitor])]);
     assert_eq!(
-        translator.line(started),
-        [tasks(&[(
-            "m1",
-            BackgroundKind::Monitor,
-            "Watching pull request #746"
-        )])]
+        translator.line(with_server),
+        [tasks(&[
+            ("b1", BackgroundKind::Command, "npm run dev"),
+            monitor
+        ])]
     );
 }
 

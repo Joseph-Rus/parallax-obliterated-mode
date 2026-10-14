@@ -159,9 +159,12 @@ pub(super) struct Translator {
     subagents: HashSet<String>,
     /// The background commands and subagents still running, by `task_id` (PLX-725).
     tasks: BTreeMap<String, BackgroundTask>,
-    /// The `Monitor` calls, whose task is a monitor rather than a plain background command
-    /// (PLX-777): Claude Code reports both as `local_bash`.
+    /// The `Monitor` calls whose task hasn't started, by call id (PLX-777): Claude Code reports a
+    /// monitor as `local_bash`, like a plain background command.
     monitors: HashSet<String>,
+    /// The monitors' tasks, by `task_id`, as T3 Code keeps them: `background_tasks_changed`
+    /// names no call, so a monitor is known by its task once `task_started` tied the two.
+    monitor_tasks: HashSet<String>,
     turn_error: Option<FailureKind>,
     limit_rejected: bool,
     /// How many `result`s arrived.
@@ -240,6 +243,7 @@ impl Translator {
             subagents: HashSet::new(),
             tasks: BTreeMap::new(),
             monitors: HashSet::new(),
+            monitor_tasks: HashSet::new(),
             turn_error: None,
             limit_rejected: false,
             results: 0,
@@ -365,6 +369,12 @@ impl Translator {
                 {
                     self.subagents.insert(id.to_owned());
                 }
+                if let (Some(call), Some(id)) =
+                    (text(message, "tool_use_id"), text(message, "task_id"))
+                    && self.monitors.remove(call)
+                {
+                    self.monitor_tasks.insert(id.to_owned());
+                }
                 let mut tasks = self.tasks.clone();
                 if let Some(task) = self.counted(message) {
                     tasks.insert(task.task_id.clone(), task);
@@ -377,9 +387,12 @@ impl Translator {
                 let Some(listed) = message.get("tasks").and_then(Value::as_array) else {
                     return Vec::new();
                 };
+                let listed: Vec<_> = listed.iter().filter_map(Value::as_object).collect();
+                // A monitor gone from the roster has ended.
+                self.monitor_tasks
+                    .retain(|id| listed.iter().any(|task| text(task, "task_id") == Some(id)));
                 let tasks = listed
                     .iter()
-                    .filter_map(Value::as_object)
                     .filter_map(|task| self.counted(task))
                     .map(|task| (task.task_id.clone(), task))
                     .collect();
@@ -407,6 +420,7 @@ impl Translator {
                 let mut tasks = self.tasks.clone();
                 if let Some(id) = text(message, "task_id") {
                     tasks.remove(id);
+                    self.monitor_tasks.remove(id);
                 }
                 steps.extend(self.tasks_changed(tasks));
                 steps
@@ -454,18 +468,15 @@ impl Translator {
         if task.get("ambient").and_then(Value::as_bool) == Some(true) {
             return None;
         }
+        let id = text(task, "task_id")?;
         let kind = match text(task, "task_type")? {
-            "local_bash"
-                if text(task, "tool_use_id").is_some_and(|id| self.monitors.contains(id)) =>
-            {
-                BackgroundKind::Monitor
-            }
+            "local_bash" if self.monitor_tasks.contains(id) => BackgroundKind::Monitor,
             "local_bash" => BackgroundKind::Command,
             "local_agent" => BackgroundKind::Agent,
             _ => return None,
         };
         Some(BackgroundTask {
-            task_id: text(task, "task_id")?.to_owned(),
+            task_id: id.to_owned(),
             kind,
             description: text(task, "description").unwrap_or_default().to_owned(),
         })
