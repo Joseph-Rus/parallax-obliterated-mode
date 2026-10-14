@@ -16,7 +16,9 @@ use super::{
     WORKER_TOOL_LIST, WORKER_TOOLS, WORKSPACE_WRITE_ARGS, namer_arguments, no_write_settings,
     write_env_file,
 };
-use crate::backend::event::{MAX_ALWAYS_ALLOW_RULE_BYTES, MAX_ALWAYS_ALLOW_RULES};
+use crate::backend::event::{
+    BackgroundKind, BackgroundTask, MAX_ALWAYS_ALLOW_RULE_BYTES, MAX_ALWAYS_ALLOW_RULES,
+};
 use crate::backend::process::{Environment, Launcher, SpawnError};
 use crate::backend::{
     AccountRef, AgentEffort, AgentPermission, Answer, ApiKey, ApprovalRequest, Backend, Credential,
@@ -3672,15 +3674,44 @@ fn only_a_subagent_s_task_notification_ends_a_subagent() {
     let mut translator = Translator::new(ToolPolicy::NoWrite, "none");
     let started = br#"{"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"toolu_bash","description":"sleep","task_type":"local_bash"}"#;
     let ended = br#"{"type":"system","subtype":"task_notification","task_id":"b1","tool_use_id":"toolu_bash","status":"completed","summary":"done"}"#;
-    assert_eq!(translator.line(started), [tasks(&["b1"])]);
+    assert_eq!(
+        translator.line(started),
+        [tasks(&[("b1", BackgroundKind::Command, "sleep")])]
+    );
     assert_eq!(translator.line(ended), [tasks(&[])]);
 }
 
-/// The [`Event::BackgroundTasks`] step for the tasks `running`.
-fn tasks(running: &[&str]) -> Step {
+/// The [`Event::BackgroundTasks`] step for the tasks `running`: id, kind, and description.
+fn tasks(running: &[(&str, BackgroundKind, &str)]) -> Step {
     Step::Emit(Event::BackgroundTasks {
-        task_ids: running.iter().map(|&id| id.to_owned()).collect(),
+        tasks: running
+            .iter()
+            .map(|&(id, kind, description)| BackgroundTask {
+                task_id: id.to_owned(),
+                kind,
+                description: description.to_owned(),
+            })
+            .collect(),
     })
+}
+
+/// PLX-777: a `Monitor` call's task is a monitor, though Claude Code reports it as `local_bash`
+/// like any background command.
+#[test]
+fn a_monitor_call_s_task_is_a_monitor() {
+    let mut translator = Translator::new(ToolPolicy::NoWrite, "none");
+    let call = br#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"toolu_mon","name":"Monitor","input":{"description":"Watching pull request #746","command":"gh pr checks 746 --watch"}}]}}"#;
+    let started = br#"{"type":"system","subtype":"task_started","task_id":"m1","tool_use_id":"toolu_mon","description":"Watching pull request #746","task_type":"local_bash"}"#;
+    translator.line(&init_line(r#"["Read"]"#));
+    translator.line(call);
+    assert_eq!(
+        translator.line(started),
+        [tasks(&[(
+            "m1",
+            BackgroundKind::Monitor,
+            "Watching pull request #746"
+        )])]
+    );
 }
 
 /// PLX-725: an `ambient` task (housekeeping or a live-update watcher) and a task type T3 Code
@@ -3694,9 +3725,13 @@ fn only_background_commands_and_subagents_count_as_background_work() {
     assert_eq!(translator.line(ambient), []);
     assert_eq!(translator.line(workflow), []);
     let level = br#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"w1","task_type":"local_bash","description":"watch","ambient":true},{"task_id":"b1","task_type":"local_bash","description":"dev server"},{"task_id":"a1","task_type":"local_agent","description":"review"}]}"#;
-    assert_eq!(translator.line(level), [tasks(&["a1", "b1"])]);
+    let (review, server) = (
+        ("a1", BackgroundKind::Agent, "review"),
+        ("b1", BackgroundKind::Command, "dev server"),
+    );
+    assert_eq!(translator.line(level), [tasks(&[review, server])]);
     let one_left = br#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a1","task_type":"local_agent","description":"review"}]}"#;
-    assert_eq!(translator.line(one_left), [tasks(&["a1"])]);
+    assert_eq!(translator.line(one_left), [tasks(&[review])]);
     let missed_end = br#"{"type":"system","subtype":"task_notification","task_id":"b1","status":"completed","summary":"done"}"#;
     assert_eq!(translator.line(missed_end), [], "already gone");
 }

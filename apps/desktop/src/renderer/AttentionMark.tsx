@@ -1,4 +1,4 @@
-import { CircleAlert, MessageCircleQuestion } from "lucide-react";
+import { CircleAlert, Eye, MessageCircleQuestion } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { Attention } from "./attention";
@@ -62,8 +62,8 @@ function Working({ since }: { since: string }) {
 }
 
 /**
- * A row's status, as its mark and a word: Working for how long since `since`, Needs you, Done, or
- * Failed. Settled shows nothing. Done animates only when this row saw the thread finish.
+ * A row's status, as its mark and a word: Working for how long since `since`, Monitoring or Waiting (PLX-777),
+ * Needs you, Done, or Failed. Settled shows nothing. Done animates only when this row saw the thread finish.
  */
 export function AttentionBadge({
   attention,
@@ -91,6 +91,14 @@ export function AttentionBadge({
         <span className={`${look} text-working`}>
           <WorkingMark />
           {since ? <Working since={since} /> : count && count > 1 ? `${count} working` : "Working"}
+        </span>
+      );
+    case "monitoring":
+    case "waiting":
+      return (
+        <span className={`${look} text-working`}>
+          <Eye aria-hidden />
+          {attention === "monitoring" ? "Monitoring" : "Waiting"}
         </span>
       );
     case "needsYou":

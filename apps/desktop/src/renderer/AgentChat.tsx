@@ -141,6 +141,7 @@ import {
 } from "./transcript";
 import { SetUpGithub } from "./ui";
 import { useAgentRun, type SentMessage } from "./useAgentRun";
+import { WaitingBar } from "./WaitingBar";
 import { clockOptions } from "./prefs";
 
 /** A row: a transcript item, or a message this window sent that hasn't reached the agent yet. */
@@ -316,11 +317,19 @@ export function AgentChat({
   const connected = connection?.status === "connected";
   const catalog = useCatalog(hostId);
   const queueEnabled = connected && "queue" in connection.capabilities;
-  const { transcript, error, sent, send, cancel, queue, held, older, loadOlder } = useAgentRun(
-    hostId,
-    runId,
-    connected,
-  );
+  const {
+    transcript,
+    error,
+    sent,
+    send,
+    cancel,
+    queue,
+    held,
+    background,
+    watching,
+    older,
+    loadOlder,
+  } = useAgentRun(hostId, runId, connected);
   // Permission requests (PLX-196): those answered here read as answered at once.
   const { answers, answer, dismiss } = useAnswers(hostId);
   const [resendError, setResendError] = useState<string>();
@@ -762,6 +771,10 @@ export function AgentChat({
           <PlanStrip items={plan.items} active={plan.active} returnFocus={focusComposer} />
         )}
         {goal && isRunning(run?.status) && !stalled && <GoalStrip objective={goal} />}
+        {/* Once its turn settles, as T3 Code's strip: a turn's own work shows in the transcript. */}
+        {!isRunning(run?.status) && (
+          <WaitingBar hostId={hostId} runId={runId} background={background} watching={watching} />
+        )}
         {queueEnabled && (
           <QueueStrip
             hostId={hostId}

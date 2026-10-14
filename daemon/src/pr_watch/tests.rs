@@ -285,3 +285,83 @@ fn a_snippet_is_one_line_without_html_comments() {
     assert_eq!(snippet("a <!-- hidden -->\n\n b"), "a b");
     assert_eq!(snippet(&"x".repeat(300)).chars().count(), 200);
 }
+
+/// PLX-777: every change to a run's watches logs `pr.watches` with what it watches now, both
+/// from `pr/unwatch` and from a watch that ends on its own.
+#[tokio::test]
+async fn a_watch_ending_logs_the_run_s_watches() {
+    use std::time::Duration;
+
+    use parallax_protocol::{ParallaxEvent, PrViewParams, ProjectId, RunId};
+    use parallax_store::{RunFields, RunState};
+    use tokio_util::sync::CancellationToken;
+
+    use super::{record_job, unwatch};
+    use crate::server::Daemon;
+
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::for_tests(dir.path(), 10_000, Duration::from_secs(90));
+    let (run_id, project) = (RunId::generate(), ProjectId::generate());
+    let (first, second) = (
+        "https://github.com/o/r/pull/1".to_owned(),
+        "https://github.com/o/r/pull/2".to_owned(),
+    );
+    let watch = Watch::new(start());
+    let payload = serde_json::to_string(&watch).unwrap();
+    let urls = [first.clone(), second.clone()];
+    daemon
+        .store
+        .run(&CancellationToken::new(), move |db| {
+            let fields = RunFields {
+                project_id: project.into(),
+                prompt: "p".to_owned(),
+                requested_account: None,
+                policy: "workspaceWrite".to_owned(),
+                backend: "fake".to_owned(),
+                coordinator_thread: None,
+                parent: None,
+                notify_parent: false,
+                model: None,
+                effort: None,
+                permission: None,
+                context_window: None,
+                fast: None,
+                approvals: false,
+                checkout: false,
+                explore: false,
+            };
+            db.create_run(run_id.into(), &fields, &RunState::default())
+                .unwrap();
+            for url in &urls {
+                db.put_pr_watch(run_id.into(), url, &payload).unwrap();
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let params = PrViewParams {
+        run_id,
+        url: first.clone(),
+    };
+    assert!(unwatch(&daemon, params).await.unwrap().was_watching);
+    let key = second.clone();
+    let ended = daemon
+        .store
+        .run(&CancellationToken::new(), move |db| {
+            record_job(db, run_id.into(), &key, watch.started_at, None, None)
+        })
+        .await
+        .unwrap();
+    assert!(ended);
+
+    let (entries, _) = daemon.log.run_events(run_id, 0, 100, usize::MAX).unwrap();
+    let logged: Vec<Vec<String>> = entries
+        .iter()
+        .filter_map(|entry| match entry.event().into_owned() {
+            ParallaxEvent::PrWatches { urls, .. } => Some(urls),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(logged, [vec![second], Vec::new()]);
+}

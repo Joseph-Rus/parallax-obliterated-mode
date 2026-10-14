@@ -3,7 +3,7 @@
 //! The shapes follow the Agent SDK's types (0004 [14]) and the headless docs (0004 [11]). Fields
 //! Parallax doesn't use are ignored, as 0004 asks, so a newer CLI that adds fields still parses.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use jiff::Timestamp;
 use serde_json::{Map, Value};
@@ -13,9 +13,9 @@ use super::{
     WORKER_MIN_VERSION, WORKER_TOOLS,
 };
 use crate::backend::event::{
-    ApprovalRequest, Event, Failure, FailureKind, LimitStatus, LimitWindow,
-    MAX_ALWAYS_ALLOW_RULE_BYTES, MAX_ALWAYS_ALLOW_RULES, ModelUsage, SubagentStatus, TodoItem,
-    ToolStatus, Usage, WarningKind, todo,
+    ApprovalRequest, BackgroundKind, BackgroundTask, Event, Failure, FailureKind, LimitStatus,
+    LimitWindow, MAX_ALWAYS_ALLOW_RULE_BYTES, MAX_ALWAYS_ALLOW_RULES, ModelUsage, SubagentStatus,
+    TodoItem, ToolStatus, Usage, WarningKind, todo,
 };
 use crate::backend::{ApprovalId, ToolPolicy};
 
@@ -158,7 +158,10 @@ pub(super) struct Translator {
     /// ends a subagent (PLX-382), not a background command.
     subagents: HashSet<String>,
     /// The background commands and subagents still running, by `task_id` (PLX-725).
-    tasks: BTreeSet<String>,
+    tasks: BTreeMap<String, BackgroundTask>,
+    /// The `Monitor` calls, whose task is a monitor rather than a plain background command
+    /// (PLX-777): Claude Code reports both as `local_bash`.
+    monitors: HashSet<String>,
     turn_error: Option<FailureKind>,
     limit_rejected: bool,
     /// How many `result`s arrived.
@@ -235,7 +238,8 @@ impl Translator {
             session_id: None,
             denied: HashSet::new(),
             subagents: HashSet::new(),
-            tasks: BTreeSet::new(),
+            tasks: BTreeMap::new(),
+            monitors: HashSet::new(),
             turn_error: None,
             limit_rejected: false,
             results: 0,
@@ -362,10 +366,8 @@ impl Translator {
                     self.subagents.insert(id.to_owned());
                 }
                 let mut tasks = self.tasks.clone();
-                if counted(message)
-                    && let Some(id) = text(message, "task_id")
-                {
-                    tasks.insert(id.to_owned());
+                if let Some(task) = self.counted(message) {
+                    tasks.insert(task.task_id.clone(), task);
                 }
                 self.tasks_changed(tasks).into_iter().collect()
             }
@@ -378,8 +380,8 @@ impl Translator {
                 let tasks = listed
                     .iter()
                     .filter_map(Value::as_object)
-                    .filter(|task| counted(task))
-                    .filter_map(|task| text(task, "task_id").map(str::to_owned))
+                    .filter_map(|task| self.counted(task))
+                    .map(|task| (task.task_id.clone(), task))
                     .collect();
                 self.tasks_changed(tasks).into_iter().collect()
             }
@@ -435,13 +437,38 @@ impl Translator {
     }
 
     /// The [`Event::BackgroundTasks`] for `tasks`, if they differ from the ones running.
-    fn tasks_changed(&mut self, tasks: BTreeSet<String>) -> Option<Step> {
+    fn tasks_changed(&mut self, tasks: BTreeMap<String, BackgroundTask>) -> Option<Step> {
         if tasks == self.tasks {
             return None;
         }
         self.tasks = tasks;
-        let task_ids = self.tasks.iter().cloned().collect();
-        Some(Step::Emit(Event::BackgroundTasks { task_ids }))
+        let tasks = self.tasks.values().cloned().collect();
+        Some(Step::Emit(Event::BackgroundTasks { tasks }))
+    }
+
+    /// The task a `task_started` or `background_tasks_changed` entry names, if it counts as
+    /// background work, as T3 Code counts it: a background command (which a Monitor runs as too)
+    /// or a subagent, unless Claude Code marks it `ambient`, as its housekeeping tasks and
+    /// live-update watchers are, which hosts must not treat as activity.
+    fn counted(&self, task: &Map<String, Value>) -> Option<BackgroundTask> {
+        if task.get("ambient").and_then(Value::as_bool) == Some(true) {
+            return None;
+        }
+        let kind = match text(task, "task_type")? {
+            "local_bash"
+                if text(task, "tool_use_id").is_some_and(|id| self.monitors.contains(id)) =>
+            {
+                BackgroundKind::Monitor
+            }
+            "local_bash" => BackgroundKind::Command,
+            "local_agent" => BackgroundKind::Agent,
+            _ => return None,
+        };
+        Some(BackgroundTask {
+            task_id: text(task, "task_id")?.to_owned(),
+            kind,
+            description: text(task, "description").unwrap_or_default().to_owned(),
+        })
     }
 
     /// `system/init`, which stream-json input repeats at the start of every turn.
@@ -626,6 +653,9 @@ impl Translator {
                     };
                     let input = block.get("input").cloned().unwrap_or(Value::Null);
                     let todos = (name == "TodoWrite").then(|| todo_list(&input)).flatten();
+                    if name == "Monitor" {
+                        self.monitors.insert(id.to_owned());
+                    }
                     steps.push(Step::Emit(Event::ToolCall {
                         call_id: id.to_owned(),
                         name: name.to_owned(),
@@ -917,14 +947,6 @@ impl Translator {
             resets_at: info.get("resetsAt").and_then(timestamp),
         }))]
     }
-}
-
-/// Whether a task counts as background work, as T3 Code counts it: a background command (which a
-/// Monitor runs as too) or a subagent, unless Claude Code marks it `ambient`, as its housekeeping
-/// tasks and live-update watchers are, which hosts must not treat as activity.
-fn counted(task: &Map<String, Value>) -> bool {
-    matches!(text(task, "task_type"), Some("local_bash" | "local_agent"))
-        && task.get("ambient").and_then(Value::as_bool) != Some(true)
 }
 
 /// `steps`, with each event wrapped as a subagent's when `message` came from one of the agent's

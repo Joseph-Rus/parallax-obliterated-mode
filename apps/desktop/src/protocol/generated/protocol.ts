@@ -429,6 +429,12 @@ export type ParallaxRequests = {
 	 */
 	"agent/resumeNow": { params: AgentResumeNowParams, result: AgentRunResult },
 	/**
+	 * `agent/stopTask` (PLX-777): stops one of a live run's background tasks, such as a
+	 * Monitor, through the CLI. Fails with `invalidParams` when the run has no live CLI or
+	 * its backend can't stop one.
+	 */
+	"agent/stopTask": { params: AgentStopTaskParams, result: AgentStopTaskResult },
+	/**
 	 * `agent/autoResume`: sets or clears a run's auto-resume override.
 	 */
 	"agent/autoResume": { params: AgentAutoResumeParams, result: AgentRunResult },
@@ -810,6 +816,7 @@ export const REQUEST_METHODS = [
 	"github/status",
 	"thread/search",
 	"agent/resumeNow",
+	"agent/stopTask",
 	"agent/autoResume",
 	"host/settings/get",
 	"host/settings/set",
@@ -3132,7 +3139,23 @@ export type ParallaxEvent = { "kind": "project.created",
 	/**
 	 * The new item.
 	 */
-	item: InboxItem, } | { "kind": "queue.updated",
+	item: InboxItem, } | { "kind": "agent.background",
+	/**
+	 * The run's id.
+	 */
+	runId: RunId,
+	/**
+	 * Every one still running, oldest first.
+	 */
+	tasks: Array<AgentBackgroundTask>, } | { "kind": "pr.watches",
+	/**
+	 * The run's id.
+	 */
+	runId: RunId,
+	/**
+	 * The URLs it watches now, as `pr/watches` has them.
+	 */
+	urls: Array<string>, } | { "kind": "queue.updated",
 	/**
 	 * The run's id.
 	 */
@@ -3238,6 +3261,32 @@ export type ParallaxEvent = { "kind": "project.created",
 	 */
 	restoreFiles?: boolean,
 };
+
+/**
+ * One of an agent's background tasks still running (PLX-777): a command it started in the
+ * background, a Monitor, or one of its own subagents. `agent/stopTask` stops it.
+ */
+export type AgentBackgroundTask = {
+	/**
+	 * The CLI's id for it, which `agent/stopTask` takes.
+	 */
+	taskId: string,
+	/**
+	 * What it is.
+	 */
+	kind: AgentBackgroundKind,
+	/**
+	 * What it does, as the agent described it, such as `Watching pull request #746`.
+	 */
+	description: string,
+};
+
+/**
+ * What an [`AgentBackgroundTask`] is.
+ *
+ * A newer plxd may send a kind this version does not know; treat it as unknown.
+ */
+export type AgentBackgroundKind = "command" | "monitor" | "agent";
 
 /**
  * Why a run failed, for code to match on.
@@ -5944,6 +5993,25 @@ export type AgentResumeNowParams = {
 };
 
 /**
+ * Params of `agent/stopTask` (PLX-777): stops one of a live run's background tasks.
+ */
+export type AgentStopTaskParams = {
+	/**
+	 * The run.
+	 */
+	runId: RunId,
+	/**
+	 * The task, as its [`AgentBackgroundTask`] names it.
+	 */
+	taskId: string,
+};
+
+/**
+ * Result of `agent/stopTask`. The task's end arrives as an `agent.background` event.
+ */
+export type AgentStopTaskResult = Record<symbol, never>;
+
+/**
  * Params of `agent/autoResume`: sets or clears a run's auto-resume override (decision 0049).
  * Turning it off for a `waiting` run clears its timer, and the run becomes `failed` with its
  * usage limit's error.
@@ -7967,6 +8035,29 @@ export type ShellSnapshot = {
 	 * `approvalRequested` item, at the `seq` it was logged at.
 	 */
 	requests: Array<LoggedEvent>,
+	/**
+	 * The runs whose agents wait on something now (PLX-777). Later `agent.background` and
+	 * `pr.watches` events replace each part. Absent means none.
+	 */
+	waiting?: Array<RunWaiting>,
+};
+
+/**
+ * What one run's agent waits on (PLX-777): background tasks, pull request watches, or both.
+ */
+export type RunWaiting = {
+	/**
+	 * The run.
+	 */
+	runId: RunId,
+	/**
+	 * Its agent's background tasks running now, as `ThreadSnapshot.background`.
+	 */
+	background?: Array<AgentBackgroundTask>,
+	/**
+	 * The URLs of its pull requests plxd watches, as `ThreadSnapshot.watching`.
+	 */
+	watching?: Array<string>,
 };
 
 /**
@@ -8028,6 +8119,16 @@ export type ThreadSnapshot = {
 	 * than `events`.
 	 */
 	requests: Array<LoggedEvent>,
+	/**
+	 * Its agent's background tasks running now (PLX-777), as the last `agent.background` event
+	 * says, which may be older than `events`. Later ones replace it. Absent means none.
+	 */
+	background?: Array<AgentBackgroundTask>,
+	/**
+	 * The URLs of its pull requests plxd watches (PLX-777), as `pr/watches` has them. Later
+	 * `pr.watches` events replace it. Absent means none.
+	 */
+	watching?: Array<string>,
 };
 
 /**

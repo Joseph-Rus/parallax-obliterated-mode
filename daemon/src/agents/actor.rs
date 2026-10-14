@@ -47,17 +47,17 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
 use parallax_protocol::jsonrpc::ErrorObject;
 use parallax_protocol::{AcceptId, AgentMerge, CliKind};
 use parallax_protocol::{
     AccountChoice, AccountId, AgentApprovalAnswer, AgentApprovalBy, AgentApprovalDecision,
-    AgentApproveParams, AgentApproveResult, AgentFailureKind, AgentOutcome, AgentOutputItem,
-    AgentRun, ApprovalId, DiffSummary, ErrorKind, GitStatus, ImageId, InboxKind, ParallaxEvent,
-    ProjectId, PromptImage, QueueResult, QueuedMessage, Role, RunId, TurnId,
+    AgentApproveParams, AgentApproveResult, AgentBackgroundTask, AgentFailureKind, AgentOutcome,
+    AgentOutputItem, AgentRun, ApprovalId, DiffSummary, ErrorKind, GitStatus, ImageId, InboxKind,
+    ParallaxEvent, ProjectId, PromptImage, QueueResult, QueuedMessage, Role, RunId, TurnId,
 };
 use parallax_store::{
     QueuedRow, Run as RunRow, RunAccept, SessionModelUsage, StoredImage, Worktree,
@@ -230,6 +230,11 @@ pub(super) enum Command {
     ResumeNow {
         reply: oneshot::Sender<Result<AgentRun, ErrorObject>>,
     },
+    /// `agent/stopTask` (PLX-777).
+    StopTask {
+        task_id: String,
+        reply: oneshot::Sender<Result<(), ErrorObject>>,
+    },
     /// `agent/autoResume` (PLX-371).
     AutoResume {
         auto_resume: Option<bool>,
@@ -286,7 +291,9 @@ impl Command {
             Self::Git { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
-            Self::Delete { reply, .. } | Self::RenameBranch { reply, .. } => {
+            Self::Delete { reply, .. }
+            | Self::RenameBranch { reply, .. }
+            | Self::StopTask { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
             Self::Wake(..) | Self::Detach => {}
@@ -1057,6 +1064,18 @@ impl Actor {
             }
             Command::Wake(summary, questions, task) => {
                 self.wakes.push(summary, questions, task, Instant::now());
+            }
+            Command::StopTask { task_id, reply } => {
+                let stopped = match &self.live {
+                    Some(live) => live.run.stop_task(&task_id),
+                    None => Err(AnswerError::Finished),
+                };
+                let _ = reply.send(stopped.map_err(|error| {
+                    ErrorObject::invalid_params(match error {
+                        AnswerError::Unsupported => "this run's provider can't stop a task",
+                        AnswerError::Finished => "the run's CLI has exited, and its tasks with it",
+                    })
+                }));
             }
             Command::ResumeNow { reply } => {
                 let _ = reply.send(self.resume_now().await);
@@ -3435,6 +3454,12 @@ impl Actor {
                 let outcome = outcome.clone();
                 self.exited(event, &outcome).await;
             }
+            Event::BackgroundTasks { tasks } => {
+                let (run_id, tasks) = (self.id, tasks.clone());
+                self.track_work(&event);
+                self.append(ParallaxEvent::AgentBackground { run_id, tasks })
+                    .await;
+            }
             _ => {
                 if matches!(event, Event::TurnStarted { .. }) {
                     self.wake_session().await;
@@ -3474,6 +3499,12 @@ impl Actor {
             .is_some_and(|live| live.settled.is_some());
         self.record_usage(finished).await;
         self.clear_live();
+        // The CLI took its background tasks with it.
+        if self.publish_background(Vec::new()) {
+            let (run_id, tasks) = (self.id, Vec::new());
+            self.append(ParallaxEvent::AgentBackground { run_id, tasks })
+                .await;
+        }
         // The CLI exited while they waited, so nothing can answer them now.
         for approval_id in self.approvals.pending() {
             let gone = ended(AgentApprovalDecision::Withdrawn, AgentApprovalBy::Agent);
@@ -3526,10 +3557,11 @@ impl Actor {
             Event::ToolResult { call_id, .. } => {
                 self.open_work.remove(call_id);
             }
-            Event::BackgroundTasks { task_ids } => {
+            Event::BackgroundTasks { tasks } => {
                 self.open_work.retain(|work| !work.starts_with("task:"));
                 self.open_work
-                    .extend(task_ids.iter().map(|id| format!("task:{id}")));
+                    .extend(tasks.iter().map(|task| format!("task:{}", task.task_id)));
+                self.publish_background(tasks.clone());
             }
             _ => return,
         }
@@ -3576,6 +3608,22 @@ impl Actor {
             _ => {}
         }
         false
+    }
+
+    /// Makes `tasks` the run's background tasks for its thread's snapshot (PLX-777). Returns
+    /// whether it had any before.
+    fn publish_background(&self, tasks: Vec<AgentBackgroundTask>) -> bool {
+        let mut background = self
+            .daemon
+            .agents
+            .background
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if tasks.is_empty() {
+            background.remove(&self.id).is_some()
+        } else {
+            background.insert(self.id, tasks).is_some()
+        }
     }
 
     fn clear_live(&mut self) {
@@ -4082,8 +4130,8 @@ mod tests {
 
     use parallax_protocol::{
         AccountChoice, AccountId, AgentApprovalAnswer, AgentApprovalBy, AgentApprovalDecision,
-        AgentApproveParams, AgentOutcome, AgentOutputItem, ApprovalId, ErrorKind, ParallaxEvent,
-        ProjectId, RunId, TurnId,
+        AgentApproveParams, AgentBackgroundKind, AgentBackgroundTask, AgentOutcome,
+        AgentOutputItem, ApprovalId, ErrorKind, ParallaxEvent, ProjectId, RunId, TurnId,
     };
     use parallax_store::{Run as RunRow, RunFields, RunState, Worktree};
     use tokio::sync::{mpsc, oneshot};
@@ -4728,7 +4776,14 @@ mod tests {
         actor.live = Some(Live::new(run.clone(), events, None));
         actor.in_flight = 1;
         let tasks = |running: &[&str]| Event::BackgroundTasks {
-            task_ids: running.iter().map(|&id| id.to_owned()).collect(),
+            tasks: running
+                .iter()
+                .map(|&id| AgentBackgroundTask {
+                    task_id: id.to_owned(),
+                    kind: AgentBackgroundKind::Command,
+                    description: "npm run dev".to_owned(),
+                })
+                .collect(),
         };
         let counted = |actor: &Actor| daemon.agents.idle.0.lock().unwrap().contains(&actor.id);
         let held = || run.held.load(std::sync::atomic::Ordering::SeqCst);
@@ -4757,10 +4812,18 @@ mod tests {
         }
         assert!(!actor.busy(), "settled");
         assert!(!counted(&actor), "the cap can't release it");
+        let id = actor.id;
+        let snapshot = || crate::agents::background(&daemon, id);
+        assert_eq!(
+            snapshot().len(),
+            1,
+            "a thread's snapshot shows it (PLX-777)"
+        );
         actor.release_idle();
         assert!(held(), "its window passing defers the release");
 
         actor.on_event(Some(tasks(&[]))).await;
+        assert!(snapshot().is_empty());
         assert!(counted(&actor), "counted toward the cap once it ended");
         actor.release_idle();
         assert!(!held(), "released once its window passes");

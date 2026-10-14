@@ -557,7 +557,7 @@ export const withheldMethods = [
   "memory/propose",
   "pr/link",
   "pr/unlink",
-  "pr/unwatch",
+  // `pr/unwatch` stays callable: the waiting bar's Stop ends a watch (PLX-777).
   "pr/watch",
   "pr/watches",
   "project/fromThreads",

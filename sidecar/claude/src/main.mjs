@@ -8,6 +8,7 @@
  *   {"id", "stdin": <message>}  what plxd wrote on the CLI's stdin before the SDK: a user message,
  *       which joins the query's prompt, or a `control_response` that answers `canUseTool`
  *   {"id", "type": "interrupt" | "end" | "kill"}  ends the turn, ends the prompt, or kills the CLI
+ *   {"id", "type": "stopTask", "taskId"}  stops one of the CLI's background tasks
  *
  * Out, one line each:
  *   `<id> <line>`  a line of the CLI's stdout, except the control traffic the SDK answers
@@ -57,6 +58,8 @@ input.on("line", (line) => {
   else if (message.type === "interrupt") live.interrupt();
   else if (message.type === "end") live.prompt.end();
   else if (message.type === "kill") live.kill();
+  else if (message.type === "stopTask" && typeof message.taskId === "string")
+    live.stopTask(message.taskId);
 });
 input.on("close", () => {
   for (const live of queries.values()) live.kill();
@@ -140,6 +143,9 @@ function open(id, { executable, args, cwd, env, supervisor }) {
     },
     interrupt() {
       run?.interrupt().catch(() => {});
+    },
+    stopTask(taskId) {
+      run?.stopTask(taskId).catch(() => {});
     },
     kill() {
       prompt.end();

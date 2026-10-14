@@ -22,8 +22,10 @@ use std::time::Duration;
 use jiff::Timestamp;
 use parallax_protocol::jsonrpc::ErrorObject;
 use parallax_protocol::{
-    PrViewParams, PrWatchResult, PrWatchesParams, PrWatchesResult, RunId, TurnId,
+    ParallaxEvent, PrViewParams, PrWatchResult, PrWatchesParams, PrWatchesResult, ProjectId, RunId,
+    TurnId,
 };
+use parallax_store::Store;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -230,6 +232,7 @@ pub(crate) async fn watch(
                 .map_err(ErrorObject::internal_error)?;
             db.put_pr_watch(id, &key, &watch)
                 .map_err(|e| store_error(&e))?;
+            stage_watches(db, id)?;
             Ok(false)
         })
         .await?;
@@ -253,7 +256,11 @@ pub(crate) async fn unwatch(
     let was_watching = daemon
         .store
         .run(&CancellationToken::new(), move |db| {
-            db.delete_pr_watch(id, &key).map_err(|e| store_error(&e))
+            let deleted = db.delete_pr_watch(id, &key).map_err(|e| store_error(&e))?;
+            if deleted {
+                stage_watches(db, id)?;
+            }
+            Ok(deleted)
         })
         .await?;
     Ok(PrWatchResult {
@@ -269,19 +276,42 @@ pub(crate) async fn watches(
     params: PrWatchesParams,
 ) -> Result<PrWatchesResult, ErrorObject> {
     let id = Uuid::from(params.run_id);
-    let watches = daemon
+    let urls = daemon
         .reader
-        .run(&CancellationToken::new(), |db| {
-            db.pr_watches().map_err(|e| store_error(&e))
-        })
+        .run(&CancellationToken::new(), move |db| urls(db, id))
         .await?;
-    Ok(PrWatchesResult {
-        urls: watches
-            .into_iter()
-            .filter(|(run, _, _)| *run == id)
-            .map(|(_, url, _)| url)
-            .collect(),
-    })
+    Ok(PrWatchesResult { urls })
+}
+
+/// The URLs run `run` watches, as `pr/watches` lists them.
+pub(crate) fn urls(db: &Store, run: Uuid) -> Result<Vec<String>, ErrorObject> {
+    Ok(db
+        .pr_watches()
+        .map_err(|e| store_error(&e))?
+        .into_iter()
+        .filter(|(watcher, _, _)| *watcher == run)
+        .map(|(_, url, _)| url)
+        .collect())
+}
+
+/// Stages `pr.watches` with run `run`'s watches as `db` has them now (PLX-777), in the job that
+/// changed them.
+fn stage_watches(db: &mut Tx, run: Uuid) -> Result<(), ErrorObject> {
+    let row = db
+        .get_run(run)
+        .map_err(|e| store_error(&e))?
+        .ok_or_else(|| ErrorObject::internal_error(format!("run {run} is gone")))?;
+    let project = ProjectId::try_from(row.fields.project_id)
+        .map_err(|_| ErrorObject::internal_error("a stored project id is not a UUIDv7"))?;
+    let run_id = RunId::try_from(run)
+        .map_err(|_| ErrorObject::internal_error(format!("run {run} has an invalid id")))?;
+    let urls = urls(db, run)?;
+    db.stage(
+        Timestamp::now(),
+        Some(project),
+        ParallaxEvent::PrWatches { run_id, urls },
+    );
+    Ok(())
 }
 
 /// The sweep: see the module documentation. Returns when `stop` is cancelled.
@@ -473,7 +503,7 @@ async fn record(
 
 /// [`record`]'s job. Says whether it changed anything.
 fn record_job(
-    db: &Tx,
+    db: &mut Tx,
     run: Uuid,
     url: &str,
     started_at: Timestamp,
@@ -495,6 +525,9 @@ fn record_job(
         None => db.delete_pr_watch(run, url).map(drop),
     }
     .map_err(|e| store_error(&e))?;
+    if next.is_none() {
+        stage_watches(db, run)?;
+    }
     if let Some(text) = text {
         let run_id = RunId::try_from(run)
             .map_err(|_| ErrorObject::internal_error(format!("run {run} has an invalid id")))?;

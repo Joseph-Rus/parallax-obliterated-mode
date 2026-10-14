@@ -1179,6 +1179,7 @@ impl Backend for ClaudeBackend {
         let switch = CancelSwitch::new();
         let (handle, control) = RunHandle::new(request.run_id, true, switch.clone());
         let (handle, answers) = handle.with_answers();
+        let (handle, task_stops) = handle.with_task_stops();
         let held = handle.held();
         let resumed = request.resume.is_some();
         let baseline = request
@@ -1192,6 +1193,7 @@ impl Backend for ClaudeBackend {
             grace: self.grace,
             control,
             answers,
+            task_stops,
             held,
             sink,
             switch,
@@ -1400,6 +1402,8 @@ struct Driver {
     grace: Duration,
     control: mpsc::UnboundedReceiver<FollowUp>,
     answers: mpsc::UnboundedReceiver<Answer>,
+    /// [`Run::stop_task`]'s task ids (PLX-777).
+    task_stops: mpsc::UnboundedReceiver<String>,
     /// While held, plxd has a message waiting for the CLI, so stdin stays open (PLX-370).
     held: Held,
     sink: EventSink,
@@ -1482,6 +1486,7 @@ impl Driver {
                     Some(answer) => self.answer(answer, &mut stdin),
                     None => answers_open = false,
                 },
+                Some(task_id) = self.task_stops.recv() => self.input.stop_task(&task_id),
                 follow_up = self.control.recv(), if control_open => match follow_up {
                     Some(follow_up) => {
                         let message = Message::with_priority(

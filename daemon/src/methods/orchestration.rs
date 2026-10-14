@@ -3,12 +3,13 @@
 //! which answer with a snapshot at a `seq` and then send the events after it on the connection's
 //! cursors, as `events/subscribe` does, or replay a short gap instead.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use parallax_protocol::jsonrpc::ErrorObject;
 use parallax_protocol::{
     DispatchResult, LoggedEvent, MAX_REPLAY_BYTES, MAX_REPLAY_EVENTS, OrchestrationCommand,
-    ProjectId, RunId, ShellSnapshot, SubscribeShellParams, SubscribeShellResult,
+    ProjectId, RunId, RunWaiting, ShellSnapshot, SubscribeShellParams, SubscribeShellResult,
     SubscribeThreadParams, SubscribeThreadResult, SubscriptionId, ThreadHistoryParams,
     ThreadHistoryResult, ThreadSnapshot,
 };
@@ -55,7 +56,7 @@ pub(super) async fn subscribe_shell(
         };
         return Ok((result, cursor));
     }
-    let ((projects, repos, threads, runs, requests), seq) = at_seq(context, |db, _| {
+    let ((projects, repos, threads, runs, requests, watches), seq) = at_seq(context, |db, _| {
         let error = |error| store_error(&error);
         let projects = db
             .list_projects()
@@ -85,10 +86,36 @@ pub(super) async fn subscribe_shell(
             .map(|(row, worktree)| agents::snapshot(row, worktree.as_ref()))
             .collect::<Result<Vec<_>, _>>()?;
         let requests = graph::requests(db, None)?;
-        Ok((projects, repos, threads, runs, requests))
+        let watches = db.pr_watches().map_err(error)?;
+        Ok((projects, repos, threads, runs, requests, watches))
     })
     .await?;
     cursor.after = seq;
+    let mut waiting: BTreeMap<RunId, RunWaiting> = agents::backgrounds(&context.daemon)
+        .into_iter()
+        .map(|(run_id, background)| {
+            let watching = Vec::new();
+            let run = RunWaiting {
+                run_id,
+                background,
+                watching,
+            };
+            (run_id, run)
+        })
+        .collect();
+    for (run, url, _) in watches {
+        let run_id = RunId::try_from(run)
+            .map_err(|_| ErrorObject::internal_error("a stored run id is not a UUIDv7"))?;
+        waiting
+            .entry(run_id)
+            .or_insert_with(|| RunWaiting {
+                run_id,
+                background: Vec::new(),
+                watching: Vec::new(),
+            })
+            .watching
+            .push(url);
+    }
     let result = SubscribeShellResult {
         subscription: cursor.subscription,
         snapshot: Some(ShellSnapshot {
@@ -98,6 +125,7 @@ pub(super) async fn subscribe_shell(
             threads,
             runs,
             requests,
+            waiting: waiting.into_values().collect(),
         }),
     };
     Ok((result, cursor))
@@ -150,33 +178,36 @@ pub(super) async fn subscribe_thread(
             db.import_thread(thread_id.into())
         })
         .await?;
-    let ((thread, runs, requests, (events, more)), seq) = at_seq(context, move |db, seq| {
-        let error = |error| store_error(&error);
-        let row = db
-            .get_run(thread_id.into())
-            .map_err(error)?
-            .ok_or_else(|| agents::run_not_found(thread_id))?;
-        let worktree = db.get_worktree(row.id).map_err(error)?;
-        let thread = agents::snapshot(&row, worktree.as_ref())?;
-        let runs = graph::runs(db, thread_id.into())?;
-        let requests = graph::requests(db, Some(thread_id.into()))?;
-        let (stored, more) = db
-            .run_events_before(
-                thread_id.into(),
-                seq + 1,
-                PAGE_EVENTS,
-                MAX_EVENTS_PAGE_BYTES,
-            )
-            .map_err(error)?;
-        let events = stored
-            .into_iter()
-            .rev()
-            .map(|stored| logged(&entry(stored, true)))
-            .collect();
-        Ok((thread, runs, requests, (events, more)))
-    })
-    .await?;
+    let ((thread, runs, requests, watching, (events, more)), seq) =
+        at_seq(context, move |db, seq| {
+            let error = |error| store_error(&error);
+            let row = db
+                .get_run(thread_id.into())
+                .map_err(error)?
+                .ok_or_else(|| agents::run_not_found(thread_id))?;
+            let worktree = db.get_worktree(row.id).map_err(error)?;
+            let thread = agents::snapshot(&row, worktree.as_ref())?;
+            let runs = graph::runs(db, thread_id.into())?;
+            let requests = graph::requests(db, Some(thread_id.into()))?;
+            let watching = crate::pr_watch::urls(db, thread_id.into())?;
+            let (stored, more) = db
+                .run_events_before(
+                    thread_id.into(),
+                    seq + 1,
+                    PAGE_EVENTS,
+                    MAX_EVENTS_PAGE_BYTES,
+                )
+                .map_err(error)?;
+            let events = stored
+                .into_iter()
+                .rev()
+                .map(|stored| logged(&entry(stored, true)))
+                .collect();
+            Ok((thread, runs, requests, watching, (events, more)))
+        })
+        .await?;
     cursor.after = seq;
+    let background = agents::background(daemon, thread_id);
     let result = SubscribeThreadResult {
         subscription: cursor.subscription,
         snapshot: Some(ThreadSnapshot {
@@ -186,6 +217,8 @@ pub(super) async fn subscribe_thread(
             events,
             more,
             requests,
+            background,
+            watching,
         }),
     };
     Ok((result, cursor))

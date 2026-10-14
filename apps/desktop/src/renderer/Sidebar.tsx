@@ -97,6 +97,7 @@ import { stored } from "./stored";
 import { dragThread } from "./threadDrag";
 import {
   asksOf,
+  waitingOf,
   projectRuns,
   threadProjects,
   type ForkChoice,
@@ -414,7 +415,7 @@ export function ThreadList({
           host: h,
           view,
           repo: repoOf(t.repo),
-          attention: attentionOf(t, run, asksOf(state, t.id)),
+          attention: attentionOf(t, run, asksOf(state, t.id), waitingOf(state, t.id)),
           at: lastPrompt(t),
         };
       });
@@ -472,7 +473,10 @@ export function ThreadList({
   }
   const tops = pool.filter((i) => !inList.has(parentKey(i) ?? ""));
   // A working top-level thread takes its children with it, so a family isn't split across sections.
-  const workingTops = workingSection ? tops.filter((i) => i.attention === "working") : [];
+  // A thread waiting on a Monitor or a watched pull request stays with them (PLX-777).
+  const workingTops = workingSection
+    ? tops.filter((i) => ["working", "monitoring", "waiting"].includes(i.attention))
+    : [];
   const topThreads = tops.filter((i) => !workingTops.includes(i));
   const selectedKey = selection.kind === "thread" ? `${host.id}/${selection.threadId}` : undefined;
   if (selectedKey !== revealed) {

@@ -13,8 +13,8 @@ use parallax_protocol::{
     AgentApproveResult, AgentAutoResumeParams, AgentCancelParams, AgentCommitParams,
     AgentEventsParams, AgentEventsResult, AgentListParams, AgentListResult, AgentOpenPrParams,
     AgentOpenPrResult, AgentPolicy, AgentRequestChangesParams, AgentResumeNowParams,
-    AgentRunResult, AgentSendParams, AgentStartParams, ErrorKind, GitStatus, LoggedEvent,
-    PromptImage, RunId,
+    AgentRunResult, AgentSendParams, AgentStartParams, AgentStopTaskParams, AgentStopTaskResult,
+    ErrorKind, GitStatus, LoggedEvent, PromptImage, RunId,
 };
 
 use super::Context;
@@ -125,6 +125,15 @@ pub(crate) async fn resume_now(
         .detached(agents::resume_now(daemon, params.run_id))
         .await?;
     Ok(AgentRunResult { run })
+}
+
+/// `agent/stopTask` (PLX-777): through the run's actor, to its live CLI.
+pub(crate) async fn stop_task(
+    context: &Context,
+    params: AgentStopTaskParams,
+) -> Result<AgentStopTaskResult, ErrorObject> {
+    agents::stop_task(&context.daemon, params.run_id, params.task_id).await?;
+    Ok(AgentStopTaskResult {})
 }
 
 /// `agent/autoResume` (PLX-371): through the run's actor.
