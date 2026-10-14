@@ -501,6 +501,38 @@ test("with fileUploads, a file goes to the host and the message lists its path (
   );
 });
 
+test("an image pasted during an upload stays, and a failed read says why (PLX-779)", async () => {
+  let saved: (answer: unknown) => void = () => {};
+  const upload = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        saved = resolve;
+      }),
+  );
+  window.parallax = {
+    platform: "darwin",
+    request: upload,
+    onConnectionState: () => () => {},
+    connectionState: () => new Promise(() => {}),
+  } as Partial<ParallaxBridge> as ParallaxBridge;
+  const onSend = vi.fn(async () => undefined);
+  const { paste, press } = render(onSend, caps, { hostId: "local", uploadBytes: 1024 });
+  await paste([new File(["%PDF-"], "paper.pdf", { type: "application/pdf" })]);
+  await press("Enter");
+  await vi.waitFor(() => expect(upload).toHaveBeenCalled());
+  await paste([pngFile()]);
+  await act(async () => saved({ logId: "log-1", result: { path: "/up/paper.pdf" } }));
+  await vi.waitFor(() => expect(onSend).toHaveBeenCalled());
+  expect(onSend).toHaveBeenCalledWith("Attached files:\n- /up/paper.pdf", {}, [], []);
+  expect(thumbnails()).toEqual(["Image 1"]);
+
+  upload.mockRejectedValueOnce(new Error("NotReadableError"));
+  await paste([new File(["x"], "notes.md", { type: "text/markdown" })]);
+  await press("Enter");
+  await vi.waitFor(() => expect(alert()).toMatch(/^A file couldn't be read/));
+  expect(document.querySelector('[role="textbox"]')!.getAttribute("contenteditable")).toBe("true");
+});
+
 test("Up and Down recall the thread's earlier prompts until one is edited (PLX-325)", async () => {
   const { box, type, press } = render(async () => undefined, caps, {
     history: ["first", "second\nline two"],

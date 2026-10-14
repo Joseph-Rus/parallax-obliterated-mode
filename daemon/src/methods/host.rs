@@ -384,7 +384,8 @@ pub(crate) async fn upload(
 /// Writes `params`' file as `<dir>/<name>`, after checking its name and size.
 fn save_upload(dir: &Path, params: &HostUploadParams) -> Result<HostUploadResult, ErrorObject> {
     let name = params.name.as_str();
-    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0']) {
+    // `:` too: on Windows `C:x` is a path on drive C, which `join` would put outside `dir`.
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':', '\0']) {
         return Err(ErrorObject::invalid_params(format!(
             "{:?} is not a plain file name",
             untrusted(name)
@@ -663,7 +664,7 @@ mod tests {
         assert_eq!(saved.path, path.to_string_lossy());
         assert_eq!(std::fs::read(path).unwrap(), b"%PDF-");
 
-        for name in ["", ".", "..", "../x", "a/b", "a\\b"] {
+        for name in ["", ".", "..", "../x", "a/b", "a\\b", "C:x"] {
             assert_eq!(upload(name, "").unwrap_err().code, -32602, "{name}");
         }
         assert_eq!(upload("x", "not base64").unwrap_err().code, -32602);

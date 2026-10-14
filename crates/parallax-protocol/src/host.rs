@@ -170,8 +170,8 @@ pub struct HostFolder {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct HostUploadParams {
-    /// Its file name, kept as is. A name with a path separator, `.`, or `..` fails with
-    /// `invalidParams`.
+    /// Its file name, kept as is. A name with `/`, `\`, or `:`, or that is `.` or `..`, fails
+    /// with `invalidParams`.
     pub name: String,
     /// Its bytes, in standard base64 with padding, at most the capability's `maxBytes` long.
     pub data: String,

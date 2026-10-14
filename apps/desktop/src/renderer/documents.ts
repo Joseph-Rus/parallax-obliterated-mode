@@ -48,7 +48,8 @@ const listeners = new Set<() => void>();
 let version = 0;
 const keyOf = (hostId: string, doc: DocRef) => `${hostId}\n${doc.runId}\n${doc.path}`;
 
-async function openPdf(bytes: Uint8Array): Promise<PDFDocumentProxy> {
+/** `bytes` as a PDF, with pdf.js loaded on first use. */
+export async function openPdf(bytes: Uint8Array): Promise<PDFDocumentProxy> {
   const [pdfjs, worker] = await Promise.all([
     import("pdfjs-dist"),
     import("pdfjs-dist/build/pdf.worker.min.mjs?url"),

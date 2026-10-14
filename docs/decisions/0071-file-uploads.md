@@ -6,11 +6,11 @@
 
 ## Context
 
-The composer takes any file, but only images reach the agent (0026). Ryan wants to attach a PDF, such as a paper, and have the agent read it. Every backend's agent can read a file on disk with its own tools: Claude Code reads PDFs natively, and Codex, Cursor, and OpenCode read files through their tools. None of them take an arbitrary file inside the message the way Claude Code takes an image block. The host may be another computer, so the app can't write the file there itself.
+The composer takes any file, but only images reach the agent (0026). Ryan wants to attach a PDF, such as a paper, and have the agent read it. Every backend's agent can read a file on disk with its own tools: Claude Code's Read tool reads PDFs (with poppler for more than 10 pages, PLX-780), and Codex, Cursor, and OpenCode read files through their tools. None of them take an arbitrary file inside the message the way Claude Code takes an image block. The host may be another computer, so the app can't write the file there itself.
 
 ## Decision
 
-- **Method.** `host/upload {name, data}` saves a file at `<data folder>/uploads/<uuid v7>/<name>` and answers its absolute `path`. It's behind the `fileUploads` capability, whose `maxBytes` caps the base64 `data` at 6 MiB, so one request fits in one 8 MiB frame (0007). A name with a path separator, `.`, or `..`, or `data` that isn't base64, fails with `invalidParams`.
+- **Method.** `host/upload {name, data}` saves a file at `<data folder>/uploads/<uuid v7>/<name>` and answers its absolute `path`. It's behind the `fileUploads` capability, whose `maxBytes` caps the base64 `data` at 6 MiB, so one request fits in one 8 MiB frame (0007). A name with `/`, `\`, or `:` (on Windows `C:x` names a path on drive C), a name that is `.` or `..`, or `data` that isn't base64, fails with `invalidParams`.
 - **The message.** On send, the app uploads each file that isn't an image and adds an `Attached files:` list of their paths after the text. The agent decides how to read them. `agent/start`, `agent/send`, `thread/start`, `project/start`, the queue, and the store are unchanged, and the transcript shows the list as part of the message.
 - **Images** keep 0026's path, since the model then gets them as images.
 - **Sandbox.** A worker's sandbox (0013) lists the uploads folder as read-only, so it stays readable inside the otherwise unreadable data folder.

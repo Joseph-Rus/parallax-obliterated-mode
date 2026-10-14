@@ -1202,8 +1202,8 @@ export type HostFolder = {
  */
 export type HostUploadParams = {
 	/**
-	 * Its file name, kept as is. A name with a path separator, `.`, or `..` fails with
-	 * `invalidParams`.
+	 * Its file name, kept as is. A name with `/`, `\`, or `:`, or that is `.` or `..`, fails
+	 * with `invalidParams`.
 	 */
 	name: string,
 	/**

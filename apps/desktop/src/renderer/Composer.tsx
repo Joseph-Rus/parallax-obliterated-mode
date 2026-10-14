@@ -1,6 +1,5 @@
 import {
   ArrowUp,
-  File,
   FilePen,
   Hand,
   ListChecks,
@@ -51,6 +50,7 @@ import { UsageInline, UsageRing, useComposerUsage } from "./ComposerUsage";
 import type { RequestUsage } from "./transcript";
 import { EffortMenu } from "./EffortMenu";
 import { accessPrefs } from "./accessPrefs";
+import { drawPdfPage, openPdf } from "./documents";
 import { imageUrl, readImage, type ImageCaps } from "./images";
 import { base64Length, uploadFiles, withFiles } from "./uploads";
 import { ModelMenu } from "./ModelMenu";
@@ -814,22 +814,25 @@ export function Composer({
     if (!canSend) return;
     const sent = editor.getJSON();
     const sentFiles = canUpload ? files : [];
+    const sentImages = images;
+    const sentThreads = threads;
     let sentText = text;
     if (sentFiles.length > 0) {
       // Nothing typed meanwhile, which the box clears once they're saved.
       setUploading(true);
       editor.setEditable(false);
-      const paths = await uploadFiles(host!, sentFiles);
+      const paths = await uploadFiles(host!, sentFiles).catch(
+        (error: unknown) => `A file couldn't be read: ${String(error)}`,
+      );
       if (!editor.isDestroyed) editor.setEditable(true);
       setUploading(false);
       if (typeof paths === "string") return setError(paths);
       sentText = withFiles(text, paths);
     }
-    const sentImages = images;
-    const sentThreads = threads;
     editor.commands.clearContent();
-    setImages([]);
-    setThreads([]);
+    // Only what's sent: images and threads added during an upload stay.
+    setImages((all) => all.filter((i) => !sentImages.includes(i)));
+    setThreads((all) => all.filter((t) => !sentThreads.includes(t)));
     setError(undefined);
     setAttachError(undefined);
     const failed = await (steer ? onSteer! : background ? onSendInBackground! : onSend)(
@@ -1170,7 +1173,7 @@ export function Composer({
             )}
           </div>
         )}
-        {(images.length > 0 || threads.length > 0 || attachError) && (
+        {(images.length > 0 || threads.length > 0 || files.length > 0 || attachError) && (
           <div className="flex flex-wrap items-center gap-2 px-4 pt-3.5">
             {threads.map((id) => (
               <ThreadChip
@@ -1196,6 +1199,16 @@ export function Composer({
                 </button>
               </span>
             ))}
+            {files.map((f, i) => (
+              <FileCard
+                key={`${f.name}-${f.lastModified}-${i}`}
+                file={f}
+                onRemove={() => setFiles((all) => all.filter((_, j) => j !== i))}
+              />
+            ))}
+            {files.length > 0 && !canUpload && (
+              <span className="text-[12px] text-faint-foreground">Not sent to the agent yet</span>
+            )}
             {attachError && (
               <p role="alert" className="text-[12.5px] text-danger">
                 {attachError}
@@ -1214,30 +1227,6 @@ export function Composer({
           )}
           <EditorContent editor={editor} />
         </div>
-        {files.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 px-4 pt-2">
-            {files.map((f, i) => (
-              <span
-                key={i}
-                className="flex items-center gap-1.5 rounded-lg bg-selected py-1 pr-1 pl-2 text-[12.5px]"
-              >
-                <File aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="max-w-48 truncate">{f.name}</span>
-                <button
-                  type="button"
-                  aria-label={`Remove ${f.name}`}
-                  onClick={() => setFiles((all) => all.filter((_, j) => j !== i))}
-                  className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-hover hover:text-foreground"
-                >
-                  <X className="size-3" />
-                </button>
-              </span>
-            ))}
-            {!canUpload && (
-              <span className="text-[12px] text-faint-foreground">Not sent to the agent yet</span>
-            )}
-          </div>
-        )}
         <div className="flex items-center gap-0.5 px-3 pt-1 pb-3">
           {run && (
             <>
@@ -1355,5 +1344,51 @@ export function Composer({
       )}
       {footer}
     </div>
+  );
+}
+
+/**
+ * An attached file that isn't an image, as a card above the text (PLX-779): a PDF's first page,
+ * or else its name, with its type in a badge.
+ */
+function FileCard({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [page, setPage] = useState<string>();
+  const type = /\.([a-z0-9]{1,5})$/i.exec(file.name)?.[1]?.toUpperCase() ?? "FILE";
+  useEffect(() => {
+    if (type !== "PDF") return;
+    let live = true;
+    void (async () => {
+      const pdf = await openPdf(new Uint8Array(await file.arrayBuffer()));
+      const canvas = await drawPdfPage(pdf, 1, 84);
+      // Frees its worker and memory: the card keeps only the picture.
+      void pdf.loadingTask.destroy();
+      if (live) setPage(canvas.toDataURL());
+    })().catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [file, type]);
+  return (
+    <span className="group relative size-28 shrink-0 overflow-hidden rounded-xl border border-border bg-surface">
+      {page ? (
+        <img src={page} alt="" className="mx-auto h-full w-3/4 object-cover object-top" />
+      ) : (
+        <span className="line-clamp-4 p-2.5 text-[12px] leading-snug break-all text-muted-foreground">
+          {file.name}
+        </span>
+      )}
+      <span className="absolute bottom-2 left-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-white">
+        {type}
+      </span>
+      <button
+        type="button"
+        aria-label={`Remove ${file.name}`}
+        title={file.name}
+        onClick={onRemove}
+        className="absolute top-1 right-1 grid size-5 place-items-center rounded-full border border-border bg-surface text-muted-foreground opacity-0 shadow-sm group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
+      >
+        <X className="size-3" />
+      </button>
+    </span>
   );
 }
