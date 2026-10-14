@@ -1634,7 +1634,6 @@ function SentFile({ path }: { path: string }) {
  * One of a user message's images, as a thumbnail: at hand, or fetched by id. The same height
  * either way, so the row doesn't jump when it loads.
  */
-
 function MessageImage({
   image,
   loadImage,
