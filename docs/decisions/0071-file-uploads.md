@@ -12,6 +12,7 @@ The composer takes any file, but only images reach the agent (0026). Ryan wants 
 
 - **Method.** `host/upload {name, data}` saves a file at `<data folder>/uploads/<uuid v7>/<name>` and answers its absolute `path`. It's behind the `fileUploads` capability, whose `maxBytes` caps the base64 `data` at 6 MiB, so one request fits in one 8 MiB frame (0007). A name with `/`, `\`, or `:` (on Windows `C:x` names a path on drive C), a name that is `.` or `..`, or `data` that isn't base64, fails with `invalidParams`.
 - **The message.** On send, the app uploads each file that isn't an image and adds an `Attached files:` list of their paths after the text. The agent decides how to read them. `agent/start`, `agent/send`, `thread/start`, `project/start`, the queue, and the store are unchanged, and the transcript shows the list as part of the message.
+- **The transcript** takes the list back off a sent message and shows each file as a card above the text: a PDF's first page, which it draws from `host/readUpload {path}`, or else the file's name. `host/readUpload` serves only files inside the uploads folder, after following links.
 - **Images** keep 0026's path, since the model then gets them as images.
 - **Sandbox.** A worker's sandbox (0013) lists the uploads folder as read-only, so it stays readable inside the otherwise unreadable data folder.
 
@@ -27,4 +28,4 @@ The composer takes any file, but only images reach the agent (0026). Ryan wants 
 
 - A file is at most about 4.5 MiB. A larger one is refused when it's attached. Chunked uploads are the upgrade if that's too small.
 - Uploads are never removed. Removing them with their thread would need the thread to record them.
-- The paths are in the message's text, so they show in the transcript and come back with Stop.
+- The paths are in the message's text, so another client, such as the mobile app, shows them as text, and Stop puts them back as text.

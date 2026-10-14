@@ -54,6 +54,11 @@ export type ParallaxRequests = {
 	 */
 	"host/upload": { params: HostUploadParams, result: HostUploadResult },
 	/**
+	 * `host/readUpload`: a file `host/upload` saved, for the transcript (PLX-779). Gated on
+	 * the `fileUploads` capability.
+	 */
+	"host/readUpload": { params: HostReadUploadParams, result: HostReadUploadResult },
+	/**
 	 * `project/list`: every project, and the event log's `seq` from before the read.
 	 */
 	"project/list": { params: ProjectListParams, result: ProjectListResult },
@@ -732,6 +737,7 @@ export const REQUEST_METHODS = [
 	"host/update",
 	"host/folders",
 	"host/upload",
+	"host/readUpload",
 	"project/list",
 	"project/create",
 	"events/subscribe",
@@ -1220,6 +1226,28 @@ export type HostUploadResult = {
 	 * The saved file's absolute path on the host: `<data folder>/uploads/<id>/<name>`.
 	 */
 	path: string,
+};
+
+/**
+ * Params of `host/readUpload`, behind `fileUploads` (PLX-779): a file `host/upload` saved, for
+ * the transcript to show again.
+ */
+export type HostReadUploadParams = {
+	/**
+	 * The path `host/upload` answered. Any path outside the uploads folder fails with
+	 * `invalidParams`, as does one that's gone.
+	 */
+	path: string,
+};
+
+/**
+ * Result of `host/readUpload`.
+ */
+export type HostReadUploadResult = {
+	/**
+	 * The file's bytes, in standard base64 with padding.
+	 */
+	data: string,
 };
 
 /**

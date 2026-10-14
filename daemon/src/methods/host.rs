@@ -10,10 +10,10 @@ use parallax_protocol::framing::MAX_FRAME_BYTES;
 use parallax_protocol::jsonrpc::{ErrorObject, Request};
 use parallax_protocol::{
     Capabilities, ClientInfo, DEVICE_ICONS, HostFolder, HostFoldersParams, HostFoldersResult,
-    HostHealthParams, HostHealthResult, HostQueues, HostSettings, HostSettingsGetParams,
-    HostSettingsSetParams, HostUploadParams, HostUploadResult, HostVersionParams,
-    HostVersionResult, IncompatibleProtocolDetail, InitializeParams, InitializeProtocol,
-    InitializeResult, MAX_DEVICE_NAME_CHARS, ProtocolRange, StoreState,
+    HostHealthParams, HostHealthResult, HostQueues, HostReadUploadParams, HostReadUploadResult,
+    HostSettings, HostSettingsGetParams, HostSettingsSetParams, HostUploadParams, HostUploadResult,
+    HostVersionParams, HostVersionResult, IncompatibleProtocolDetail, InitializeParams,
+    InitializeProtocol, InitializeResult, MAX_DEVICE_NAME_CHARS, ProtocolRange, StoreState,
 };
 use tracing::info;
 use uuid::Uuid;
@@ -213,7 +213,7 @@ pub(crate) fn initialize(
 /// `prWatch` (0063): `pr/watch`, `pr/unwatch`, and `pr/watches`.
 /// `setupScripts` (PLX-650): `repo/scripts`, `repo/saveScripts`, and the `thread.script` event.
 /// `fileUploads` (PLX-779, 0071): `host/upload`, which saves a file attached to a message on the
-/// host for the agent to read. Its option `maxBytes` is the cap on the file's base64 `data`.
+/// host for the agent to read, and `host/readUpload`, which reads it back for the transcript. Its option `maxBytes` is the cap on the file's base64 `data`.
 /// `hostUpdate` (PLX-700, 0066): `host/update`, which installs a newer plxd and restarts into it.
 /// `providerUpdates` (PLX-746): `providers/updates` and `providers/upgrade`, and `host/update`'s
 /// `now`.
@@ -410,6 +410,30 @@ fn save_upload(dir: &Path, params: &HostUploadParams) -> Result<HostUploadResult
     })
 }
 
+/// `host/readUpload`: a file [`upload`] saved, as base64.
+pub(crate) async fn read_upload(
+    context: &Context,
+    params: HostReadUploadParams,
+) -> Result<HostReadUploadResult, ErrorObject> {
+    let root = context.daemon.data_dir.uploads_dir();
+    super::context::run_blocking(move || read_upload_at(&root, &params.path)).await
+}
+
+/// The file at `path`, as base64, if it's inside `root` once links are followed.
+fn read_upload_at(root: &Path, path: &str) -> Result<HostReadUploadResult, ErrorObject> {
+    let refuse =
+        || ErrorObject::invalid_params(format!("{:?} is not an uploaded file", untrusted(path)));
+    let root = fs::canonicalize(root).map_err(|_| refuse())?;
+    let file = fs::canonicalize(path).map_err(|_| refuse())?;
+    if !file.starts_with(&root) || !file.is_file() {
+        return Err(refuse());
+    }
+    let bytes = fs::read(&file).map_err(|_| refuse())?;
+    Ok(HostReadUploadResult {
+        data: images::encode(&bytes),
+    })
+}
+
 pub(crate) fn health(context: &Context, _: HostHealthParams) -> HostHealthResult {
     let daemon = &context.daemon;
     HostHealthResult {
@@ -594,7 +618,10 @@ fn plist_string<'a>(plist: &'a str, key: &str) -> Option<&'a str> {
 mod tests {
     use parallax_protocol::HostUploadParams;
 
-    use super::{check_device_icon, clean_device_name, list_folders, plist_string, save_upload};
+    use super::{
+        check_device_icon, clean_device_name, list_folders, plist_string, read_upload_at,
+        save_upload,
+    };
 
     #[test]
     fn device_names_are_cleaned_and_icons_checked() {
@@ -668,6 +695,20 @@ mod tests {
             assert_eq!(upload(name, "").unwrap_err().code, -32602, "{name}");
         }
         assert_eq!(upload("x", "not base64").unwrap_err().code, -32602);
+
+        // Read back by its path, and nothing outside the uploads folder.
+        let read = |path: &std::path::Path| read_upload_at(dir.path(), &path.to_string_lossy());
+        assert_eq!(
+            read(std::path::Path::new(&saved.path)).unwrap().data,
+            "JVBERi0="
+        );
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        assert_eq!(read(outside.path()).unwrap_err().code, -32602);
+        assert_eq!(
+            read(&dir.path().join("id/../id/missing")).unwrap_err().code,
+            -32602
+        );
+        assert_eq!(read(&dir.path().join("id")).unwrap_err().code, -32602);
     }
 
     #[test]

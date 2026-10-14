@@ -46,19 +46,20 @@ use crate::{
     EventsSubscribeResult, EventsUnsubscribeParams, EventsUnsubscribeResult, FullThreadDiffParams,
     GitStatus, GithubInstallParams, GithubSignIn, GithubSignInCancelParams,
     GithubSignInCancelResult, GithubSignInParams, GithubStatus, GithubStatusParams,
-    HostFoldersParams, HostFoldersResult, HostHealthParams, HostHealthResult, HostSettings,
-    HostSettingsGetParams, HostSettingsSetParams, HostUpdateParams, HostUpdateResult,
-    HostUploadParams, HostUploadResult, HostVersionParams, HostVersionResult, InboxListParams,
-    InboxListResult, InboxSeenParams, InboxSeenResult, InitializeParams, InitializeResult,
-    LandApproveParams, LandQueueParams, LandResult, LandSendBackParams, MemoryDeleteParams,
-    MemoryDeleteResult, MemoryListParams, MemoryListResult, MemoryProposeParams,
-    MemoryProposeResult, MemoryReadParams, MemoryReadResult, MemoryWriteParams, MemoryWriteResult,
-    OrchestrationCommand, PrActParams, PrDiffResult, PrViewParams, PrWatchResult, PrWatchesParams,
-    PrWatchesResult, PreviewCallParams, PreviewCallResult, PreviewFrameParams, PreviewFrameResult,
-    PreviewInputParams, PreviewInputResult, PreviewListParams, PreviewListResult,
-    ProjectCreateParams, ProjectCreateResult, ProjectDeleteParams, ProjectDeleteResult,
-    ProjectFromThreadsParams, ProjectFromThreadsResult, ProjectListParams, ProjectListResult,
-    ProjectStartParams, ProjectUpdateParams, ProjectUpdateResult, PromptImage, ProvidersListParams,
+    HostFoldersParams, HostFoldersResult, HostHealthParams, HostHealthResult, HostReadUploadParams,
+    HostReadUploadResult, HostSettings, HostSettingsGetParams, HostSettingsSetParams,
+    HostUpdateParams, HostUpdateResult, HostUploadParams, HostUploadResult, HostVersionParams,
+    HostVersionResult, InboxListParams, InboxListResult, InboxSeenParams, InboxSeenResult,
+    InitializeParams, InitializeResult, LandApproveParams, LandQueueParams, LandResult,
+    LandSendBackParams, MemoryDeleteParams, MemoryDeleteResult, MemoryListParams, MemoryListResult,
+    MemoryProposeParams, MemoryProposeResult, MemoryReadParams, MemoryReadResult,
+    MemoryWriteParams, MemoryWriteResult, OrchestrationCommand, PrActParams, PrDiffResult,
+    PrViewParams, PrWatchResult, PrWatchesParams, PrWatchesResult, PreviewCallParams,
+    PreviewCallResult, PreviewFrameParams, PreviewFrameResult, PreviewInputParams,
+    PreviewInputResult, PreviewListParams, PreviewListResult, ProjectCreateParams,
+    ProjectCreateResult, ProjectDeleteParams, ProjectDeleteResult, ProjectFromThreadsParams,
+    ProjectFromThreadsResult, ProjectListParams, ProjectListResult, ProjectStartParams,
+    ProjectUpdateParams, ProjectUpdateResult, PromptImage, ProvidersListParams,
     ProvidersListResult, ProvidersRemoveParams, ProvidersSaveParams, ProvidersUpdatesParams,
     ProvidersUpdatesResult, ProvidersUpgradeParams, ProvidersUpgradeResult, PullRequest,
     QuestionAnswerParams, QuestionAskParams, QuestionEscalateParams, QuestionListParams,
@@ -173,6 +174,9 @@ method_table! {
         /// `host/upload`: saves a file attached to a message on the host and answers its path
         /// (PLX-779, decision 0071). Gated on the `fileUploads` capability.
         HostUpload = "host/upload": HostUploadParams => HostUploadResult;
+        /// `host/readUpload`: a file `host/upload` saved, for the transcript (PLX-779). Gated on
+        /// the `fileUploads` capability.
+        HostReadUpload = "host/readUpload": HostReadUploadParams => HostReadUploadResult;
         /// `project/list`: every project, and the event log's `seq` from before the read.
         ProjectList = "project/list": ProjectListParams => ProjectListResult;
         /// `project/create`: creates a project, idempotent on its client-generated id.
@@ -635,6 +639,7 @@ mod tests {
                 "host/update",
                 "host/folders",
                 "host/upload",
+                "host/readUpload",
                 "project/list",
                 "project/create",
                 "events/subscribe",

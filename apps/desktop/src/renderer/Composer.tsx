@@ -50,7 +50,7 @@ import { UsageInline, UsageRing, useComposerUsage } from "./ComposerUsage";
 import type { RequestUsage } from "./transcript";
 import { EffortMenu } from "./EffortMenu";
 import { accessPrefs } from "./accessPrefs";
-import { drawPdfPage, openPdf } from "./documents";
+import { FileCard } from "./FileCard";
 import { imageUrl, readImage, type ImageCaps } from "./images";
 import { base64Length, uploadFiles, withFiles } from "./uploads";
 import { ModelMenu } from "./ModelMenu";
@@ -1348,54 +1348,5 @@ export function Composer({
       )}
       {footer}
     </div>
-  );
-}
-
-/**
- * An attached file that isn't an image, as a card above the text (PLX-779): a PDF's first page,
- * or else its name, with its type in a badge.
- */
-function FileCard({ file, onRemove }: { file: File; onRemove: () => void }) {
-  const [page, setPage] = useState<string>();
-  const type = /\.([a-z0-9]{1,5})$/i.exec(file.name)?.[1]?.toUpperCase() ?? "FILE";
-  useEffect(() => {
-    if (type !== "PDF") return;
-    let live = true;
-    void (async () => {
-      const pdf = await openPdf(new Uint8Array(await file.arrayBuffer()));
-      try {
-        const canvas = await drawPdfPage(pdf, 1, 84);
-        if (live) setPage(canvas.toDataURL());
-      } finally {
-        // Frees its worker and memory: the card keeps only the picture.
-        void pdf.loadingTask.destroy();
-      }
-    })().catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [file, type]);
-  return (
-    <span className="group relative size-28 shrink-0 overflow-hidden rounded-xl border border-border bg-surface">
-      {page ? (
-        <img src={page} alt="" className="mx-auto h-full w-3/4 object-cover object-top" />
-      ) : (
-        <span className="line-clamp-4 p-2.5 text-[12px] leading-snug break-all text-muted-foreground">
-          {file.name}
-        </span>
-      )}
-      <span className="absolute bottom-2 left-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-white">
-        {type}
-      </span>
-      <button
-        type="button"
-        aria-label={`Remove ${file.name}`}
-        title={file.name}
-        onClick={onRemove}
-        className="absolute top-1 right-1 grid size-5 place-items-center rounded-full border border-border bg-surface text-muted-foreground opacity-0 shadow-sm group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
-      >
-        <X className="size-3" />
-      </button>
-    </span>
   );
 }

@@ -2,6 +2,7 @@
 // host with `host/upload`, and the message lists their paths for the agent to read.
 import type { ConnectionState } from "../preload/bridge";
 import { describeError } from "./errors";
+import { fromBase64 } from "./ooxml";
 
 /** The `fileUploads` cap on one file's base64. Undefined while the host isn't connected, or when its plxd takes no files. */
 export function uploadBytes(connection?: ConnectionState): number | undefined {
@@ -34,6 +35,24 @@ export function withFiles(text: string, paths: string[]): string {
   if (paths.length === 0) return text;
   const list = `Attached files:\n${paths.map((p) => `- ${p}`).join("\n")}`;
   return text.trim() ? `${text}\n\n${list}` : list;
+}
+
+/** A sent message's text split as `withFiles` joined it: the user's text, and the files' paths. */
+export function splitFiles(text: string): { text: string; paths: string[] } {
+  const list = /(?:^|\n\n)Attached files:\n((?:- .+(?:\n|$))+)$/.exec(text);
+  if (!list) return { text, paths: [] };
+  const paths = list[1]!
+    .trimEnd()
+    .split("\n")
+    .map((line) => line.slice(2));
+  return { text: text.slice(0, list.index), paths };
+}
+
+/** A file `uploadFiles` saved on `hostId`, read back for the transcript. */
+export async function readUpload(hostId: string, path: string): Promise<Uint8Array> {
+  const answer = await window.parallax.request(hostId, "host/readUpload", { path });
+  if ("error" in answer) throw new Error(describeError(answer.error));
+  return fromBase64(answer.result.data);
 }
 
 function base64Of(file: Blob): Promise<string> {

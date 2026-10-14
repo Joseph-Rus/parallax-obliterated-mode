@@ -185,6 +185,24 @@ pub struct HostUploadResult {
     pub path: String,
 }
 
+/// Params of `host/readUpload`, behind `fileUploads` (PLX-779): a file `host/upload` saved, for
+/// the transcript to show again.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HostReadUploadParams {
+    /// The path `host/upload` answered. Any path outside the uploads folder fails with
+    /// `invalidParams`, as does one that's gone.
+    pub path: String,
+}
+
+/// Result of `host/readUpload`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HostReadUploadResult {
+    /// The file's bytes, in standard base64 with padding.
+    pub data: String,
+}
+
 /// Params of `host/settings/get`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
