@@ -40,11 +40,12 @@ export function withFiles(text: string, paths: string[]): string {
 /** A sent message's text split as `withFiles` joined it: the user's text, and the files' paths. */
 export function splitFiles(text: string): { text: string; paths: string[] } {
   const list = /(?:^|\n\n)Attached files:\n((?:- .+(?:\n|$))+)$/.exec(text);
-  if (!list) return { text, paths: [] };
-  const paths = list[1]!
-    .trimEnd()
+  const paths = list?.[1]
+    ?.trimEnd()
     .split("\n")
     .map((line) => line.slice(2));
+  // Only absolute paths count, so a list the user wrote stays text.
+  if (!list || !paths?.every((p) => /^(?:\/|[a-z]:\\)/i.test(p))) return { text, paths: [] };
   return { text: text.slice(0, list.index), paths };
 }
 

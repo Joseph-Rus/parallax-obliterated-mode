@@ -1624,15 +1624,16 @@ function ModelLabel({ model }: { model: string }) {
   );
 }
 
-/**
- * One of a user message's images, as a thumbnail: at hand, or fetched by id. The same height
- * either way, so the row doesn't jump when it loads.
- */
 /** A file sent with a message, as a card, read from the thread's host. */
 function SentFile({ path }: { path: string }) {
   const hostId = useContext(ThreadLinksContext)?.hostId;
   return <FileCard file={path} hostId={hostId} />;
 }
+
+/**
+ * One of a user message's images, as a thumbnail: at hand, or fetched by id. The same height
+ * either way, so the row doesn't jump when it loads.
+ */
 
 function MessageImage({
   image,

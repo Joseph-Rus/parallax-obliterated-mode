@@ -213,7 +213,8 @@ pub(crate) fn initialize(
 /// `prWatch` (0063): `pr/watch`, `pr/unwatch`, and `pr/watches`.
 /// `setupScripts` (PLX-650): `repo/scripts`, `repo/saveScripts`, and the `thread.script` event.
 /// `fileUploads` (PLX-779, 0071): `host/upload`, which saves a file attached to a message on the
-/// host for the agent to read, and `host/readUpload`, which reads it back for the transcript. Its option `maxBytes` is the cap on the file's base64 `data`.
+/// host for the agent to read, and `host/readUpload`, which reads it back for the transcript.
+/// Its option `maxBytes` is the cap on the file's base64 `data`.
 /// `hostUpdate` (PLX-700, 0066): `host/update`, which installs a newer plxd and restarts into it.
 /// `providerUpdates` (PLX-746): `providers/updates` and `providers/upgrade`, and `host/update`'s
 /// `now`.
@@ -425,7 +426,10 @@ fn read_upload_at(root: &Path, path: &str) -> Result<HostReadUploadResult, Error
         || ErrorObject::invalid_params(format!("{:?} is not an uploaded file", untrusted(path)));
     let root = fs::canonicalize(root).map_err(|_| refuse())?;
     let file = fs::canonicalize(path).map_err(|_| refuse())?;
-    if !file.starts_with(&root) || !file.is_file() {
+    // Only what `host/upload` could have saved, which fits in a frame.
+    let fits = fs::metadata(&file)
+        .is_ok_and(|meta| meta.is_file() && meta.len() <= (MAX_UPLOAD_BYTES / 4 * 3) as u64);
+    if !file.starts_with(&root) || !fits {
         return Err(refuse());
     }
     let bytes = fs::read(&file).map_err(|_| refuse())?;

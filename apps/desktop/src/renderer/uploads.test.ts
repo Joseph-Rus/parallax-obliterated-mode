@@ -10,4 +10,7 @@ test("splitFiles takes back what withFiles added, and leaves other text alone (P
   });
   expect(splitFiles(withFiles("", paths))).toEqual({ text: "", paths });
   expect(splitFiles("Attached files: none")).toEqual({ text: "Attached files: none", paths: [] });
+  const written = "See below.\n\nAttached files:\n- report.pdf";
+  expect(splitFiles(written)).toEqual({ text: written, paths: [] });
+  expect(splitFiles(withFiles("", ["C:\\up\\a.pdf"])).paths).toEqual(["C:\\up\\a.pdf"]);
 });
