@@ -1174,7 +1174,11 @@ export function Composer({
           </div>
         )}
         {(images.length > 0 || threads.length > 0 || files.length > 0 || attachError) && (
-          <div className="flex flex-wrap items-center gap-2 px-4 pt-3.5">
+          <fieldset
+            // Locked while files upload: what's there now is what's sent.
+            disabled={uploading}
+            className="m-0 flex min-w-0 flex-wrap items-center gap-2 border-0 px-4 pt-3.5"
+          >
             {threads.map((id) => (
               <ThreadChip
                 key={id}
@@ -1214,7 +1218,7 @@ export function Composer({
                 {attachError}
               </p>
             )}
-          </div>
+          </fieldset>
         )}
         <div className="relative">
           {!text && (
@@ -1359,10 +1363,13 @@ function FileCard({ file, onRemove }: { file: File; onRemove: () => void }) {
     let live = true;
     void (async () => {
       const pdf = await openPdf(new Uint8Array(await file.arrayBuffer()));
-      const canvas = await drawPdfPage(pdf, 1, 84);
-      // Frees its worker and memory: the card keeps only the picture.
-      void pdf.loadingTask.destroy();
-      if (live) setPage(canvas.toDataURL());
+      try {
+        const canvas = await drawPdfPage(pdf, 1, 84);
+        if (live) setPage(canvas.toDataURL());
+      } finally {
+        // Frees its worker and memory: the card keeps only the picture.
+        void pdf.loadingTask.destroy();
+      }
     })().catch(() => {});
     return () => {
       live = false;

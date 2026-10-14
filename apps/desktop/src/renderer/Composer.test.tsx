@@ -501,7 +501,7 @@ test("with fileUploads, a file goes to the host and the message lists its path (
   );
 });
 
-test("an image pasted during an upload stays, and a failed read says why (PLX-779)", async () => {
+test("an image pasted during an upload stays, removing waits, and a failed read says why (PLX-779)", async () => {
   let saved: (answer: unknown) => void = () => {};
   const upload = vi.fn(
     () =>
@@ -521,6 +521,9 @@ test("an image pasted during an upload stays, and a failed read says why (PLX-77
   await press("Enter");
   await vi.waitFor(() => expect(upload).toHaveBeenCalled());
   await paste([pngFile()]);
+  // Removing is off mid-upload, since the file is already going.
+  const remove = document.querySelector('[aria-label="Remove paper.pdf"]')!;
+  expect(remove.closest("fieldset")!.disabled).toBe(true);
   await act(async () => saved({ logId: "log-1", result: { path: "/up/paper.pdf" } }));
   await vi.waitFor(() => expect(onSend).toHaveBeenCalled());
   expect(onSend).toHaveBeenCalledWith("Attached files:\n- /up/paper.pdf", {}, [], []);
