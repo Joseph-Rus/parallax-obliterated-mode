@@ -38,5 +38,6 @@ Acceptance criteria:
 - [x] The coordinator.md tool-name test passes; cargo fmt, clippy, and the
   daemon's tests pass (784 passed, 0 failed)
 
-PR: to fill once opened. Branch: `feature/pm-mode-small-blind-pieces`.
+Status: in review. PR: https://github.com/Joseph-Rus/parallax-obliterated-mode/pull/1
+Branch: `feature/pm-mode-small-blind-pieces`.
 Asked for by Joey, 2026-10-14.
