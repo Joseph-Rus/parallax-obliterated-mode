@@ -1,0 +1,30 @@
+# 0071: A file attached to a message is saved on the host, and the message names its path
+
+- Status: accepted
+- Date: 2026-10-14
+- Issue: PLX-779
+
+## Context
+
+The composer takes any file, but only images reach the agent (0026). Ryan wants to attach a PDF, such as a paper, and have the agent read it. Every backend's agent can read a file on disk with its own tools: Claude Code reads PDFs natively, and Codex, Cursor, and OpenCode read files through their tools. None of them take an arbitrary file inside the message the way Claude Code takes an image block. The host may be another computer, so the app can't write the file there itself.
+
+## Decision
+
+- **Method.** `host/upload {name, data}` saves a file at `<data folder>/uploads/<uuid v7>/<name>` and answers its absolute `path`. It's behind the `fileUploads` capability, whose `maxBytes` caps the base64 `data` at 6 MiB, so one request fits in one 8 MiB frame (0007). A name with a path separator, `.`, or `..`, or `data` that isn't base64, fails with `invalidParams`.
+- **The message.** On send, the app uploads each file that isn't an image and adds an `Attached files:` list of their paths after the text. The agent decides how to read them. `agent/start`, `agent/send`, `thread/start`, `project/start`, the queue, and the store are unchanged, and the transcript shows the list as part of the message.
+- **Images** keep 0026's path, since the model then gets them as images.
+- **Sandbox.** A worker's sandbox (0013) lists the uploads folder as read-only, so it stays readable inside the otherwise unreadable data folder.
+
+## Rejected
+
+| Option | Why not |
+| --- | --- |
+| A `files` field on every start and send method, like `images` | It runs through the queue, placement, the store, and every backend, and each backend would still only hand the agent a path. |
+| Save into the thread's worktree | A new thread has no worktree yet when the app sends, and the file would show up in its diff and commits. |
+| Send a PDF to Claude as a document block | Claude only, and still nothing for any other file type. |
+
+## Consequences
+
+- A file is at most about 4.5 MiB. A larger one is refused when it's attached. Chunked uploads are the upgrade if that's too small.
+- Uploads are never removed. Removing them with their thread would need the thread to record them.
+- The paths are in the message's text, so they show in the transcript and come back with Stop.

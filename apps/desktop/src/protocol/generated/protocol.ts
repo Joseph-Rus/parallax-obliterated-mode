@@ -49,6 +49,11 @@ export type ParallaxRequests = {
 	 */
 	"host/folders": { params: HostFoldersParams, result: HostFoldersResult },
 	/**
+	 * `host/upload`: saves a file attached to a message on the host and answers its path
+	 * (PLX-779, decision 0071). Gated on the `fileUploads` capability.
+	 */
+	"host/upload": { params: HostUploadParams, result: HostUploadResult },
+	/**
 	 * `project/list`: every project, and the event log's `seq` from before the read.
 	 */
 	"project/list": { params: ProjectListParams, result: ProjectListResult },
@@ -726,6 +731,7 @@ export const REQUEST_METHODS = [
 	"host/version",
 	"host/update",
 	"host/folders",
+	"host/upload",
 	"project/list",
 	"project/create",
 	"events/subscribe",
@@ -1186,6 +1192,32 @@ export type HostFolder = {
 	name: string,
 	/**
 	 * Its absolute path.
+	 */
+	path: string,
+};
+
+/**
+ * Params of `host/upload`, behind the `fileUploads` capability (PLX-779, decision 0071): a file
+ * the user attached to a message, which plxd saves on the host so the agent can read it.
+ */
+export type HostUploadParams = {
+	/**
+	 * Its file name, kept as is. A name with a path separator, `.`, or `..` fails with
+	 * `invalidParams`.
+	 */
+	name: string,
+	/**
+	 * Its bytes, in standard base64 with padding, at most the capability's `maxBytes` long.
+	 */
+	data: string,
+};
+
+/**
+ * Result of `host/upload`.
+ */
+export type HostUploadResult = {
+	/**
+	 * The saved file's absolute path on the host: `<data folder>/uploads/<id>/<name>`.
 	 */
 	path: string,
 };

@@ -52,6 +52,7 @@ import type { RequestUsage } from "./transcript";
 import { EffortMenu } from "./EffortMenu";
 import { accessPrefs } from "./accessPrefs";
 import { imageUrl, readImage, type ImageCaps } from "./images";
+import { base64Length, uploadFiles, withFiles } from "./uploads";
 import { ModelMenu } from "./ModelMenu";
 import { behaviorPrefs, newThreadPrefs, usageView } from "./prefs";
 import { useCatalog, type Model, type Provider, type RunOptions } from "./models";
@@ -377,6 +378,12 @@ export interface ComposerProps {
   /** The host's image caps (`promptImages`). Absent: adding an image just says it can't take them. */
   imageCaps?: ImageCaps;
   /**
+   * The host's cap on one file's base64 (`fileUploads`, 0071). With `hostId`, a file that isn't
+   * an image is saved on the host when the message sends, and the message lists its path for the
+   * agent. Absent: such a file stays a chip that isn't sent.
+   */
+  uploadBytes?: number;
+  /**
    * Why Supervised's requests are denied instead of coming to the chat (0031): the host's plxd lacks
    * `approvals`, or the open run started without them. Absent: they come as approval cards.
    */
@@ -418,7 +425,8 @@ export interface ComposerProps {
  * send and Enter a new line everywhere; Cmd/Ctrl+Shift+Enter then steers or sends in the
  * background. It grows with its text up to 40% of the window.
  * Pasted, dropped, and picked images sit above the text as thumbnails, and go beside it, never in
- * it (PLX-193).
+ * it (PLX-193). Other files sit below it as chips, and with `uploadBytes` go to the host, their
+ * paths listed after the text (PLX-779).
  * In an empty box, Up and Down step through `history`, until the recalled prompt is edited.
  * With `menus`, `/` at the start of a word opens a menu of the composer's own commands and the
  * CLI's commands and skills, and `@` one of the thread's files, filtered as you type. Up and Down
@@ -447,6 +455,7 @@ export function Composer({
   unavailable,
   optionsDisabled,
   imageCaps,
+  uploadBytes,
   manualDenied,
   noAccess,
   projectMode,
@@ -459,8 +468,11 @@ export function Composer({
   const [text, setText] = useState("");
   const [error, setError] = useState<string>();
   const [stopping, setStopping] = useState(false);
-  // Files that aren't images, shown as chips; plxd doesn't take them yet.
+  // Files that aren't images, shown as chips, and uploaded on send where the host takes them.
   const [files, setFiles] = useState<File[]>([]);
+  const canUpload = !!host && !!uploadBytes;
+  // While the files upload, before the message goes.
+  const [uploading, setUploading] = useState(false);
   const [images, setImages] = useState<PromptImage[]>([]);
   // Attached threads' run ids, shown as chips beside the images.
   const [threads, setThreads] = useState<string[]>([]);
@@ -768,17 +780,23 @@ export function Composer({
 
   // The run stopped (or never ran), so a later run's Stop starts fresh.
   if (stopping && !onStop) setStopping(false);
-  const empty = text.trim() === "" && images.length === 0;
-  const canSend = !!onSend && !disabledReason && !empty;
+  const empty = text.trim() === "" && images.length === 0 && (!canUpload || files.length === 0);
+  const canSend = !!onSend && !disabledReason && !empty && !uploading;
   const showStop = !!onStop && !disabledReason && empty;
 
   // Adds pasted, dropped, or picked files: images as thumbnails, anything else as a chip. Each
   // image gets an even share of the total cap, so any number of them up to the most fits it.
   const addFiles = async (added: File[]) => {
     const isImage = (f: File) => f.type.startsWith("image/");
-    setFiles((all) => [...all, ...added.filter((f) => !isImage(f))]);
+    const others = added.filter((f) => !isImage(f));
+    const fits = (f: File) => !canUpload || base64Length(f) <= uploadBytes;
+    setFiles((all) => [...all, ...others.filter(fits)]);
+    const tooLarge = others.find((f) => !fits(f));
     const picked = added.filter(isImage);
-    setAttachError(undefined);
+    setAttachError(
+      tooLarge &&
+        `${tooLarge.name} is larger than ${Math.floor((uploadBytes! * 3) / 4 / 2 ** 20)} MB, the most a file can be.`,
+    );
     if (picked.length === 0) return;
     if (!imageCaps) return setAttachError("This host's plxd can't take images.");
     const { maxImages, maxImageBytes, maxTotalBytes } = imageCaps;
@@ -795,6 +813,18 @@ export function Composer({
   const submit = async (background = false, steer = false) => {
     if (!canSend) return;
     const sent = editor.getJSON();
+    const sentFiles = canUpload ? files : [];
+    let sentText = text;
+    if (sentFiles.length > 0) {
+      // Nothing typed meanwhile, which the box clears once they're saved.
+      setUploading(true);
+      editor.setEditable(false);
+      const paths = await uploadFiles(host!, sentFiles);
+      if (!editor.isDestroyed) editor.setEditable(true);
+      setUploading(false);
+      if (typeof paths === "string") return setError(paths);
+      sentText = withFiles(text, paths);
+    }
     const sentImages = images;
     const sentThreads = threads;
     editor.commands.clearContent();
@@ -803,12 +833,12 @@ export function Composer({
     setError(undefined);
     setAttachError(undefined);
     const failed = await (steer ? onSteer! : background ? onSendInBackground! : onSend)(
-      text,
+      sentText,
       options,
       sentImages,
       sentThreads,
     );
-    if (failed === undefined) setFiles([]);
+    if (failed === undefined) setFiles((all) => all.filter((f) => !sentFiles.includes(f)));
     else if (!editor.isDestroyed) {
       // Put it back ahead of anything typed or added while it was in flight.
       const typed = editor.isEmpty ? [] : (editor.getJSON().content ?? []);
@@ -1203,7 +1233,9 @@ export function Composer({
                 </button>
               </span>
             ))}
-            <span className="text-[12px] text-faint-foreground">Not sent to the agent yet</span>
+            {!canUpload && (
+              <span className="text-[12px] text-faint-foreground">Not sent to the agent yet</span>
+            )}
           </div>
         )}
         <div className="flex items-center gap-0.5 px-3 pt-1 pb-3">

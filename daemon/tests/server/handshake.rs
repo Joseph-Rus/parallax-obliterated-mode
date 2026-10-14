@@ -47,6 +47,10 @@ async fn the_handshake_agrees_on_a_version_and_reports_the_host() {
             ("eventFilters".to_owned(), serde_json::Map::new()),
             ("eventsBefore".to_owned(), serde_json::Map::new()),
             ("fileEdit".to_owned(), serde_json::Map::new()),
+            (
+                "fileUploads".to_owned(),
+                serde_json::from_value(json!({"maxBytes": 6 * 1024 * 1024})).unwrap()
+            ),
             ("files".to_owned(), serde_json::Map::new()),
             ("git".to_owned(), serde_json::Map::new()),
             (

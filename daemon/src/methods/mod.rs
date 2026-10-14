@@ -205,6 +205,7 @@ async fn route(context: &Context, request: &Request) -> Result<Value, ErrorObjec
         HostVersion => |p| ready(Ok(host::version(context, p))),
         HostUpdate => |p| daemon.self_update.update(daemon, p),
         HostFolders => |p| host::folders(context, p),
+        HostUpload => |p| host::upload(context, p),
         HostSettingsGet => |p| host::settings(context, p),
         HostSettingsSet => |p| host::set_settings(context, p),
         ConnectDevices => |p| connect::devices(context, p),

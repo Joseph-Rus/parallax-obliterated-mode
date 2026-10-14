@@ -50,6 +50,9 @@ pub const MAX_SOCKET_PATH_BYTES: usize = 107;
 /// The data folder under the home folder.
 const DEFAULT_DATA_DIR: &str = ".parallax";
 
+/// The data folder's [`DataDir::uploads_dir`], by name.
+pub const UPLOADS_DIR: &str = "uploads";
+
 /// `default`, unless it doesn't exist and the `legacy` folder does.
 fn pick_default(default: PathBuf, legacy: Option<PathBuf>) -> PathBuf {
     match legacy {
@@ -187,6 +190,13 @@ impl DataDir {
     #[must_use]
     pub fn tools_dir(&self) -> PathBuf {
         self.root.join("tools")
+    }
+
+    /// `uploads/`: files attached to messages (PLX-779, 0071), each in a folder of its own. A
+    /// worker's sandbox may read it, though the rest of the data folder stays unreadable.
+    #[must_use]
+    pub fn uploads_dir(&self) -> PathBuf {
+        self.root.join(UPLOADS_DIR)
     }
 
     /// The folder holding every project's shared context (0005, #155): `context/` in the data

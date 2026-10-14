@@ -548,11 +548,13 @@ fn assert_worker_invocation(fake: &Fake) {
                         "/Users/u/Library/Application Support/parallax/context/p",
                         format!("{cwd}/.git"),
                         "/Users/u/src/app/.git",
+                        "/Users/u/Library/Application Support/parallax/uploads",
                         format!("/tmp/parallax-625c7f6d/Ab12Cd/claude-{uid}"),
                     ],
                     "denyWrite": [
                         format!("{cwd}/.git"),
                         "/Users/u/src/app/.git",
+                        "/Users/u/Library/Application Support/parallax/uploads",
                         "/tmp/claude",
                         "/private/tmp/claude",
                         "~/.npm/_logs",

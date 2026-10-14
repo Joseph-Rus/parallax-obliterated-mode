@@ -48,17 +48,17 @@ use crate::{
     GithubSignInCancelResult, GithubSignInParams, GithubStatus, GithubStatusParams,
     HostFoldersParams, HostFoldersResult, HostHealthParams, HostHealthResult, HostSettings,
     HostSettingsGetParams, HostSettingsSetParams, HostUpdateParams, HostUpdateResult,
-    HostVersionParams, HostVersionResult, InboxListParams, InboxListResult, InboxSeenParams,
-    InboxSeenResult, InitializeParams, InitializeResult, LandApproveParams, LandQueueParams,
-    LandResult, LandSendBackParams, MemoryDeleteParams, MemoryDeleteResult, MemoryListParams,
-    MemoryListResult, MemoryProposeParams, MemoryProposeResult, MemoryReadParams, MemoryReadResult,
-    MemoryWriteParams, MemoryWriteResult, OrchestrationCommand, PrActParams, PrDiffResult,
-    PrViewParams, PrWatchResult, PrWatchesParams, PrWatchesResult, PreviewCallParams,
-    PreviewCallResult, PreviewFrameParams, PreviewFrameResult, PreviewInputParams,
-    PreviewInputResult, PreviewListParams, PreviewListResult, ProjectCreateParams,
-    ProjectCreateResult, ProjectDeleteParams, ProjectDeleteResult, ProjectFromThreadsParams,
-    ProjectFromThreadsResult, ProjectListParams, ProjectListResult, ProjectStartParams,
-    ProjectUpdateParams, ProjectUpdateResult, PromptImage, ProvidersListParams,
+    HostUploadParams, HostUploadResult, HostVersionParams, HostVersionResult, InboxListParams,
+    InboxListResult, InboxSeenParams, InboxSeenResult, InitializeParams, InitializeResult,
+    LandApproveParams, LandQueueParams, LandResult, LandSendBackParams, MemoryDeleteParams,
+    MemoryDeleteResult, MemoryListParams, MemoryListResult, MemoryProposeParams,
+    MemoryProposeResult, MemoryReadParams, MemoryReadResult, MemoryWriteParams, MemoryWriteResult,
+    OrchestrationCommand, PrActParams, PrDiffResult, PrViewParams, PrWatchResult, PrWatchesParams,
+    PrWatchesResult, PreviewCallParams, PreviewCallResult, PreviewFrameParams, PreviewFrameResult,
+    PreviewInputParams, PreviewInputResult, PreviewListParams, PreviewListResult,
+    ProjectCreateParams, ProjectCreateResult, ProjectDeleteParams, ProjectDeleteResult,
+    ProjectFromThreadsParams, ProjectFromThreadsResult, ProjectListParams, ProjectListResult,
+    ProjectStartParams, ProjectUpdateParams, ProjectUpdateResult, PromptImage, ProvidersListParams,
     ProvidersListResult, ProvidersRemoveParams, ProvidersSaveParams, ProvidersUpdatesParams,
     ProvidersUpdatesResult, ProvidersUpgradeParams, ProvidersUpgradeResult, PullRequest,
     QuestionAnswerParams, QuestionAskParams, QuestionEscalateParams, QuestionListParams,
@@ -170,6 +170,9 @@ method_table! {
         /// `host/folders`: the folders in a folder on the host, for adding a repository there
         /// (PLX-769). Gated on the `hostFolders` capability.
         HostFolders = "host/folders": HostFoldersParams => HostFoldersResult;
+        /// `host/upload`: saves a file attached to a message on the host and answers its path
+        /// (PLX-779, decision 0071). Gated on the `fileUploads` capability.
+        HostUpload = "host/upload": HostUploadParams => HostUploadResult;
         /// `project/list`: every project, and the event log's `seq` from before the read.
         ProjectList = "project/list": ProjectListParams => ProjectListResult;
         /// `project/create`: creates a project, idempotent on its client-generated id.
@@ -631,6 +634,7 @@ mod tests {
                 "host/version",
                 "host/update",
                 "host/folders",
+                "host/upload",
                 "project/list",
                 "project/create",
                 "events/subscribe",

@@ -165,6 +165,26 @@ pub struct HostFolder {
     pub path: String,
 }
 
+/// Params of `host/upload`, behind the `fileUploads` capability (PLX-779, decision 0071): a file
+/// the user attached to a message, which plxd saves on the host so the agent can read it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HostUploadParams {
+    /// Its file name, kept as is. A name with a path separator, `.`, or `..` fails with
+    /// `invalidParams`.
+    pub name: String,
+    /// Its bytes, in standard base64 with padding, at most the capability's `maxBytes` long.
+    pub data: String,
+}
+
+/// Result of `host/upload`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HostUploadResult {
+    /// The saved file's absolute path on the host: `<data folder>/uploads/<id>/<name>`.
+    pub path: String,
+}
+
 /// Params of `host/settings/get`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

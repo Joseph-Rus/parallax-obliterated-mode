@@ -3,10 +3,10 @@
 //!
 //! A worker writes its cwd (its worktree), the project's shared context folder (0005), and its
 //! own temp folder (PLX-130). Its commands can't write git metadata or read credential stores,
-//! plxd's data folder, or any other run's temp. They do have network access (Ryan, #137), so the
-//! read denylist is what keeps a secret from leaving the machine. Each backend turns a
-//! [`WorkerSandbox`] into its own vendor's flags; plxd adds no OS sandbox of its own, because a
-//! vendor's sandbox can't start inside one (0013).
+//! plxd's data folder except its uploads (0071), or any other run's temp. They do have network
+//! access (Ryan, #137), so the read denylist is what keeps a secret from leaving the machine.
+//! Each backend turns a [`WorkerSandbox`] into its own vendor's flags; plxd adds no OS sandbox of
+//! its own, because a vendor's sandbox can't start inside one (0013).
 
 use std::path::{Path, PathBuf};
 
@@ -213,8 +213,8 @@ pub struct WorkerSandbox {
     /// folder (0005).
     pub writable: Vec<PathBuf>,
     /// Paths inside the writable folders that commands may read but not write: the worktree's
-    /// `.git` file and the repository's git folder it points into. plxd commits for every
-    /// backend (0013).
+    /// `.git` file and the repository's git folder it points into, since plxd commits for every
+    /// backend (0013), and the data folder's uploads, the files attached to messages (0071).
     pub read_only: Vec<PathBuf>,
     /// Paths commands may not read: [`unreadable_in_home`], on Linux the user's runtime folder,
     /// plxd's data folder, the folder that holds every run's temp folder, and Claude Code's
@@ -264,7 +264,11 @@ impl WorkerSandbox {
             .collect();
         Self {
             writable: vec![context.to_owned()],
-            read_only: vec![worktree.join(".git"), git_dir.to_owned()],
+            read_only: vec![
+                worktree.join(".git"),
+                git_dir.to_owned(),
+                data_dir.join(crate::paths::UPLOADS_DIR),
+            ],
             unreadable,
             temp: temp.to_owned(),
         }
@@ -372,6 +376,7 @@ mod tests {
                     "/Users/u/Library/Application Support/parallax/worktrees/app-1a2b/run/.git"
                 ),
                 Path::new("/Users/u/src/app/.git"),
+                Path::new("/Users/u/Library/Application Support/parallax/uploads"),
             ]
         );
         assert!(sandbox.unreadable.contains(&"/Users/u/.ssh".into()));

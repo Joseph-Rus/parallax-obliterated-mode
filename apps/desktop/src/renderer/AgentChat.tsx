@@ -85,6 +85,7 @@ import type { Host } from "./hosts";
 import { FileCards } from "./FileCards";
 import { HtmlRender, pageUrl } from "./HtmlRender";
 import { imageCaps, imageUrl, loadImage } from "./images";
+import { uploadBytes } from "./uploads";
 import { Loader, type LoaderStyle } from "./Loader";
 import { locale } from "./locale";
 import { GitHubLogo, LinearLogo } from "./logos";
@@ -812,6 +813,7 @@ export function AgentChat({
           unavailable={unavailable}
           optionsDisabled={optionsDisabled}
           imageCaps={imageCaps(connection)}
+          uploadBytes={uploadBytes(connection)}
           manualDenied={manualDenied}
           noAccess={space}
           projectMode={projectMode}

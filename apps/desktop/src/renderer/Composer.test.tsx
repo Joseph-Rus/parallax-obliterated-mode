@@ -465,6 +465,42 @@ test("a picked image is a thumbnail, and any other file is a chip", async () => 
   expect(document.querySelector('[aria-label="Remove notes.md"]')).not.toBeNull();
 });
 
+test("with fileUploads, a file goes to the host and the message lists its path (PLX-779)", async () => {
+  const upload = vi.fn(async (_host: string, _method: string, params: { name: string }) => ({
+    logId: "log-1",
+    result: { path: `/host/uploads/1/${params.name}` },
+  }));
+  window.parallax = {
+    platform: "darwin",
+    request: upload,
+    // `hostId` also reads the host's catalog, which stays unknown here.
+    onConnectionState: () => () => {},
+    connectionState: () => new Promise(() => {}),
+  } as Partial<ParallaxBridge> as ParallaxBridge;
+  const onSend = vi.fn(async () => undefined);
+  // A cap of 8 bytes of base64 takes files of up to 6 bytes.
+  const { paste, press } = render(onSend, caps, { hostId: "local", uploadBytes: 8 });
+  await paste([
+    new File(["%PDF-"], "paper.pdf", { type: "application/pdf" }),
+    new File(["1234567"], "big.bin"),
+  ]);
+  expect(alert()).toMatch(/^big\.bin is larger than/);
+  expect(document.querySelector('[aria-label="Remove big.bin"]')).toBeNull();
+  expect(document.body.textContent).not.toContain("Not sent to the agent yet");
+
+  // A file alone is enough to send.
+  await press("Enter");
+  await vi.waitFor(() => expect(onSend).toHaveBeenCalled());
+  expect(upload).toHaveBeenCalledWith("local", "host/upload", {
+    name: "paper.pdf",
+    data: "JVBERi0=",
+  });
+  expect(onSend).toHaveBeenCalledWith("Attached files:\n- /host/uploads/1/paper.pdf", {}, [], []);
+  await vi.waitFor(() =>
+    expect(document.querySelector('[aria-label="Remove paper.pdf"]')).toBeNull(),
+  );
+});
+
 test("Up and Down recall the thread's earlier prompts until one is edited (PLX-325)", async () => {
   const { box, type, press } = render(async () => undefined, caps, {
     history: ["first", "second\nline two"],

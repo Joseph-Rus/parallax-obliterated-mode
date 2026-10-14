@@ -106,6 +106,7 @@ const capabilities: Capabilities = Object.fromEntries(
     "threads",
   ].map((name) => [name, {}]),
 );
+capabilities["fileUploads"] = { maxBytes: 6 * 1024 * 1024 };
 capabilities["iconImages"] = { maxBytes: 64 * 1024 };
 capabilities["promptImages"] = {
   maxImages: 10,
@@ -805,6 +806,9 @@ const handlers: { [M in Method]?: Handler<M> } = {
 
   // Every computer has the same folders in the preview.
   "host/folders": (p) => listing(p.path),
+
+  // Nothing is saved in the preview: the path is where plxd would put it.
+  "host/upload": (p) => ({ path: `${HOME}/.parallax/uploads/${crypto.randomUUID()}/${p.name}` }),
 
   "repo/add": (p) => {
     const found = db.repos.find((r) => r.path === p.path);
